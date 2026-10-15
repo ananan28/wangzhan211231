@@ -63,7 +63,10 @@ add_task(async function tab_fingerprint_keys_and_reload_toggle() {
   TabContextMenu.contextTab = a;
   item.dispatchEvent(new Event("command"));
   ok(read(a).rotateOnReload, "Command enables rotation for this tab");
-  await BrowserTestUtils.reloadTab(a);
+  gBrowser.selectedTab = a;
+  const reloaded = BrowserTestUtils.browserLoaded(a.linkedBrowser);
+  BrowserCommands.reload();
+  await reloaded;
   isnot(read(a).seed, original.seed, "Enabled reload rotates this tab's key");
   isnot(nativeKeys.get(a.linkedBrowser.browsingContext.id), aNative,
     "Enabled reload changes the native RFP HMAC key");

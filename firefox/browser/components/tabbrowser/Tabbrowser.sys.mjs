@@ -918,6 +918,11 @@ export class Tabbrowser {
   }
 
   reloadWithFlags(reloadFlags) {
+    // Toolbar/F5 reloads use sessionHistory.reload directly rather than the
+    // browser element's reloadWithFlags method. Rotate before either path.
+    for (const tab of this.selectedTabs) {
+      tab.linkedBrowser._tabFingerprintBeforeReload?.();
+    }
     const unchangedRemoteness = [];
 
     for (const tab of this.selectedTabs) {
@@ -10989,3 +10994,4 @@ let URILoadingWrapper = {
     }
   },
 };
+

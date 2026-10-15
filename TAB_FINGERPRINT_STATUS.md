@@ -5,7 +5,7 @@ This branch contains native source modifications, not a tested release. Do not p
 ## Implemented in source
 
 - Each tab stores a versioned fingerprint profile in SessionStore custom tab values. The refresh rotation checkbox defaults to false.
-- A tab context menu provides the checkbox and language, timezone, screen size and optional geographic-coordinate settings.
+- The navigation toolbar exposes the per-tab rotation toggle even when Tree Style Tab hides the horizontal tab strip; Shift-click opens settings. A tab context menu also provides the checkbox and language, timezone, screen size and optional geographic-coordinate settings.
 - UI reloads and extension reloads that use the browser element reloadWithFlags entry point call the rotation hook before navigation. Disabling the checkbox retains the current seed.
 - A new chrome-only, parent-writable BrowsingContext fingerprintSeed field feeds the native RFP HMAC used for document Canvas/WebGL randomization. The site partition key remains in the derivation. The UUID seed is persisted across session restore.
 - Native BrowsingContext overrides are used for user agent, language, timezone, screen and optional position. The user agent is kept consistent with the actual Firefox platform rather than randomly inventing browser/OS combinations.

@@ -6,6 +6,8 @@ import { SessionStore } from "resource:///modules/sessionstore/SessionStore.sys.
 import { createProfile, validateProfile, onReload, cloneProfile } from
   "resource:///modules/TabFingerprintState.sys.mjs";
 
+import { CustomizableUI } from "resource:///modules/CustomizableUI.sys.mjs";
+
 const KEY = "tab-fingerprint-v1";
 const states = new WeakMap();
 const uuid = () => Services.uuid.generateUUID().toString();
@@ -136,6 +138,26 @@ function configure(tab) {
   }
 }
 
+function updateToolbar(win) {
+  const button = win.document.getElementById("tab-fingerprint-button");
+  const tab = win.gBrowser?.selectedTab;
+  if (!button || !tab) { return; }
+  const enabled = read(tab).rotateOnReload;
+  button.setAttribute("label", enabled ? "刷新换指纹" : "固定指纹");
+  button.setAttribute("aria-pressed", String(enabled));
+  button.setAttribute("tooltiptext", enabled
+    ? "当前标签页：刷新时更换指纹。点击关闭；Shift+点击设置地区。"
+    : "当前标签页：保持固定指纹。点击开启；Shift+点击设置地区。");
+}
+
+function toggleRotation(tab) {
+  const state = read(tab);
+  save(tab, { ...state, rotateOnReload: !state.rotateOnReload });
+  updateToolbar(tab.ownerGlobal);
+}
+
+let widgetCreated = false;
+
 export const TabFingerprint = {
   init(win) {
     if (win.__tabFingerprintInitialized) { return; }
@@ -156,6 +178,32 @@ export const TabFingerprint = {
     container.addEventListener("TabBrowserInserted", event => initTab(event.target));
     container.addEventListener("TabRemotenessChange", event => apply(event.target));
     for (const tab of win.gBrowser.tabs) { initTab(tab); }
+    if (!widgetCreated) {
+      CustomizableUI.createWidget({
+        id: "tab-fingerprint-button",
+        defaultArea: CustomizableUI.AREA_NAVBAR,
+        label: "固定指纹",
+        tooltiptext: "切换当前标签页的刷新指纹轮换",
+        onCommand(event) {
+          const owner = event.target.ownerGlobal;
+          if (event.shiftKey) {
+            configure(owner.gBrowser.selectedTab);
+          } else {
+            toggleRotation(owner.gBrowser.selectedTab);
+          }
+        },
+        onCreated(node) {
+          const icon = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="context-fill"><path d="M8 1a4 4 0 0 0-4 4v3a4 4 0 0 1-1 2.65l1.1.95A5.5 5.5 0 0 0 5.5 8V5a2.5 2.5 0 0 1 5 0v3a9 9 0 0 1-1.7 5.25l1.2.85A10.5 10.5 0 0 0 12 8V5a4 4 0 0 0-4-4Zm0 3a1 1 0 0 0-1 1v3a7 7 0 0 1-1.5 4.35l1.2.9A8.5 8.5 0 0 0 8.5 8V5a.5.5 0 0 0-.5-1Z"/></svg>';
+          node.style.listStyleImage = `url("data:image/svg+xml,${encodeURIComponent(icon)}")`;
+          node.style.MozContextProperties = "fill";
+          node.style.fill = "currentColor";
+        },
+      });
+      widgetCreated = true;
+    }
+    container.addEventListener("TabSelect", () => updateToolbar(win));
+    updateToolbar(win);
+
 
     const menu = win.document.getElementById("tabContextMenu");
     if (!menu) { return; }
@@ -166,8 +214,7 @@ export const TabFingerprint = {
     const target = () => win.TabContextMenu.contextTab || win.gBrowser.selectedTab;
     toggle.addEventListener("command", () => {
       const tab = target();
-      const state = read(tab);
-      save(tab, { ...state, rotateOnReload: !state.rotateOnReload });
+      toggleRotation(tab);
     });
     menu.addEventListener("popupshowing", event => {
       if (event.target === menu) {
