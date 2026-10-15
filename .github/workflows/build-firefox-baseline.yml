@@ -1,0 +1,80 @@
+name: Build imported Firefox baseline
+on:
+  push:
+    paths:
+      - .github/workflows/build-firefox-baseline.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux-baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      MOZBUILD_STATE_PATH: /home/runner/.mozbuild
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: import/firefox-release-7e92a9e429da
+          persist-credentials: false
+      - name: Create standalone source repository for Mozilla build tools
+        working-directory: firefox
+        run: |
+          git init
+          git config user.name "Baseline Builder"
+          git config user.email "builder@localhost"
+          git add --force --all
+          git commit --quiet -m "Pinned Firefox source 7e92a9e429dab30b7166890a7e778e3d1dd4cbeb"
+          test "$(git rev-parse --show-toplevel)" = "$PWD"
+      - name: Configure baseline before dependency bootstrap
+        working-directory: firefox
+        run: |
+          cat > .mozconfig <<'EOF'
+          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-baseline
+          mk_add_options MOZ_MAKE_FLAGS="-j2"
+          ac_add_options --enable-application=browser
+          ac_add_options --enable-bootstrap
+          ac_add_options --disable-debug
+          ac_add_options --disable-tests
+          ac_add_options --disable-crashreporter
+          ac_add_options --disable-updater
+          ac_add_options --with-branding=browser/branding/unofficial
+          EOF
+      - name: Bootstrap dependencies with captured output
+        working-directory: firefox
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 mach --no-interactive bootstrap --application-choice browser 2>&1 | tee "$RUNNER_TEMP/firefox-bootstrap.log"
+      - name: Compile baseline
+        working-directory: firefox
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 mach build 2>&1 | tee "$RUNNER_TEMP/firefox-build.log"
+      - name: Package baseline
+        working-directory: firefox
+        run: python3 mach package
+      - name: Save diagnostics even after failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-baseline-diagnostics
+          path: |
+            ${{ runner.temp }}/firefox-bootstrap.log
+            ${{ runner.temp }}/firefox-build.log
+            firefox/obj-baseline/config.log
+            firefox/obj-baseline/config.status
+            /home/runner/.mozbuild/**/config.log
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Save Linux baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-baseline-linux
+          path: |
+            firefox/obj-baseline/dist/*.tar.xz
+            firefox/obj-baseline/dist/*.tar.bz2
+          if-no-files-found: error
+          retention-days: 14
