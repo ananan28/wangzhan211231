@@ -6,7 +6,7 @@ This branch contains native source modifications, not a tested release. Do not p
 
 - Each tab stores a versioned fingerprint profile in SessionStore custom tab values. The refresh rotation checkbox defaults to false.
 - The navigation toolbar exposes the per-tab rotation toggle even when Tree Style Tab hides the horizontal tab strip; Shift-click opens settings. A tab context menu also provides the checkbox and language, timezone, screen size and optional geographic-coordinate settings.
-- UI reloads and extension reloads that use the browser element reloadWithFlags entry point call the rotation hook before navigation. Disabling the checkbox retains the current seed.
+- Top-level reloads notify a parent-process DocumentLoadListener hook before document channel creation, covering UI, extension and page-script reloads; subframe reloads are excluded. A load identifier suppresses duplicate notifications. Disabling the checkbox retains the current seed.
 - A new chrome-only, parent-writable BrowsingContext fingerprintSeed field feeds the native RFP HMAC used for document Canvas/WebGL randomization. The site partition key remains in the derivation. The UUID seed is persisted across session restore.
 - Native BrowsingContext overrides are used for user agent, language, timezone, screen and optional position. The user agent is kept consistent with the actual Firefox platform rather than randomly inventing browser/OS combinations.
 - No proxy APIs, container cookies or CAPTCHA behavior are changed.
@@ -17,7 +17,7 @@ Six Node state tests pass locally, covering independent tabs, fixed keys, serial
 
 ## Limitations and unfinished validation
 
-- A page's JavaScript location.reload() can bypass the browser element hook. Automatic rotation for that entry point is not implemented.
+- The parent-process reload notification and its timing still require native runtime validation.
 - Service workers and shared workers may share state within the same Multi-Account Containers container. The new document HMAC hook does not claim independent per-tab service-worker fingerprints.
 - Canvas/WebGL perturbation is subject to Firefox fingerprinting protection preferences, exemptions and canvas permissions. GPU vendor/model spoofing and arbitrary hardware profiles are not implemented.
 - Position, timezone and language do not automatically track the proxy plugin's exit IP. Set the tab's region manually. Geolocation permission is not automatically granted.

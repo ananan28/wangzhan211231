@@ -73,11 +73,6 @@ function apply(tab) {
   } else {
     bc.setGeolocationServiceOverride();
   }
-  browser._tabFingerprintBeforeReload = () => {
-    const next = onReload(read(tab), uuid);
-    save(tab, next);
-    apply(tab);
-  };
 }
 
 function ensureUnique(tab) {
@@ -178,6 +173,25 @@ export const TabFingerprint = {
     container.addEventListener("TabBrowserInserted", event => initTab(event.target));
     container.addEventListener("TabRemotenessChange", event => apply(event.target));
     for (const tab of win.gBrowser.tabs) { initTab(tab); }
+    const lastReload = new WeakMap();
+    const reloadObserver = (_subject, _topic, identifier) => {
+      const [contextId, loadId] = identifier.split(":");
+      for (const tab of win.gBrowser.tabs) {
+        if (String(tab.linkedBrowser.browsingContext?.id) !== contextId) {
+          continue;
+        }
+        if (lastReload.get(tab) === loadId) { return; }
+        lastReload.set(tab, loadId);
+        save(tab, onReload(read(tab), uuid));
+        apply(tab);
+        return;
+      }
+    };
+    Services.obs.addObserver(reloadObserver, "tab-fingerprint-before-reload");
+    win.addEventListener("unload", () => {
+      Services.obs.removeObserver(reloadObserver, "tab-fingerprint-before-reload");
+    }, { once: true });
+
     if (!widgetCreated) {
       CustomizableUI.createWidget({
         id: "tab-fingerprint-button",

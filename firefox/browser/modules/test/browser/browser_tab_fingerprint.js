@@ -71,6 +71,12 @@ add_task(async function tab_fingerprint_keys_and_reload_toggle() {
   isnot(nativeKeys.get(a.linkedBrowser.browsingContext.id), aNative,
     "Enabled reload changes the native RFP HMAC key");
   is(read(b).seed, other.seed, "Other tab key stays unchanged");
+  const beforeScriptReload = read(a).seed;
+  const scriptReloaded = BrowserTestUtils.browserLoaded(a.linkedBrowser);
+  await SpecialPowers.spawn(a.linkedBrowser, [], () => content.location.reload());
+  await scriptReloaded;
+  isnot(read(a).seed, beforeScriptReload, "Page-script reload rotates via the parent hook");
+
   item.dispatchEvent(new Event("command"));
   const frozen = read(a).seed;
   await BrowserTestUtils.reloadTab(a);
