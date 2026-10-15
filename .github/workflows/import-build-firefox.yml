@@ -1,0 +1,80 @@
+name: Import Firefox and build baseline
+on:
+  push:
+    paths:
+      - .github/workflows/import-build-firefox.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: firefox-baseline
+  cancel-in-progress: false
+env:
+  UPSTREAM_REV: 7e92a9e429dab30b7166890a7e778e3d1dd4cbeb
+jobs:
+  import-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pinned upstream source
+        run: |
+          mkdir -p firefox
+          curl --fail --location --retry 3 "https://api.github.com/repos/mozilla-firefox/firefox/tarball/$UPSTREAM_REV" -o "$RUNNER_TEMP/firefox.tar.gz"
+          tar -xzf "$RUNNER_TEMP/firefox.tar.gz" --strip-components=1 -C firefox
+          test -f firefox/mach
+          test -f firefox/LICENSE
+          printf '%s\n' "$UPSTREAM_REV" > UPSTREAM_REVISION
+      - name: Commit complete source snapshot to separate branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c import/firefox-release-${UPSTREAM_REV:0:12}
+          git add firefox UPSTREAM_REVISION
+          git commit -m "Import complete Mozilla Firefox source snapshot $UPSTREAM_REV"
+          git push origin HEAD
+  build-baseline-linux:
+    needs: import-source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      MOZ_AUTOMATION: "1"
+      MOZBUILD_STATE_PATH: /home/runner/.mozbuild
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: import/firefox-release-7e92a9e429da
+      - name: Record runner resources
+        run: |
+          df -h .
+          free -h
+      - name: Bootstrap Firefox build dependencies
+        working-directory: firefox
+        run: python3 mach --no-interactive bootstrap --application-choice browser
+      - name: Configure unbranded baseline
+        working-directory: firefox
+        run: |
+          cat > .mozconfig <<'EOF'
+          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-baseline
+          mk_add_options MOZ_MAKE_FLAGS="-j2"
+          ac_add_options --enable-application=browser
+          ac_add_options --disable-debug
+          ac_add_options --disable-tests
+          ac_add_options --disable-crashreporter
+          ac_add_options --disable-updater
+          ac_add_options --with-branding=browser/branding/unofficial
+          EOF
+      - name: Compile and package baseline
+        working-directory: firefox
+        run: |
+          python3 mach build
+          python3 mach package
+      - name: Upload baseline package
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-unmodified-baseline-linux
+          path: |
+            firefox/obj-baseline/dist/*.tar.xz
+            firefox/obj-baseline/dist/*.tar.bz2
+          if-no-files-found: error
+          retention-days: 14
