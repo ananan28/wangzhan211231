@@ -1,0 +1,108 @@
+name: Tab fingerprint validation and native build
+on:
+  push:
+    branches: [feature/tab-fingerprint]
+    paths:
+      - firefox/**
+      - tests/**
+      - .github/workflows/tab-fingerprint.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  state-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            firefox/browser/modules/TabFingerprint.sys.mjs
+            firefox/browser/modules/TabFingerprintState.sys.mjs
+            firefox/browser/modules/test/browser/browser_tab_fingerprint.js
+            tests
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tests/tab-fingerprint-state.test.mjs
+      - run: node --check firefox/browser/modules/TabFingerprint.sys.mjs
+      - run: node --check firefox/browser/modules/test/browser/browser_tab_fingerprint.js
+  native-linux:
+    needs: state-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      PYTHONUNBUFFERED: '1'
+      MOZBUILD_STATE_PATH: /home/runner/.mozbuild
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare standalone source checkout
+        working-directory: firefox
+        run: |
+          git init
+          git config user.name 'Validation Builder'
+          git config user.email 'builder@localhost'
+          git add --force --all
+          git commit --quiet -m 'Fingerprint feature validation snapshot'
+      - name: Configure development build with reduced compiler memory use
+        working-directory: firefox
+        run: |
+          cat > .mozconfig <<'EOF'
+          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-fingerprint
+          mk_add_options MOZ_MAKE_FLAGS="-j2"
+          ac_add_options --enable-application=browser
+          ac_add_options --enable-bootstrap
+          ac_add_options --disable-debug
+          ac_add_options --disable-debug-symbols
+          ac_add_options --disable-optimize
+          ac_add_options --disable-updater
+          ac_add_options --disable-crashreporter
+          ac_add_options --with-branding=browser/branding/unofficial
+          EOF
+      - name: Bootstrap
+        working-directory: firefox
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 mach --no-interactive bootstrap --application-choice browser 2>&1 | tee "$RUNNER_TEMP/bootstrap.log"
+      - name: Build modified Firefox
+        working-directory: firefox
+        shell: bash
+        run: |
+          set -o pipefail
+          (while true; do date; free -m; df -h .; sleep 60; done) > "$RUNNER_TEMP/resources.log" &
+          resource_pid=$!
+          trap 'kill "$resource_pid" 2>/dev/null || true' EXIT
+          python3 mach build 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Test native tab integration
+        working-directory: firefox
+        shell: bash
+        run: |
+          set -o pipefail
+          xvfb-run -a python3 mach mochitest --headless browser/modules/test/browser/browser_tab_fingerprint.js 2>&1 | tee "$RUNNER_TEMP/native-tests.log"
+      - name: Package after native tests pass
+        working-directory: firefox
+        run: python3 mach package
+      - name: Save logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tab-fingerprint-diagnostics
+          path: |
+            ${{ runner.temp }}/bootstrap.log
+            ${{ runner.temp }}/build.log
+            ${{ runner.temp }}/resources.log
+            ${{ runner.temp }}/native-tests.log
+            firefox/obj-fingerprint/config.log
+          if-no-files-found: warn
+      - name: Save validated development package
+        uses: actions/upload-artifact@v4
+        with:
+          name: tab-fingerprint-linux-development
+          path: |
+            firefox/obj-fingerprint/dist/*.tar.xz
+            firefox/obj-fingerprint/dist/*.tar.bz2
+          if-no-files-found: error

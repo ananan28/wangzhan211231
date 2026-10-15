@@ -117,6 +117,8 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa" and CONFIG["NIGHTLY_BUILD"]:
     ]
 
 EXTRA_JS_MODULES += [
+    "TabFingerprint.sys.mjs",
+    "TabFingerprintState.sys.mjs",
     "AboutNewTab.sys.mjs",
     "BrowserDOMWindow.sys.mjs",
     "BrowserUIUtils.sys.mjs",
@@ -170,3 +172,4 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
         "BackgroundTask_install.sys.mjs",
         "BackgroundTask_uninstall.sys.mjs",
     ]
+

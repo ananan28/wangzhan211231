@@ -1433,7 +1433,16 @@ Maybe<nsTArray<uint8_t>> nsRFPService::GenerateKey(nsIChannel* aChannel) {
           ("Get the key using OriginAttributes: %s\n", oaSuffix.get()));
 
   nsID sessionKey = {};
-  if (NS_FAILED(service->GetBrowsingSessionKey(attrs, sessionKey))) {
+  RefPtr<dom::BrowsingContext> context = loadInfo->GetBrowsingContext();
+  bool hasTabKey = false;
+  if (context) {
+    const nsCString& seed = context->Top()->GetFingerprintSeed();
+    // Parsing an opaque UUID preserves the existing HMAC key format. The
+    // partition key is still mixed below, maintaining per-site separation.
+    hasTabKey = !seed.IsEmpty() && sessionKey.Parse(seed.get());
+  }
+  if (!hasTabKey &&
+      NS_FAILED(service->GetBrowsingSessionKey(attrs, sessionKey))) {
     return Nothing();
   }
 
@@ -3494,3 +3503,4 @@ bool nsRFPService::FontIsAllowedByLocale(const nsACString& aName) {
 
   return false;
 }
+

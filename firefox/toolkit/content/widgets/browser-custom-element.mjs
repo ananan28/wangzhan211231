@@ -912,6 +912,9 @@ export class MozBrowser extends MozElements.MozElementMixin(XULFrameElement) {
   }
 
   reloadWithFlags(aFlags) {
+    // Browser chrome installs this hook only on managed tab browsers.
+    // Errors intentionally prevent the reload instead of silently reusing a key.
+    this._tabFingerprintBeforeReload?.();
     this.webNavigation.reload(aFlags);
   }
 
@@ -2023,3 +2026,4 @@ export class MozBrowser extends MozElements.MozElementMixin(XULFrameElement) {
 
 MozXULElement.implementCustomInterface(MozBrowser, [Ci.nsIBrowser]);
 customElements.define("browser", MozBrowser);
+

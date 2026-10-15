@@ -122,3 +122,6 @@ skip-if = [
   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11'", # Bug 1775794
   "os == 'mac' && os_version == '10.15' && arch == 'x86_64' && debug", # Bug 1775794
 ]
+
+["browser_tab_fingerprint.js"]
+
