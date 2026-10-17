@@ -60,7 +60,7 @@ jobs:
           ac_add_options --enable-bootstrap
           ac_add_options --disable-debug
           ac_add_options --disable-debug-symbols
-          ac_add_options --disable-optimize
+          ac_add_options --enable-optimize
           ac_add_options --disable-updater
           ac_add_options --disable-crashreporter
           ac_add_options --with-branding=browser/branding/unofficial
