@@ -146,6 +146,8 @@ class SharedWorkerManager final : public RemoteWorkerObserver {
   const nsCOMPtr<nsIURI> mResolvedScriptURL;
   const WorkerOptions mWorkerOptions;
   const bool mIsSecureContext;
+  const bool mHasFingerprintingRandomizationKey;
+  const nsTArray<uint8_t> mFingerprintingRandomizationKey;
   bool mSuspended;
   bool mFrozen;
   uint32_t mLockCount = 0;
