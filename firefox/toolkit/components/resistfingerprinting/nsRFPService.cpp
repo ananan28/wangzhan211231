@@ -1439,7 +1439,7 @@ Maybe<nsTArray<uint8_t>> nsRFPService::GenerateKey(nsIChannel* aChannel) {
     const nsCString& seed = context->Top()->GetFingerprintSeed();
     // Parsing an opaque UUID preserves the existing HMAC key format. The
     // partition key is still mixed below, maintaining per-site separation.
-    hasTabKey = !seed.IsEmpty() && sessionKey.Parse(seed.get());
+    hasTabKey = !seed.IsEmpty() && sessionKey.Parse(seed);
   }
   if (!hasTabKey &&
       NS_FAILED(service->GetBrowsingSessionKey(attrs, sessionKey))) {
