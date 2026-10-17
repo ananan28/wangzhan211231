@@ -18,7 +18,8 @@ Six Node state tests pass locally, covering independent tabs, fixed keys, serial
 ## Limitations and unfinished validation
 
 - The parent-process reload notification and its timing still require native runtime validation.
-- Service workers and shared workers may share state within the same Multi-Account Containers container. The new document HMAC hook does not claim independent per-tab service-worker fingerprints.
+- Shared-worker matching now compares the serialized document fingerprint-randomization key as well as the original origin/container/name conditions. A native regression test checks same-document sharing and separation across tabs. This source change is not runtime-validated; if Firefox supplies no randomization key (for example through exemptions), it does not guarantee tab isolation.
+- Service workers still share registration/runtime state within an origin and container. The document HMAC hook does not provide independent per-tab service-worker fingerprints.
 - Canvas/WebGL perturbation is subject to Firefox fingerprinting protection preferences, exemptions and canvas permissions. GPU vendor/model spoofing and arbitrary hardware profiles are not implemented.
 - Position, timezone and language do not automatically track the proxy plugin's exit IP. Set the tab's region manually. Geolocation permission is not automatically granted.
 - The Multi-Account Containers, Tree Style Tab and Buster combination still needs live compatibility testing. The changes do not implement or modify CAPTCHA solving.

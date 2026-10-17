@@ -83,3 +83,30 @@ add_task(async function tab_fingerprint_keys_and_reload_toggle() {
   is(read(a).seed, frozen, "Disabling rotation freezes the current key");
   ok(menu.contains(item), "Toggle stays in the tab context menu");
 });
+
+add_task(async function shared_worker_partition_uses_document_key() {
+  const url = "https://example.com/";
+  const a = await BrowserTestUtils.openNewForegroundTab(gBrowser, url);
+  const b = await BrowserTestUtils.openNewForegroundTab(gBrowser, url);
+  try {
+    const connect = tab => SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
+      const worker = new content.SharedWorker(
+        "https://example.com/browser/browser/modules/test/browser/tab_fingerprint_shared_worker.js",
+        "tab-fingerprint-isolation"
+      );
+      content.fingerprintTestWorkers ??= [];
+      content.fingerprintTestWorkers.push(worker);
+      return new Promise((resolve, reject) => {
+        worker.onerror = () => reject(new Error("SharedWorker failed to load"));
+        worker.port.onmessage = event => resolve(event.data);
+      });
+    });
+    const first = await connect(a);
+    is(await connect(a), first, "Same document still shares its named worker");
+    isnot(await connect(b), first,
+      "Different tab document keys cannot attach to the same shared worker");
+  } finally {
+    BrowserTestUtils.removeTab(a);
+    BrowserTestUtils.removeTab(b);
+  }
+});

@@ -124,4 +124,5 @@ skip-if = [
 ]
 
 ["browser_tab_fingerprint.js"]
+support-files = ["tab_fingerprint_shared_worker.js"]
 
