@@ -59,7 +59,7 @@ jobs:
           ac_add_options --enable-application=browser
           ac_add_options --enable-bootstrap
           ac_add_options --disable-debug
-          ac_add_options --enable-debug-symbols=-g1
+          ac_add_options --disable-debug-symbols
           ac_add_options --enable-optimize
           ac_add_options --disable-updater
           ac_add_options --disable-crashreporter
