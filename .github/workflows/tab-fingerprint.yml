@@ -59,7 +59,7 @@ jobs:
           ac_add_options --enable-application=browser
           ac_add_options --enable-bootstrap
           ac_add_options --disable-debug
-          ac_add_options --disable-debug-symbols
+          ac_add_options --enable-debug-symbols=-g1
           ac_add_options --enable-optimize
           ac_add_options --disable-updater
           ac_add_options --disable-crashreporter
@@ -72,6 +72,7 @@ jobs:
           set -o pipefail
           python3 mach --no-interactive bootstrap --application-choice browser 2>&1 | tee "$RUNNER_TEMP/bootstrap.log"
       - name: Build modified Firefox
+        id: compile
         working-directory: firefox
         shell: bash
         run: |
@@ -80,12 +81,39 @@ jobs:
           resource_pid=$!
           trap 'kill "$resource_pid" 2>/dev/null || true' EXIT
           python3 mach build 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Prepare crash diagnostics
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gdb
+          mkdir -p "$RUNNER_TEMP/firefox-cores"
+          sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/firefox-cores/core.%e.%p"
       - name: Test native tab integration
         working-directory: firefox
         shell: bash
         run: |
           set -o pipefail
+          ulimit -c unlimited
           xvfb-run -a python3 mach mochitest --headless browser/modules/test/browser/browser_tab_fingerprint.js 2>&1 | tee "$RUNNER_TEMP/native-tests.log"
+      - name: Extract crash backtraces
+        if: failure()
+        working-directory: firefox
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for core_file in "$RUNNER_TEMP"/firefox-cores/core.*; do
+            timeout 120 gdb --batch -ex 'set pagination off' -ex 'info threads' -ex 'thread apply all bt 40' obj-fingerprint/dist/bin/firefox "$core_file" > "$core_file.backtrace.txt" 2>&1 || true
+          done
+      - name: Preserve compiled browser for diagnosis
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        working-directory: firefox
+        run: tar -cJf "$RUNNER_TEMP/firefox-unvalidated-linux.tar.xz" -C obj-fingerprint/dist bin
+      - name: Upload unvalidated browser for diagnosis
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-linux-UNVALIDATED-diagnostic-build
+          path: ${{ runner.temp }}/firefox-unvalidated-linux.tar.xz
+          retention-days: 7
       - name: Package after native tests pass
         working-directory: firefox
         run: python3 mach package
@@ -100,6 +128,7 @@ jobs:
             ${{ runner.temp }}/resources.log
             ${{ runner.temp }}/native-tests.log
             firefox/obj-fingerprint/config.log
+            ${{ runner.temp }}/firefox-cores/*.backtrace.txt
           if-no-files-found: warn
       - name: Save validated development package
         uses: actions/upload-artifact@v4
