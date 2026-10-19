@@ -143,6 +143,8 @@ EXTRA_JS_MODULES += [
     "SelectionChangedMenulist.sys.mjs",
     "SiteDataManager.sys.mjs",
     "SitePermissions.sys.mjs",
+    "TabFingerprint.sys.mjs",
+    "TabFingerprintState.sys.mjs",
     "TransientPrefs.sys.mjs",
     "UpdatePolicyEnforcer.sys.mjs",
     "URILoadingHelper.sys.mjs",
@@ -170,3 +172,4 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
         "BackgroundTask_install.sys.mjs",
         "BackgroundTask_uninstall.sys.mjs",
     ]
+

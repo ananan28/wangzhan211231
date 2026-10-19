@@ -3,6 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "DocumentLoadListener.h"
+#include "mozilla/Services.h"
+#include "nsIObserverService.h"
+#include "nsDocShellLoadTypes.h"
 
 #include "NeckoCommon.h"
 #include "imgLoader.h"
@@ -862,6 +865,23 @@ auto DocumentLoadListener::Open(nsDocShellLoadState* aLoadState,
   }
 
   auto* documentContext = GetDocumentBrowsingContext();
+
+  // Observe real top-level reloads before creating the document channel and
+  // its fingerprinting randomization key. Includes content location.reload()
+  // and extension reloads, without rotating on a subframe reload.
+  if (mIsDocumentLoad && documentContext && documentContext->IsTop() &&
+      ConvertLoadTypeToNavigationType(aLoadState->LoadType()) ==
+          nsDOMNavigationTiming::TYPE_RELOAD) {
+    if (nsCOMPtr<nsIObserverService> observers = services::GetObserverService()) {
+      nsAutoString identifier;
+      identifier.AppendInt(documentContext->Id());
+      identifier.Append(':');
+      identifier.AppendInt(mLoadIdentifier);
+      observers->NotifyObservers(nullptr, "tab-fingerprint-before-reload",
+                                 identifier.get());
+    }
+  }
+
 
   // If we are using SHIP and this load is from session history, validate that
   // the load matches our local copy of the loading history entry.
@@ -3620,3 +3640,4 @@ NS_IMETHODIMP DocumentLoadListener::EarlyHint(const nsACString& aLinkHeader,
 }  // namespace mozilla
 
 #undef LOG
+

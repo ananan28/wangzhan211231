@@ -252,6 +252,8 @@ var gBrowserInit = {
       },
       window
     );
+    ChromeUtils.importESModule("resource:///modules/TabFingerprint.sys.mjs")
+      .TabFingerprint.init(window);
     gURLBar.addGBrowserListeners();
     if (Services.prefs.getBoolPref("browser.search.widget.new", false)) {
       document.getElementById("searchbar-new")?.addGBrowserListeners();
@@ -1163,3 +1165,4 @@ var gBrowserInit = {
     );
   },
 };
+
