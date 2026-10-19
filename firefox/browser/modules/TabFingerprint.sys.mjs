@@ -155,6 +155,9 @@ let widgetCreated = false;
 
 export const TabFingerprint = {
   init(win) {
+    if (!Services.prefs.getBoolPref("browser.tabFingerprint.enabled", true)) {
+      return;
+    }
     if (win.__tabFingerprintInitialized) { return; }
     win.__tabFingerprintInitialized = true;
     const branch = Services.prefs.getDefaultBranch("");

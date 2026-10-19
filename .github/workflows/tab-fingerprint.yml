@@ -87,6 +87,21 @@ jobs:
           sudo apt-get install -y gdb
           mkdir -p "$RUNNER_TEMP/firefox-cores"
           sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/firefox-cores/core.%e.%p"
+      - name: Compare startup with tab profiles disabled and enabled
+        id: startup
+        continue-on-error: true
+        working-directory: firefox
+        shell: bash
+        run: |
+          result=0
+          for enabled in false true; do
+            profile_dir="$RUNNER_TEMP/startup-$enabled"
+            mkdir -p "$profile_dir"
+            printf 'user_pref("browser.tabFingerprint.enabled", %s);\nuser_pref("browser.shell.checkDefaultBrowser", false);\n' "$enabled" > "$profile_dir/user.js"
+            timeout 90 gdb --batch -ex 'set pagination off' -ex 'handle SIGPIPE nostop noprint pass' -ex run -ex 'thread apply all bt 40' --args obj-fingerprint/dist/bin/firefox --headless --no-remote --profile "$profile_dir" --screenshot "$profile_dir/startup.png" about:blank > "$RUNNER_TEMP/startup-$enabled.log" 2>&1 || result=1
+            test -s "$profile_dir/startup.png" || result=1
+          done
+          exit "$result"
       - name: Test native tab integration
         working-directory: firefox
         shell: bash
@@ -115,6 +130,7 @@ jobs:
           path: ${{ runner.temp }}/firefox-unvalidated-linux.tar.xz
           retention-days: 7
       - name: Package after native tests pass
+        if: ${{ success() && steps.startup.outcome == 'success' }}
         working-directory: firefox
         run: python3 mach package
       - name: Save logs
@@ -127,10 +143,13 @@ jobs:
             ${{ runner.temp }}/build.log
             ${{ runner.temp }}/resources.log
             ${{ runner.temp }}/native-tests.log
+            ${{ runner.temp }}/startup-*.log
+            ${{ runner.temp }}/startup-*/startup.png
             firefox/obj-fingerprint/config.log
             ${{ runner.temp }}/firefox-cores/*.backtrace.txt
           if-no-files-found: warn
       - name: Save validated development package
+        if: ${{ success() && steps.startup.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: tab-fingerprint-linux-development
