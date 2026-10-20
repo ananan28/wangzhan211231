@@ -43,7 +43,8 @@ $mozillabuild_version = Get-Content "$env:MOZILLABUILD\VERSION"
 $mozillabuild_version = [version]($mozillabuild_version -replace "pre.*")
 
 if ($mozillabuild_version -ge [version]"4.0") {
-  & "$env:MOZILLABUILD/start-shell.bat" -no-start -defterm -c "$machpath $args"
+  $machdir = (Split-Path -Parent $machpath) -replace '\\', '/'
+  & "$env:MOZILLABUILD/start-shell.bat" -no-start -defterm -c "cd '$machdir' && '$machpath' $args"
 } else {
   & "$env:MOZILLABUILD/start-shell.bat" $machpath $args
 }
