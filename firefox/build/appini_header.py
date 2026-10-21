@@ -11,7 +11,7 @@ import sys
 
 def main(output, file):
     config = configparser.RawConfigParser()
-    config.read(file)
+    config.read(file, encoding="utf-8")
     flags = set()
     try:
         if config.getint("XRE", "EnableProfileMigrator") == 1:
