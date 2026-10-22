@@ -2,5 +2,5 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MOZ_APP_DISPLAYNAME='南孚浏览器'
+MOZ_APP_DISPLAYNAME='Nanfu Browser'
 MOZ_MACBUNDLE_ID=org.nanfu.browser
