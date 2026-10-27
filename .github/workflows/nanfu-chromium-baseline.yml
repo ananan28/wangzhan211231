@@ -4,6 +4,7 @@ on:
     branches: [feature/chromium-migration]
     paths:
       - .github/workflows/nanfu-chromium-baseline.yml
+      - vendor/aliasmode/**
   workflow_dispatch:
 
 permissions:
@@ -33,7 +34,7 @@ jobs:
       - name: Save installer for inspection
         uses: actions/upload-artifact@v4
         with:
-          name: aliasmode-upstream-unmodified-windows-baseline
+          name: nanfu-chromium-development-windows
           path: vendor/aliasmode/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: 7
