@@ -1,0 +1,47 @@
+name: Import AliasMode source
+on:
+  push:
+    branches:
+      - feature/chromium-migration
+    paths:
+      - .github/workflows/import-aliasmode.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/chromium-migration
+          path: target
+      - uses: actions/checkout@v4
+        with:
+          repository: aliasmode/aliasmode
+          ref: 41ccd08f5f72af314f113114765b653b80d8db95
+          path: upstream-app
+      - uses: actions/checkout@v4
+        with:
+          repository: aliasmode/aliasmode-chromium
+          ref: 8aa0a24c0638ed926f8c12f9bb1350d97cbf75aa
+          path: upstream-engine
+      - name: Import pinned source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          if [[ -e vendor/aliasmode || -e vendor/aliasmode-chromium ]]; then
+            echo "Import destination already exists; refusing to overwrite."
+            exit 1
+          fi
+          mkdir -p vendor/aliasmode vendor/aliasmode-chromium
+          git -C ../upstream-app archive HEAD | tar -xf - -C vendor/aliasmode
+          git -C ../upstream-engine archive HEAD | tar -xf - -C vendor/aliasmode-chromium
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f vendor/aliasmode vendor/aliasmode-chromium
+          git commit -m "Import pinned AliasMode application and Chromium patches"
+          git push origin HEAD:feature/chromium-migration
