@@ -24,16 +24,17 @@ liveTest("Chromium uses configured HTTP proxy and does not fall back after it st
   let directRequests = 0;
   let proxyRequests = 0;
   const origin = createServer((_req, res) => { directRequests++; res.end("direct"); });
-  const proxy = createServer((_req, res) => {
-    proxyRequests++;
-    res.setHeader("content-type", "text/plain");
-    res.setHeader("cache-control", "no-store");
-    res.end("through-proxy");
+  const proxy = Bun.serve({
+    hostname: "127.0.0.1", port: 0,
+    fetch: () => {
+      proxyRequests++;
+      return new Response("through-proxy", { headers: { "cache-control": "no-store" } });
+    },
   });
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
     const originPort = await listen(origin);
-    const proxyPort = await listen(proxy);
+    const proxyPort = proxy.port;
     const executablePath = await ensureAliasmodeChromium(join(root, "runtime"));
     child = Bun.spawn([executablePath, `--user-data-dir=${join(root, "profile")}`,
       "--headless=new", "--disable-gpu", "--no-first-run", "--disable-background-networking",
@@ -55,10 +56,8 @@ liveTest("Chromium uses configured HTTP proxy and does not fall back after it st
       expect(await page.locator("body").innerText()).toBe("through-proxy");
       expect(proxyRequests).toBeGreaterThan(0);
       expect(directRequests).toBe(0);
-      await new Promise<void>((resolve, reject) => {
-        proxy.close(error => error ? reject(error) : resolve());
-        proxy.closeAllConnections();
-      });
+      proxy.stop(true);
+      await Bun.sleep(1000);
       const cdp = await context.newCDPSession(page);
       await cdp.send("Network.clearBrowserCache");
       let navigationFailed = false;
@@ -77,7 +76,7 @@ liveTest("Chromium uses configured HTTP proxy and does not fall back after it st
     }
   } finally {
     if (child) { child.kill(); await child.exited; }
-    if (proxy.listening) await new Promise<void>(resolve => proxy.close(() => resolve()));
+    proxy.stop(true);
     if (origin.listening) await new Promise<void>(resolve => origin.close(() => resolve()));
     await rm(root, { recursive: true, force: true });
   }
