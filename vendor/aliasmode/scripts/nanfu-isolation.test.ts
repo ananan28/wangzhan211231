@@ -25,7 +25,7 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
       console.log(`isolation: launching ${name}`);
       child = Bun.spawn([executablePath, `--user-data-dir=${join(root, name)}`,
         "--headless=new", "--disable-gpu", "--no-first-run",
-        `--fingerprint=${name === "a" ? 314159 : 271828}`, "--fingerprint-platform=windows",
+        `--fingerprint=${name === "a" ? 314159 : 271828}`, "--fingerprint-platform=windows", "--fingerprint-noise",
         "--remote-debugging-port=19223", "about:blank"], { stdout: "ignore", stderr: "ignore" });
       let ready = false;
       for (let i = 0; i < 45; i++) {
