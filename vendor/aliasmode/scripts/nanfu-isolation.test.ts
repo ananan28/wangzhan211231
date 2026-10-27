@@ -47,9 +47,18 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
         }
         return previous;
       } finally {
-        await browser.close();
-        child.kill();
-        await child.exited;
+        const session = await browser.newBrowserCDPSession();
+        await session.send("Browser.close").catch(() => {});
+        const completed = await Promise.race([
+          child.exited.then(() => true),
+          Bun.sleep(15000).then(() => false),
+        ]);
+        if (!completed) {
+          child.kill();
+          await child.exited;
+          child = undefined;
+          throw new Error("Chromium did not close cleanly");
+        }
         child = undefined;
       }
     }
