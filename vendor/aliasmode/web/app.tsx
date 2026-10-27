@@ -7,6 +7,7 @@ import { ProxiesPage } from "./proxies.tsx";
 import { CartIcon, ProxyProviderOffer, proxyOfferUrl } from "./proxy-offer.tsx";
 import { TrashPage } from "./trash.tsx";
 import { parsePastedProxy } from "./proxy-input.ts";
+import { createProfilesInOrder } from "./batch-create.ts";
 import { ScriptRunPanel, ScriptsPage } from "./scripts.tsx";
 import { I18nProvider, availableLanguages, languageNativeName, useTranslation } from "./i18n.tsx";
 import { localeTimezoneMismatch } from "../profile-locale.ts";
@@ -1309,6 +1310,7 @@ function App() {
   const [dragging, setDragging] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
+  const [createCount, setCreateCount] = useState("1");
   const [form, setForm] = useState(BLANK_FORM);
   const [createProxyCheck, setCreateProxyCheck] = useState<ProxyCheckUiState>(EMPTY_PROXY_CHECK);
   const createProxyCheckGeneration = useRef(0);
@@ -1437,7 +1439,7 @@ function App() {
       if (showBulk) { closeBulk(); return; }
       if (cookieProfile) { if (!cookieSaving) closeCookie(); return; }
       if (editId) { closeEdit(); return; }
-      if (showCreate) closeCreate();
+      if (showCreate && !creating) closeCreate();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -2599,6 +2601,7 @@ function App() {
   // cancelled draft never leaks into the next open.
   const openCreate = () => {
     resetCreateProxyCheck();
+    setCreateCount("1");
     setForm({ ...BLANK_FORM, engine: appMode?.defaultEngine ?? "chromium", chromiumRuntime: appMode?.defaultChromiumRuntime ?? "", group: group !== "all" && (!isCloudMode || editableGroups.includes(group)) ? group : "" });
     setProxyPaste("");
     setProxyPasteOk(null);
@@ -2665,11 +2668,20 @@ function App() {
     }
   };
   const submitCreate = async () => {
+    const count = Number(createCount);
+    if (!Number.isInteger(count) || count < 1 || count > 100) {
+      setCreateErr("创建数量必须在 1 到 100 之间");
+      return;
+    }
+    if (count > 1 && form.customNo.trim()) {
+      setCreateErr("批量创建时请留空自定义编号，避免编号重复");
+      return;
+    }
     setCreating(true);
     setCreateErr(null);
     try {
-      const r = await createProfile({
-        name: form.name,
+      const result = await createProfilesInOrder(count, index => createProfile({
+        name: count === 1 ? form.name : `${form.name.trim() || "环境"} ${index}`,
         engine: form.engine,
         ...(form.engine === "chromium" && !appMode?.legacyRemote ? { chromiumRuntime: form.chromiumRuntime || "cloakbrowser" } : {}),
         group: form.group,
@@ -2683,12 +2695,14 @@ function App() {
         emailPassword: form.emailPassword,
         twofa: form.twofa,
         proxy: form.host.trim() ? { type: form.proxyType, host: form.host, port: form.port, user: form.user, pass: form.pass } : null,
-      });
-      if (r.ok) {
+      }));
+      if (!result.error) {
         closeCreate();
         await load();
       } else {
-        setCreateErr(r.error || "create failed"); // shown inside the modal
+        closeCreate();
+        await load();
+        setActionErr(`已确认创建 ${result.created} / ${count} 个环境；创建中断：${result.error}。请先查看列表，网络中断时最后一项可能已经创建。`);
       }
     } catch (e) {
       setCreateErr(String(e));
@@ -4679,10 +4693,15 @@ function App() {
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="create-profile-title" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head" id="create-profile-title">
               <Icon name="plus" />{t("New profile")}
-              <button type="button" className="modal-close" aria-label={t("Close")} onClick={closeCreate}><Icon name="close" className="sm" /></button>
+              <button type="button" className="modal-close" aria-label={t("Close")} disabled={creating} onClick={closeCreate}><Icon name="close" className="sm" /></button>
             </div>
             <div className="modal-body">
               {createErr && <div className="modal-err"><Icon name="alert" className="sm" />{createErr}</div>}
+              <label className="fld">
+                <span>创建环境数量（1–100）</span>
+                <input type="number" min="1" max="100" step="1" value={createCount} disabled={creating} onChange={(event) => setCreateCount(event.target.value)} />
+                {Number(createCount) > 1 && <small>每个环境独立创建；如填写代理，所有新环境使用同一条代理。</small>}
+              </label>
               <div className="fld-row">
                 <label className="fld grow">
                   <span>{t("Name")}</span>
@@ -4816,7 +4835,7 @@ function App() {
               <FingerprintSettings engine={form.engine} chromiumRuntime={appMode?.legacyRemote ? "" : appMode?.chromiumRuntime ?? form.chromiumRuntime} ownChromium={ownChromium} screen={form.screen} onScreenChange={(value) => setF("screen", value)} platformOs={form.platformOs} onPlatformOsChange={(value) => setF("platformOs", value)} />
             </div>
             <div className="modal-foot">
-              <button className="btn ghost" onClick={closeCreate}>{t("Cancel")}</button>
+              <button className="btn ghost" disabled={creating} onClick={closeCreate}>{t("Cancel")}</button>
               <button className="btn primary" disabled={creating} onClick={submitCreate}>{creating ? t("Creating…") : t("Create profile")}</button>
             </div>
           </div>
