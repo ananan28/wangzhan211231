@@ -15,15 +15,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: 40571216563
+          run-id: 40605014879
           name: nanfu-chromium-unverified-windows
           path: installer
-      - name: Test existing known build in a Chinese installation directory
+      - name: Test branded build in an ASCII installation directory
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $installer = @(Get-ChildItem installer -Filter "*.exe" -File)[0]
-          $root = Join-Path $env:LOCALAPPDATA "南孚路径测试"
+          $installer = @(Get-ChildItem installer -Recurse -Filter "*.exe" -File)[0]
+          $root = Join-Path $env:LOCALAPPDATA "NanfuPathProbe"
           $install = Start-Process -FilePath $installer.FullName -ArgumentList "/S", "/D=$root" -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "Installer failed: $($install.ExitCode)" }
           $exe = Join-Path $root "aliasmode.exe"
@@ -36,9 +36,9 @@ jobs:
           $app.Refresh()
           Get-Content $err -ErrorAction SilentlyContinue
           Get-Content $out -ErrorAction SilentlyContinue
-          if ($app.HasExited) { throw "Application exited in Unicode directory: $($app.ExitCode)" }
+          if ($app.HasExited) { throw "Application exited in ASCII directory: $($app.ExitCode)" }
           Stop-Process -Id $app.Id -Force
-          Write-Host "Existing application starts in Unicode directory"
+          Write-Host "Branded application starts in ASCII directory"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
