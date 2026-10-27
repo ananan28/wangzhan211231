@@ -4,7 +4,7 @@
 
 add_task(async function tab_fingerprint_keys_and_reload_toggle() {
   const { SessionStore } = ChromeUtils.importESModule(
-    "resource:///modules/sessionstore/SessionStore.sys.mjs"
+    "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs"
   );
   const nativeKeys = new Map();
   const rfp = Cc["@mozilla.org/rfp-service;1"].getService(Ci.nsIRFPService);
