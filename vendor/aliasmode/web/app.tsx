@@ -3180,7 +3180,7 @@ function App() {
       <>
         <main className="onboarding">
         <section className="onboarding-card" aria-labelledby="onboarding-title">
-          <div className="onboarding-brand"><AliasLoop />AliasMode <span>by Xreacher</span></div>
+          <div className="onboarding-brand"><AliasLoop />南孚浏览器 <span>by Xreacher</span></div>
           {restartRequired ? (
             <>
               <h1 id="onboarding-title">{appMode?.mode === "cloud" ? t("Switching to Cloud mode") : t("Switching to Local mode")}</h1>
@@ -3397,7 +3397,7 @@ function App() {
           </button>
         )}
         <div className="brandrow">
-          <div className="brand"><AliasLoop />AliasMode</div>
+          <div className="brand"><AliasLoop />南孚浏览器</div>
           {appVersion && <span className="appversion" title={appVersion}>{appVersion}</span>}
         </div>
         <div className="newrow">
@@ -3593,7 +3593,7 @@ function App() {
                 </a>
               ))}
             </div>
-            <p className="footer-mark" aria-hidden="true">AliasMode</p>
+            <p className="footer-mark" aria-hidden="true">南孚浏览器</p>
           </div>
         </div>
         {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
