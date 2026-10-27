@@ -14,8 +14,8 @@ test("dashboard renders the approved Alias Loop logo and it survives dark mode",
   // SVG's #111827 stroke is invisible on a dark surface.
   expect(app).toContain("function AliasLoop(");
   expect(app).toContain('stroke="currentColor"');
-  expect(app).toContain('<div className="brand"><AliasLoop />AliasMode</div>');
-  expect(app).toContain('<div className="onboarding-brand"><AliasLoop />AliasMode');
+  expect(app).toContain('<div className="brand"><AliasLoop />南孚浏览器</div>');
+  expect(app).toContain('<div className="onboarding-brand"><AliasLoop />南孚浏览器');
   expect(styles).toContain(".alias-loop .loop-accent { stroke: var(--accent); }");
   expect(styles).not.toContain(".brand::before");
   // Both marks draw the same approved paths as the packaged asset.
@@ -878,7 +878,7 @@ test("the second accent marks identity, and the credit matches the website", () 
   expect(app).not.toContain('className="watermark" href="https://aliasmode.com/"');
   expect(styles).toContain(".watermark");
   // The site paints its footer wordmark as a clipped gradient, not flat text.
-  expect(app).toContain('<p className="footer-mark" aria-hidden="true">AliasMode</p>');
+  expect(app).toContain('<p className="footer-mark" aria-hidden="true">南孚浏览器</p>');
   expect(styles).toContain("-webkit-background-clip: text; background-clip: text; color: transparent;");
   // It is a credit, not a control: it must not survive into the icon rail.
   expect(styles).toContain(".sidebar.collapsed .sidecredit { display: none; }");
