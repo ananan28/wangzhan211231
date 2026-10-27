@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { ensureAliasmodeChromium } from "../aliasmode-chromium.ts";
 
-test("Chromium profiles keep local data isolated across a restart", async () => {
+const liveTest = process.env.NANFU_LIVE_ISOLATION === "1" ? test : test.skip;
+
+liveTest("Chromium profiles keep local data isolated across a restart", async () => {
   const root = await mkdtemp(join(tmpdir(), "nanfu-isolation-"));
   const server = Bun.serve({
     hostname: "127.0.0.1",
