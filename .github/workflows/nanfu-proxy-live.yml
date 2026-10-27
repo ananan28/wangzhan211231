@@ -1,0 +1,30 @@
+name: Nanfu real Chromium proxy test
+on:
+  push:
+    branches: [feature/chromium-migration]
+    paths:
+      - .github/workflows/nanfu-proxy-live.yml
+      - vendor/aliasmode/scripts/nanfu-proxy-live.test.ts
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proxy:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: vendor/aliasmode
+    steps:
+      - name: Preserve line endings
+        run: git config --global core.autocrlf false
+        working-directory: ${{ github.workspace }}
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.21"
+      - run: bun install --frozen-lockfile
+      - run: bun test scripts/nanfu-proxy-live.test.ts
+        env:
+          NANFU_LIVE_PROXY_TEST: "1"
+      - run: bun run typecheck
