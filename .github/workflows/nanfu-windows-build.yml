@@ -24,8 +24,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      - name: Prepare with verified baseline Bun
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = Join-Path $env:RUNNER_TEMP "bun-baseline.zip"
+          $dir = Join-Path $env:RUNNER_TEMP "bun-baseline"
+          Invoke-WebRequest "https://github.com/oven-sh/bun/releases/download/bun-v1.2.21/bun-windows-x64-baseline.zip" -OutFile $zip
+          if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne "23f2df1f40d963e5b6104e1a565df992aab8968da5004f460617073843b8b8be") { throw "Bun archive checksum mismatch" }
+          Expand-Archive $zip $dir -Force
+          $candidates = @(Get-ChildItem $dir -Recurse -File -Filter "bun.exe")
+          if ($candidates.Count -ne 1) { throw "Invalid Bun archive" }
+          & $candidates[0].FullName scripts/prepare-windows-bundle.ts
+          if ($LASTEXITCODE -ne 0) { throw "Bundle preparation failed" }
       - name: Build development installer
-        run: bun run desktop:build:nsis
+        run: bunx tauri build --bundles nsis --no-sign
       - name: Save development installer
         uses: actions/upload-artifact@v4
         with:
