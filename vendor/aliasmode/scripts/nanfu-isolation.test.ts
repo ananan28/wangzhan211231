@@ -116,7 +116,7 @@ liveTest("simultaneous Chromium profiles isolate cookies, local storage and canv
       let port = "";
       for (let i = 0; i < 60; i++) {
         try {
-          port = (await Bun.file(join(dataDir, "DevToolsActivePort")).text()).split("\n")[0].trim();
+          port = (await Bun.file(join(dataDir, "DevToolsActivePort")).text()).split("\n")[0]?.trim() ?? "";
           if (/^\d+$/.test(port)) break;
         } catch {}
         await Bun.sleep(1000);
@@ -130,10 +130,11 @@ liveTest("simultaneous Chromium profiles isolate cookies, local storage and canv
       await page.goto(`http://127.0.0.1:${server.port}/`);
       return page;
     };
-    const results = await Promise.allSettled([launch("a", 314159), launch("b", 271828)]);
-    if (results[0].status === "rejected") throw results[0].reason;
-    if (results[1].status === "rejected") throw results[1].reason;
-    const [a, b] = [results[0].value, results[1].value];
+    const [resultA, resultB] = await Promise.allSettled([launch("a", 314159), launch("b", 271828)] as const);
+    if (resultA.status === "rejected") throw resultA.reason;
+    if (resultB.status === "rejected") throw resultB.reason;
+    const a = resultA.value;
+    const b = resultB.value;
     const read = (page: typeof a) => page.evaluate(() => {
       const canvas = document.createElement("canvas");
       canvas.width = 200; canvas.height = 60;
