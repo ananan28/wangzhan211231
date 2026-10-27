@@ -1,0 +1,46 @@
+name: Nanfu installation path diagnostic
+on:
+  push:
+    branches: [feature/chromium-migration]
+    paths: [.github/workflows/nanfu-path-diagnostic.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  path:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 40571216563
+          name: nanfu-chromium-unverified-windows
+          path: installer
+      - name: Test existing known build in a Chinese installation directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = @(Get-ChildItem installer -Filter "*.exe" -File)[0]
+          $root = Join-Path $env:LOCALAPPDATA "南孚路径测试"
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList "/S", "/D=$root" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer failed: $($install.ExitCode)" }
+          $exe = Join-Path $root "aliasmode.exe"
+          if (!(Test-Path -LiteralPath $exe)) { throw "Requested custom install path was not used" }
+          $env:RUST_BACKTRACE = "1"
+          $err = Join-Path $env:RUNNER_TEMP "path-stderr.txt"
+          $out = Join-Path $env:RUNNER_TEMP "path-stdout.txt"
+          $app = Start-Process -FilePath $exe -PassThru -RedirectStandardError $err -RedirectStandardOutput $out
+          Start-Sleep -Seconds 15
+          $app.Refresh()
+          Get-Content $err -ErrorAction SilentlyContinue
+          Get-Content $out -ErrorAction SilentlyContinue
+          if ($app.HasExited) { throw "Application exited in Unicode directory: $($app.ExitCode)" }
+          Stop-Process -Id $app.Id -Force
+          Write-Host "Existing application starts in Unicode directory"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nanfu-path-diagnostics
+          path: ${{ runner.temp }}/path-*.txt
