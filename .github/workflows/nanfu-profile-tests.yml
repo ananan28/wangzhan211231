@@ -1,0 +1,27 @@
+name: Nanfu profile tests
+on:
+  push:
+    branches: [feature/chromium-migration]
+    paths:
+      - .github/workflows/nanfu-profile-tests.yml
+      - vendor/aliasmode/web/**
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  profiles:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: vendor/aliasmode
+    steps:
+      - name: Preserve line endings
+        run: git config --global core.autocrlf false
+        working-directory: ${{ github.workspace }}
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.21"
+      - run: bun install --frozen-lockfile
+      - run: bun test web/batch-create.test.ts
+      - run: bun run typecheck
