@@ -2,11 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { SessionStore } from "resource:///modules/sessionstore/SessionStore.sys.mjs";
+import { SessionStore } from "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs";
 import { createProfile, validateProfile, onReload, cloneProfile } from
   "resource:///modules/TabFingerprintState.sys.mjs";
 
-import { CustomizableUI } from "resource:///modules/CustomizableUI.sys.mjs";
+import { CustomizableUI } from "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs";
 
 const KEY = "tab-fingerprint-v1";
 const states = new WeakMap();
