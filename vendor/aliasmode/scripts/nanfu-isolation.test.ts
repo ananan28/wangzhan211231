@@ -18,9 +18,12 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
   });
   const contexts = [];
   try {
+    console.log("isolation: downloading and verifying Chromium");
     const executablePath = await ensureAliasmodeChromium(join(root, "runtime"));
+    console.log("isolation: Chromium ready");
     const url = `http://127.0.0.1:${server.port}/`;
     for (const name of ["a", "b"]) {
+      console.log(`isolation: launching profile ${name}`);
       const context = await chromium.launchPersistentContext(join(root, name), {
         executablePath,
         headless: true,
@@ -28,6 +31,7 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
       contexts.push(context);
       const page = context.pages()[0] ?? await context.newPage();
       await page.goto(url);
+      console.log(`isolation: profile ${name} page loaded`);
       await page.evaluate(value => localStorage.setItem("isolation-test", value), name);
     }
     for (let index = 0; index < contexts.length; index++) {
@@ -36,6 +40,7 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
       await contexts[index].close();
     }
     contexts.length = 0;
+    console.log("isolation: reopening first profile");
     const restored = await chromium.launchPersistentContext(join(root, "a"), {
       executablePath,
       headless: true,
@@ -49,4 +54,4 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
     server.stop(true);
     await rm(root, { recursive: true, force: true });
   }
-}, 180000);
+}, 420000);
