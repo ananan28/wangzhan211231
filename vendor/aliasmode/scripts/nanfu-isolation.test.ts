@@ -93,3 +93,77 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
     await rm(root, { recursive: true, force: true });
   }
 }, 240000);
+
+liveTest("simultaneous Chromium profiles isolate cookies, local storage and canvas", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nanfu-parallel-"));
+  const server = Bun.serve({
+    hostname: "127.0.0.1", port: 0,
+    fetch: () => new Response("<!doctype html><title>Parallel isolation</title>", {
+      headers: { "content-type": "text/html" },
+    }),
+  });
+  const children: ReturnType<typeof Bun.spawn>[] = [];
+  const browsers: Awaited<ReturnType<typeof chromium.connectOverCDP>>[] = [];
+  try {
+    const executable = await ensureAliasmodeChromium(join(root, "runtime"));
+    const launch = async (name: string, seed: number) => {
+      const dataDir = join(root, name);
+      const child = Bun.spawn([executable, `--user-data-dir=${dataDir}`, "--headless=new",
+        "--disable-gpu", "--no-first-run", `--fingerprint=${seed}`,
+        "--fingerprint-platform=windows", "--fingerprint-noise",
+        "--remote-debugging-port=0", "about:blank"], { stdout: "ignore", stderr: "ignore" });
+      children.push(child);
+      let port = "";
+      for (let i = 0; i < 60; i++) {
+        try {
+          port = (await Bun.file(join(dataDir, "DevToolsActivePort")).text()).split("\n")[0].trim();
+          if (/^\d+$/.test(port)) break;
+        } catch {}
+        await Bun.sleep(1000);
+      }
+      if (!port) throw new Error(`CDP did not become ready for ${name}`);
+      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 30000 });
+      browsers.push(browser);
+      const context = browser.contexts()[0];
+      if (!context) throw new Error(`No default context for ${name}`);
+      const page = context.pages()[0] ?? await context.newPage();
+      await page.goto(`http://127.0.0.1:${server.port}/`);
+      return page;
+    };
+    const results = await Promise.allSettled([launch("a", 314159), launch("b", 271828)]);
+    if (results[0].status === "rejected") throw results[0].reason;
+    if (results[1].status === "rejected") throw results[1].reason;
+    const [a, b] = [results[0].value, results[1].value];
+    const read = (page: typeof a) => page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 200; canvas.height = 60;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas unavailable");
+      ctx.fillStyle = "#12ac84"; ctx.fillRect(3, 2, 194, 54);
+      ctx.font = "17px sans-serif"; ctx.fillStyle = "#421ec9";
+      ctx.fillText("Nanfu canvas sample 0123456789", 5, 30);
+      return { value: localStorage.getItem("parallel"), cookie: document.cookie, canvas: canvas.toDataURL() };
+    });
+    await a.evaluate(() => { localStorage.setItem("parallel", "A"); document.cookie = "parallel=A; path=/"; });
+    expect((await read(b)).value).toBeNull();
+    expect((await read(b)).cookie).not.toContain("parallel=A");
+    await b.evaluate(() => { localStorage.setItem("parallel", "B"); document.cookie = "parallel=B; path=/"; });
+    const [stateA, stateB] = await Promise.all([read(a), read(b)]);
+    expect(stateA.value).toBe("A"); expect(stateB.value).toBe("B");
+    expect(stateA.cookie).toContain("parallel=A"); expect(stateB.cookie).toContain("parallel=B");
+    expect(stateA.canvas).not.toBe(stateB.canvas);
+    await Promise.all([a.reload(), b.reload()]);
+    expect((await read(a)).canvas).toBe(stateA.canvas);
+    expect((await read(b)).canvas).toBe(stateB.canvas);
+  } finally {
+    await Promise.all(browsers.map(async browser => {
+      try { const session = await browser.newBrowserCDPSession(); await session.send("Browser.close"); } catch {}
+    }));
+    await Promise.all(children.map(async child => {
+      const closed = await Promise.race([child.exited.then(() => true), Bun.sleep(15000).then(() => false)]);
+      if (!closed) { child.kill(); await child.exited; }
+    }));
+    server.stop(true);
+    await rm(root, { recursive: true, force: true });
+  }
+}, 240000);
