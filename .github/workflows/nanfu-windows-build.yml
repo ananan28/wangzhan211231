@@ -24,6 +24,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      - name: Stage upstream required runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = Join-Path $env:RUNNER_TEMP "aliasmode-156.0.1-beta.36-win.x86_64.zip"
+          Invoke-WebRequest "https://github.com/aliasmode/aliasmode-firefox/releases/download/aliasmode-runtime-156.0.1-beta.36-r11/aliasmode-156.0.1-beta.36-win.x86_64.zip" -OutFile $archive
+          $expected = "5709d0e194a2b75bcb6c909079c67404a63cca713eeca9380c409de23fb3b8b4"
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw "Upstream runtime checksum mismatch" }
+          $extract = Join-Path $env:RUNNER_TEMP "upstream-runtime"
+          Expand-Archive $archive $extract -Force
+          $items = @(Get-ChildItem $extract -Recurse -File -Filter "aliasmode.exe")
+          if ($items.Count -ne 1) { throw "Upstream runtime layout invalid" }
+          $exeHash = (Get-FileHash -LiteralPath $items[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "ALIASMODE_FIREFOX_ARCHIVE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ALIASMODE_FIREFOX_ARCHIVE_SHA256=$expected" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ALIASMODE_FIREFOX_EXECUTABLE_SHA256=$exeHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Prepare with verified baseline Bun
         shell: pwsh
         run: |
