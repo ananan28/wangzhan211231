@@ -16,42 +16,49 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
       headers: { "content-type": "text/html" },
     }),
   });
-  const contexts = [];
+  let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
     console.log("isolation: downloading and verifying Chromium");
     const executablePath = await ensureAliasmodeChromium(join(root, "runtime"));
-    console.log("isolation: Chromium ready");
     const url = `http://127.0.0.1:${server.port}/`;
-    for (const name of ["a", "b"]) {
-      console.log(`isolation: launching profile ${name}`);
-      const context = await chromium.launchPersistentContext(join(root, name), {
-        executablePath,
-        headless: true,
-      });
-      contexts.push(context);
-      const page = context.pages()[0] ?? await context.newPage();
-      await page.goto(url);
-      console.log(`isolation: profile ${name} page loaded`);
-      await page.evaluate(value => localStorage.setItem("isolation-test", value), name);
+    async function visit(name: string, setValue?: string) {
+      console.log(`isolation: launching ${name}`);
+      child = Bun.spawn([executablePath, `--user-data-dir=${join(root, name)}`,
+        "--headless=new", "--disable-gpu", "--no-first-run",
+        "--remote-debugging-port=19223", "about:blank"], { stdout: "ignore", stderr: "ignore" });
+      let ready = false;
+      for (let i = 0; i < 45; i++) {
+        try {
+          const response = await fetch("http://127.0.0.1:19223/json/version");
+          if (response.ok) { ready = true; break; }
+        } catch {}
+        await Bun.sleep(1000);
+      }
+      if (!ready) throw new Error(`Chromium CDP did not become ready for ${name}`);
+      const browser = await chromium.connectOverCDP("http://127.0.0.1:19223", { timeout: 30000 });
+      try {
+        const context = browser.contexts()[0];
+        const page = context.pages()[0] ?? await context.newPage();
+        await page.goto(url);
+        const previous = await page.evaluate(() => localStorage.getItem("isolation-test"));
+        if (setValue !== undefined) {
+          await page.evaluate(value => localStorage.setItem("isolation-test", value), setValue);
+        }
+        return previous;
+      } finally {
+        await browser.close();
+        child.kill();
+        await child.exited;
+        child = undefined;
+      }
     }
-    for (let index = 0; index < contexts.length; index++) {
-      expect(await contexts[index].pages()[0].evaluate(() => localStorage.getItem("isolation-test")))
-        .toBe(index === 0 ? "a" : "b");
-      await contexts[index].close();
-    }
-    contexts.length = 0;
-    console.log("isolation: reopening first profile");
-    const restored = await chromium.launchPersistentContext(join(root, "a"), {
-      executablePath,
-      headless: true,
-    });
-    contexts.push(restored);
-    const page = restored.pages()[0] ?? await restored.newPage();
-    await page.goto(url);
-    expect(await page.evaluate(() => localStorage.getItem("isolation-test"))).toBe("a");
+    expect(await visit("a", "a")).toBeNull();
+    expect(await visit("b", "b")).toBeNull();
+    expect(await visit("a")).toBe("a");
+    expect(await visit("b")).toBe("b");
   } finally {
-    for (const context of contexts) await context.close().catch(() => {});
+    if (child) { child.kill(); await child.exited; }
     server.stop(true);
     await rm(root, { recursive: true, force: true });
   }
-}, 420000);
+}, 240000);
