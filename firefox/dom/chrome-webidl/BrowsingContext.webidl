@@ -240,6 +240,9 @@ interface BrowsingContext {
   // Enable media query medium override, for DevTools.
   [SetterThrows] attribute DOMString mediumOverride;
 
+  // Persisted per-tab randomization seed; never exposed to web content.
+  [SetterThrows] attribute UTF8String fingerprintSeed;
+
   // Language emulation for WebDriver BiDi and DevTools.
   [SetterThrows] attribute UTF8String languageOverride;
 
@@ -509,3 +512,4 @@ interface BrowsingContextGroup {
 
   readonly attribute unsigned long long id;
 };
+

@@ -242,6 +242,8 @@ struct EmbedderColorSchemes {
   FIELD(MediumOverride, nsString)                                             \
   /* DevTools override for prefers-color-scheme */                            \
   FIELD(PrefersColorSchemeOverride, dom::PrefersColorSchemeOverride)          \
+  /* Persisted tab-local canvas/WebGL randomization secret. Chrome only. */  \
+  FIELD(FingerprintSeed, nsCString)                                         \
   FIELD(LanguageOverride, nsCString)                                          \
   FIELD(TimezoneOverride, nsString)                                           \
   /* DevTools override for prefers-reduced-motion */                          \
@@ -1103,6 +1105,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     aOverride = GetMediumOverride();
   }
 
+  void GetFingerprintSeed(nsACString& aSeed) const {
+    aSeed = GetFingerprintSeed();
+  }
+
   void GetLanguageOverride(nsACString& aLanguageOverride) const {
     aLanguageOverride = GetLanguageOverride();
   }
@@ -1319,6 +1325,11 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   }
 
   bool CanSet(FieldIndex<IDX_ServiceWorkersDisabledByPolicy>, bool,
+              ContentParent* aSource) {
+    return XRE_IsParentProcess() && !aSource && IsTop();
+  }
+
+  bool CanSet(FieldIndex<IDX_FingerprintSeed>, const nsCString&,
               ContentParent* aSource) {
     return XRE_IsParentProcess() && !aSource && IsTop();
   }
@@ -1911,3 +1922,4 @@ struct ParamTraits<mozilla::dom::BrowsingContext::IPCInitializer> {
 }  // namespace IPC
 
 #endif  // !defined(mozilla_dom_BrowsingContext_h)
+

@@ -45,6 +45,10 @@ SharedWorkerManager::SharedWorkerManager(
       mResolvedScriptURL(DeserializeURI(aData.resolvedScriptURL())),
       mWorkerOptions(aData.workerOptions()),
       mIsSecureContext(aData.isSecureContext()),
+      mHasFingerprintingRandomizationKey(
+          aData.cookieJarSettings().hasFingerprintingRandomizationKey()),
+      mFingerprintingRandomizationKey(
+          aData.cookieJarSettings().fingerprintingRandomizationKey().Clone()),
       mSuspended(false),
       mFrozen(false) {
   MOZ_ASSERT(NS_IsMainThread());
@@ -102,6 +106,10 @@ SharedWorkerManager::MatchOnMainThread(
   bool match =
       aData.domain() == mDomain && urlEquals &&
       aData.workerOptions().mName == mWorkerOptions.mName &&
+      aData.cookieJarSettings().hasFingerprintingRandomizationKey() ==
+          mHasFingerprintingRandomizationKey &&
+      aData.cookieJarSettings().fingerprintingRandomizationKey() ==
+          mFingerprintingRandomizationKey &&
       // We want to be sure that the window's principal subsumes the
       // SharedWorker's loading principal and vice versa.
       mLoadingPrincipal->Subsumes(aLoadingPrincipal) &&

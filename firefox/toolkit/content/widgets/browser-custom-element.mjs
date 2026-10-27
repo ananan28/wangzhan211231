@@ -2023,3 +2023,4 @@ export class MozBrowser extends MozElements.MozElementMixin(XULFrameElement) {
 
 MozXULElement.implementCustomInterface(MozBrowser, [Ci.nsIBrowser]);
 customElements.define("browser", MozBrowser);
+
