@@ -54,7 +54,10 @@ liveTest("Chromium uses configured HTTP proxy and does not fall back after it st
       expect(await page.locator("body").innerText()).toBe("through-proxy");
       expect(proxyRequests).toBeGreaterThan(0);
       expect(directRequests).toBe(0);
-      await new Promise<void>((resolve, reject) => proxy.close(error => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => {
+        proxy.close(error => error ? reject(error) : resolve());
+        proxy.closeAllConnections();
+      });
       let navigationFailed = false;
       try {
         await page.goto(`http://nanfu-test.example:${originPort}/after-proxy-stop`, { timeout: 15000 });
