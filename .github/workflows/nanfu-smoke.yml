@@ -36,3 +36,15 @@ jobs:
           if ($app.HasExited) { throw "Application exited during startup: $($app.ExitCode)" }
           Stop-Process -Id $app.Id -Force
           Write-Host "Installed application remained running for 15 seconds"
+      - name: Verify installed manager launches Chromium
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:LOCALAPPDATA "AliasMode"
+          $sidecar = Join-Path $root "aliasmode-sidecar.exe"
+          if (!(Test-Path -LiteralPath $sidecar)) { throw "Installed sidecar not found" }
+          $env:ALIASMODE_PLAYWRIGHT_RUNTIME = Join-Path $root "playwright"
+          if (!(Test-Path -LiteralPath $env:ALIASMODE_PLAYWRIGHT_RUNTIME)) { throw "Packaged browser runtime not found" }
+          $state = Join-Path $env:RUNNER_TEMP "nanfu-chromium-smoke"
+          & $sidecar __cloud-launcher-smoke --chromium-runtime aliasmode --headless --state-root $state
+          if ($LASTEXITCODE -ne 0) { throw "Installed manager failed Chromium profile smoke: $LASTEXITCODE" }
