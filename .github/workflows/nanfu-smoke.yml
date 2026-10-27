@@ -15,7 +15,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: 40569040918
+          run-id: 40571216563
           name: nanfu-chromium-unverified-windows
           path: installer
       - name: Install and check application process
