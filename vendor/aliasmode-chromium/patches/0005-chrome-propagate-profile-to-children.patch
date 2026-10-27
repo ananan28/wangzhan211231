@@ -1,0 +1,29 @@
+Subject: [PATCH] profile: pass the profile to every child process
+
+The profile switch is in the list of switches copied to every child
+process, so renderers, the GPU process and the network service all read
+the same profile. Without it only the browser process sees the profile,
+and values computed in more than one process disagree. For example, the
+Device-Memory header comes from the browser and navigator.deviceMemory
+from the renderer.
+
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 19045777b3..448ed5078e 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -2933,6 +2933,15 @@ void ChromeContentBrowserClient::AppendExtraCommandLineSwitches(
+   static const char* const kCommonSwitchNames[] = {
+       embedder_support::kUserAgent,
+       switches::kUserDataDir,  // Make logs go to the right file.
++      // Apostate: the device profile must reach every process type, not just
++      // renderers. deviceMemory is the worked example — it is computed
++      // independently in the browser for the Device-Memory request header and
++      // in the renderer for navigator.deviceMemory, so a profile that reaches
++      // only one of them makes the header contradict JavaScript. GPU and
++      // network processes have their own reasons. This list is copied for every
++      // child, which is why the switch belongs here rather than in a
++      // per-process-type list.
++      ::switches::kApostateProfile,
+   };
+   command_line->CopySwitchesFrom(browser_command_line, kCommonSwitchNames);
+ 

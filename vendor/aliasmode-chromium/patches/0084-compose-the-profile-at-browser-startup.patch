@@ -1,0 +1,63 @@
+Subject: [PATCH] chrome: compose the profile early in browser startup
+
+The browser composes its profile at the end of the user-data-dir step in
+ChromeMainDelegate::PreSandboxStartup, before the zygote fork and before
+any child process exists. Every child command line then carries the
+profile switch. On Linux, a later composition would miss the zygote, and
+every renderer forked from it would report host values such as
+navigator.hardwareConcurrency. The fixed point also keeps the browser
+and its renderers in agreement, for example the Device-Memory header and
+navigator.deviceMemory. Nothing is written to disk.
+
+diff --git a/chrome/app/chrome_main_delegate.cc b/chrome/app/chrome_main_delegate.cc
+index c027a43eb3..232a716333 100644
+--- a/chrome/app/chrome_main_delegate.cc
++++ b/chrome/app/chrome_main_delegate.cc
+@@ -9,6 +9,7 @@
+ #include <string>
+ #include <variant>
+ 
++#include "base/apostate/compose.h"
+ #include "base/base_paths.h"
+ #include "base/check.h"
+ #include "base/command_line.h"
+@@ -1491,6 +1492,39 @@ void ChromeMainDelegate::PreSandboxStartup() {
+     InitializeUserDataDir(base::CommandLine::ForCurrentProcess());
+   }
+ 
++  // Apostate: decide this launch's device profile here, in the browser, and
++  // put it on the command line before anything can copy that command line.
++  //
++  // The compositor used to run lazily, from the profile loader's first use.
++  // That made the identity a function of whichever subsystem happened to ask
++  // for a profile field first, which is not a decision anyone made. Two
++  // consequences were real rather than theoretical. On Linux, content forks
++  // the zygote from ContentMainRunnerImpl::Initialize, after this function and
++  // before PostEarlyInitialization; the zygote's command line is built by
++  // AppendExtraCommandLineSwitches, so a profile installed later than this
++  // never reaches it, and the zygote caching a null profile before forking
++  // hands every renderer the host's values. And on every platform the browser
++  // sizes pools from SysInfo, which consults the profile, so a profile
++  // installed after that point makes the browser and the renderer disagree
++  // about the same machine.
++  //
++  // This is the earliest point that satisfies both conditions the compositor
++  // needs. InitializeUserDataDir just ran, so chrome::DIR_USER_DATA is
++  // resolved -- which the command-line switch alone does not give us, because
++  // on POSIX that switch is appended back only when the requested directory
++  // was invalid. And no child process of any type exists yet: content calls
++  // PreSandboxStartup before SandboxInitialized, before the zygote fork, and
++  // long before BrowserMainLoop. BasicStartupComplete is earlier still, but
++  // the user data directory is not resolved there.
++  //
++  // Only the browser composes. A child carries --type and receives the
++  // profile it was given.
++  if (process_type.empty()) {
++    base::FilePath user_data_dir;
++    base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
++    base::apostate::InstallComposedProfile(user_data_dir);
++  }
++
+   // Register component_updater PathProvider after DIR_USER_DATA overridden by
+   // command line flags. Maybe move the chrome PathProvider down here also?
+   component_updater::RegisterPathProvider(chrome::DIR_COMPONENTS,

@@ -1,0 +1,81 @@
+Subject: [PATCH] tests: static link for ANGLE parallel shader tests
+
+Builds the ANGLE parallel shader compile tests as a statically linked
+executable. The shared test executable hits control-flow-integrity traps
+on cross-library calls under the official build settings before any test
+runs. The test bodies and expectations are unchanged, no sanitizer is
+turned off, and nothing changes in the browser.
+
+diff --git a/third_party/angle/src/tests/BUILD.gn b/third_party/angle/src/tests/BUILD.gn
+index 79f77bda33..1aa017b79a 100644
+--- a/third_party/angle/src/tests/BUILD.gn
++++ b/third_party/angle/src/tests/BUILD.gn
+@@ -401,6 +401,33 @@ if (is_win || is_linux || is_chromeos || is_android || is_fuchsia || is_apple) {
+   }
+ }
+ 
++# Link the existing shader tests and utility callbacks in one CFI link unit.
++if (is_linux && angle_enable_vulkan && angle_has_rapidjson) {
++  angle_test("apostate_parallel_shader_tests") {
++    testonly = true
++    include_dirs = [ "." ]
++    sources = [
++      "apostate_parallel_shader_tests_main.cpp",
++      "gl_tests/ParallelShaderCompileTest.cpp",
++      "test_utils/ANGLETest.cpp",
++      "test_utils/system_info_util.cpp",
++    ]
++    defines = []
++    if (angle_use_partition_alloc) {
++      defines += [ "ANGLE_USE_PARTITION_ALLOC" ]
++    }
++    configs += [ "${angle_root}:libANGLE_config" ]
++    deps = [
++      ":angle_common_test_utils_static",
++      "$angle_root:angle_static",
++      "$angle_root:angle_gl_enum_utils",
++      "$angle_root:angle_image_util",
++    ]
++    data = [ "angle_end2end_tests_expectations.txt" ]
++    data_deps = [ "$angle_root/src/common/vulkan:angle_vulkan_icd" ]
++  }
++}
++
+ if (angle_enable_cl_testing) {
+   copy("opencl_icd") {
+     sources = [ "$angle_root/src/tests/cl_support/ancle.icd" ]
+diff --git a/third_party/angle/src/tests/apostate_parallel_shader_tests_main.cpp b/third_party/angle/src/tests/apostate_parallel_shader_tests_main.cpp
+new file mode 100644
+index 0000000000..a66cc20a65
+--- /dev/null
++++ b/third_party/angle/src/tests/apostate_parallel_shader_tests_main.cpp
+@@ -0,0 +1,29 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include <array>
++#include <iostream>
++#include "test_utils/runner/TestSuite.h"
++#include "util/OSWindow.h"
++
++void ANGLEProcessTestArgs(int* argc, char* argv[]);
++
++int main(int argc, char** argv) {
++    ANGLEProcessTestArgs(&argc, argv);
++    // This target registers only ParallelShaderCompileTest's original cases.
++    angle::TestSuite suite(&argc, argv, [] {});
++    constexpr char expectations[] = "src/tests/angle_end2end_tests_expectations.txt";
++    std::array<char, 512> path;
++    if (!angle::FindTestDataPath(expectations, path.data(), path.size())) {
++        std::cerr << "Unable to find pinned ANGLE expectations\n";
++        return 1;
++    }
++    suite.setTestExpectationsAllowMask(angle::GPUTestExpectationsParser::kGpuTestSkip |
++                                      angle::GPUTestExpectationsParser::kGpuTestTimeout |
++                                      angle::GPUTestExpectationsParser::kGpuTestPass);
++    if (!suite.loadAllTestExpectationsFromFile(std::string(path.data()))) {
++        return 1;
++    }
++    return suite.run();
++}

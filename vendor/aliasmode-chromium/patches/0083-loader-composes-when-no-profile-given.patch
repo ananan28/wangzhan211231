@@ -1,0 +1,101 @@
+Subject: [PATCH] base: compose a profile when none is given
+
+A launch without --apostate-profile composes a device profile itself, so
+a browser started with no arguments hides the host. The switch wins when
+present, and the browser writes a composed profile back onto its own
+command line so every child parses the same switch. A supplied profile
+that cannot be decoded stops the launch with an error naming the
+expected encoding. A child process, --fingerprint=off and a catalogue
+that cannot serve the host all leave the host's values in place.
+
+diff --git a/base/apostate/profile.cc b/base/apostate/profile.cc
+index 09c6157e9c..df1ad45dac 100644
+--- a/base/apostate/profile.cc
++++ b/base/apostate/profile.cc
+@@ -7,8 +7,11 @@
+ #include <algorithm>
+ #include <cmath>
+ #include <memory>
++#include <optional>
+ #include <utility>
+ 
++#include "base/apostate/compose.h"
++#include "base/apostate/explain.h"
+ #include "base/base64.h"
+ #include "base/base_switches.h"
+ #include "base/command_line.h"
+@@ -87,23 +90,66 @@ const Profile* Profile::Get() {
+     return g_profile_for_testing;
+   }
+ 
+-  // Initialised on first use rather than from an explicit startup hook.
++  // Cached on first use, but no longer *decided* on first use.
+   //
+-  // The command line is fully populated before anything in base runs, so there
+-  // is no window in which this could parse too early. Doing it here instead of
+-  // from content's startup sequence removes the ordering hazard entirely —
+-  // there is no call site to place correctly, and no process type that can be
+-  // forgotten. Function-local static initialisation is thread-safe.
++  // The profile for a launch is composed and installed onto the command line
++  // from a startup hook in chrome/app/chrome_main_delegate.cc, which runs in
++  // the browser process before content forks a zygote or builds any child's
++  // command line. By the time anything reaches this function the switch is
++  // already present and this only parses it, so which call site happens to be
++  // first cannot change the identity. Function-local static initialisation is
++  // thread-safe.
++  //
++  // The composition call below is the fallback for a process that never
++  // reaches that hook: a base unit test, an embedder that is not Chrome, or a
++  // browser whose very first profile read somehow precedes PreSandboxStartup.
++  // It composes at most once per launch, because it installs the switch it
++  // composed and every later caller finds it. In a child process it composes
++  // nothing, which leaves the host inherited -- the same thing an absent
++  // switch has always meant. It passes no user data directory because base/
++  // cannot compute Chrome's default one; the consequence is that font
++  // provisioning cannot be checked on that path, and the composition reports
++  // it.
+   static const Profile* const profile = [] {
+     if (!CommandLine::InitializedForCurrentProcess()) {
+       return static_cast<const Profile*>(nullptr);
+     }
+     const CommandLine* command_line = CommandLine::ForCurrentProcess();
+-    if (!command_line->HasSwitch(switches::kApostateProfile)) {
++
++    if (command_line->HasSwitch(::switches::kApostateProfile)) {
++      const Profile* supplied = ParseOrNull(
++          command_line->GetSwitchValueASCII(::switches::kApostateProfile));
++      if (!supplied) {
++        // An explicitly supplied profile is the strongest layer in the launch
++        // precedence, so a value that cannot be honoured stops the launch. It
++        // used to fall through to composition, which meant a switch pointed at
++        // a profile *file* -- the obvious mistake, since the file is right
++        // there and the switch names it -- produced a working browser wearing
++        // a different device, and said so only on stderr. A caller that built
++        // the switch wrongly got a plausible wrong answer instead of a
++        // failure.
++        //
++        // In a child process this cannot fire: patch 0005 copies the value the
++        // browser already parsed, byte for byte. It fires in the process whose
++        // command line the operator wrote, which is the only one that can fix
++        // it.
++        RefuseLaunch(
++            "--apostate-profile is not base64-encoded profile JSON, so the "
++            "profile it names cannot be loaded and this launch stops rather "
++            "than composing a different device and presenting it as the one "
++            "you asked for. It takes the encoded bytes, not a path and not "
++            "raw JSON: --apostate-profile=\"$(base64 < profile.json | tr -d "
++            "'\\n')\".");
++      }
++      return supplied;
++    }
++
++    InstallComposedProfile(FilePath());
++    if (!command_line->HasSwitch(::switches::kApostateProfile)) {
+       return static_cast<const Profile*>(nullptr);
+     }
+     return static_cast<const Profile*>(ParseOrNull(
+-        command_line->GetSwitchValueASCII(switches::kApostateProfile)));
++        command_line->GetSwitchValueASCII(::switches::kApostateProfile)));
+   }();
+   return profile;
+ }

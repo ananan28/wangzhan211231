@@ -1,0 +1,96 @@
+Subject: [PATCH] gl: allow the SwiftShader WebGL fallback by default
+
+The AllowSwiftShaderFallback feature is enabled by default. On a host
+with no usable GPU, such as a headed browser under Xvfb with Mesa
+llvmpipe, canvas.getContext("webgl") returns a SwiftShader context
+instead of null. Almost every real desktop browser has WebGL, so a null
+context identifies the browser more surely than any renderer string. The
+page console gets no deprecation warning about the fallback, and
+--disable-features=AllowSwiftShaderFallback turns it off.
+
+diff --git a/gpu/command_buffer/service/gles2_cmd_decoder_passthrough.cc b/gpu/command_buffer/service/gles2_cmd_decoder_passthrough.cc
+index 806df82713..3c5d785443 100644
+--- a/gpu/command_buffer/service/gles2_cmd_decoder_passthrough.cc
++++ b/gpu/command_buffer/service/gles2_cmd_decoder_passthrough.cc
+@@ -36,6 +36,7 @@
+ #include "gpu/config/gpu_finch_features.h"
+ #include "gpu/config/gpu_switches.h"
+ #include "third_party/perfetto/include/perfetto/tracing/track.h"
++#include "ui/gl/gl_features.h"
+ #include "ui/gl/gl_implementation.h"
+ #include "ui/gl/gl_utils.h"
+ #include "ui/gl/gl_version_info.h"
+@@ -1191,11 +1192,22 @@ gpu::ContextResult GLES2DecoderPassthroughImpl::Initialize(
+     CheckErrorCallbackState();
+   }
+ 
+-  // Deprecation warning for SwiftShader WebGL fallback
++  // Deprecation warning for SwiftShader WebGL fallback.
++  //
++  // Gated on whether the fallback was allowed at all rather than on the switch
++  // alone. This message goes to the page's console, so with the fallback
++  // re-enabled by feature default it would announce software WebGL on every
++  // GPU-less launch -- a page-visible observable, and the loudest possible one,
++  // since it names the deprecation by hand. It is a nag aimed at a user relying
++  // on the implicit fallback unknowingly; this fork allows it deliberately, so
++  // the condition now asks the same question the allow decision asks.
++  //
++  // It still fires if SwiftShader is somehow reached with the fallback
++  // disallowed, which would be a defect worth seeing.
+   if (feature_info_->IsWebGLContext() &&
+       gl::GetANGLEImplementation() == gl::ANGLEImplementation::kSwiftShader &&
+-      !base::CommandLine::ForCurrentProcess()->HasSwitch(
+-          switches::kEnableUnsafeSwiftShader)) {
++      !features::IsSwiftShaderAllowed(
++          base::CommandLine::ForCurrentProcess())) {
+     constexpr const char* kSwiftShaderFallbackDeprcationMessage =
+         "Automatic fallback to software WebGL has been deprecated. Please use "
+         "the --enable-unsafe-swiftshader "
+diff --git a/ui/gl/gl_features.cc b/ui/gl/gl_features.cc
+index 7cea474aa5..5722e7432b 100644
+--- a/ui/gl/gl_features.cc
++++ b/ui/gl/gl_features.cc
+@@ -316,9 +316,40 @@ bool IsSwiftShaderUsedForWebGLByCommandLine(
+ }
+ #endif
+ 
+-// Allow fallback to SwfitShader without command line flags during the
+-// deprecation period.
+-BASE_FEATURE(kAllowSwiftShaderFallback, base::FEATURE_DISABLED_BY_DEFAULT);
++// Allow fallback to SwiftShader without command line flags.
++//
++// Upstream deprecated this from Chrome 130 and removed it on Linux and macOS
++// from Chrome 139, leaving the default disabled, so on a host with no usable
++// GPU driver canvas.getContext("webgl") now returns null instead of degrading
++// to software. Measured on a headless Linux server under Xvfb, where the only
++// driver is Mesa llvmpipe and the blocklist disables WebGL for it:
++// context_group.cc reports ContextResult::kFatalFailure "WebGL1 blocklisted",
++// chrome://gpu reports WebGL disabled, and a page gets null.
++//
++// Re-enabled here because that null is the strongest tell on the surface this
++// fork exists to serve. Effectively no real desktop browser lacks WebGL, so
++// absence identifies the browser more surely than any renderer string it could
++// have carried -- and with no context, the composed GPU identity, the served
++// limits and the served extension list are all unreachable. It lands hardest
++// on headed-under-a-virtual-display, which is this project's recommended
++// maximum-stealth configuration.
++//
++// This ALLOWS the fallback, it does not force it: selection still prefers
++// hardware, and IsSwiftShaderAllowed() is consulted only once hardware has
++// failed. A host with a working GPU reaches the same branch it reached before.
++//
++// A feature default rather than appending --enable-unsafe-swiftshader during
++// startup, for three reasons. It needs no propagation to the GPU process,
++// where the decision is also made. It leaves no argv footprint -- a command
++// line is readable by any local process, and a browser advertising
++// --enable-unsafe-swiftshader in its own argv is a tell of a different kind.
++// And it cannot be keyed on patch 0091's GPU-less detection, which is one-way
++// by design: the reference deployment has /dev/dri/renderD128 present with no
++// usable driver behind it, so that probe reports a hardware backend and would
++// miss precisely this case.
++//
++// --disable-features=AllowSwiftShaderFallback remains the way to turn it off.
++BASE_FEATURE(kAllowSwiftShaderFallback, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ bool IsSwiftShaderAllowedByFeature() {
+   return base::FeatureList::IsEnabled(kAllowSwiftShaderFallback);

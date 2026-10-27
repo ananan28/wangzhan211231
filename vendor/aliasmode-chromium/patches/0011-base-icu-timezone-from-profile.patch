@@ -1,0 +1,149 @@
+Subject: [PATCH] locale: ICU default timezone from the profile
+
+The ICU default timezone is set from the profile's zone name at ICU
+startup in every process, so the browser, renderers and workers agree on
+the local time. Date and Intl.DateTimeFormat report the claimed zone. A
+zone name ICU does not know is rejected and the host's zone kept, since
+ICU would otherwise fall back to UTC silently.
+
+diff --git a/base/apostate/profile.cc b/base/apostate/profile.cc
+index ba4e3d8b18..423665c8e7 100644
+--- a/base/apostate/profile.cc
++++ b/base/apostate/profile.cc
+@@ -167,6 +167,12 @@ Profile* Profile::ParseOrNull(const std::string& encoded) {
+     }
+   }
+ 
++  if (const DictValue* locale = dict->FindDict("locale")) {
++    if (const std::string* v = locale->FindString("timezone")) {
++      profile->timezone_ = *v;
++    }
++  }
++
+   if (const DictValue* browser = dict->FindDict("browser")) {
+     if (const std::string* v = browser->FindString("user_agent")) {
+       profile->user_agent_ = *v;
+diff --git a/base/apostate/profile.h b/base/apostate/profile.h
+index dc2b9e9282..5f924bc0e8 100644
+--- a/base/apostate/profile.h
++++ b/base/apostate/profile.h
+@@ -137,6 +137,14 @@ class BASE_EXPORT Profile {
+   // depth, and the same fact drives CSS color, dynamic-range and color-gamut.
+   std::optional<int> screen_color_depth() const { return screen_color_depth_; }
+ 
++  // IANA timezone name, e.g. "Europe/Warsaw".
++  //
++  // Only the zone *name* is a host fact. ICU's data is compiled into the binary
++  // and file access is restricted to packages at startup, so the zone list and
++  // every DST rule come from our own build and are identical on every host —
++  // free to get right, and impossible to get wrong per-host.
++  const std::optional<std::string>& timezone() const { return timezone_; }
++
+   // Identifier of the capture this profile was derived from, for diagnostics.
+   const std::string& source_id() const { return source_id_; }
+ 
+@@ -161,6 +169,7 @@ class BASE_EXPORT Profile {
+   std::optional<int> screen_avail_height_;
+   std::optional<float> device_scale_factor_;
+   std::optional<int> screen_color_depth_;
++  std::optional<std::string> timezone_;
+   std::string source_id_;
+ };
+ 
+diff --git a/base/i18n/icu_util.cc b/base/i18n/icu_util.cc
+index 5fc1cadefa..e66140c994 100644
+--- a/base/i18n/icu_util.cc
++++ b/base/i18n/icu_util.cc
+@@ -4,6 +4,10 @@
+ 
+ #include "base/i18n/icu_util.h"
+ 
++#include "base/apostate/profile.h"
++#include "third_party/icu/source/common/unicode/unistr.h"
++#include "third_party/icu/source/i18n/unicode/timezone.h"
++
+ #include "build/build_config.h"
+ 
+ #if BUILDFLAG(IS_WIN)
+@@ -406,7 +410,39 @@ bool InitializeICUWithFileDescriptor(
+     return false;
+   }
+ 
+-  return DoCommonInitialization();
++  if (!DoCommonInitialization()) {
++    return false;
++  }
++
++  // Apostate: set the default zone here, immediately after ICU is initialised
++  // and in whatever process is initialising it.
++  //
++  // InitializeICU runs unconditionally in every process type, which is what
++  // makes this the right place: the browser, every renderer and every worker
++  // share one ICU default, and a process that missed the override would
++  // disagree with the others about what time it is. Comparing a Date in a
++  // worker against one on the main thread is a two-line probe.
++  //
++  // Only the zone name is taken from the profile. ICU's data is compiled into
++  // the binary and file access is restricted to packages at startup, so the
++  // zone list and every DST rule already come from our own build.
++  if (const ::base::apostate::Profile* profile =
++          ::base::apostate::Profile::Get()) {
++    if (profile->timezone().has_value()) {
++      std::unique_ptr<icu::TimeZone> zone(icu::TimeZone::createTimeZone(
++          icu::UnicodeString::fromUTF8(*profile->timezone())));
++      // createTimeZone returns the "unknown" zone rather than null for a name
++      // ICU does not carry; adopting that would silently produce UTC.
++      if (zone && *zone != icu::TimeZone::getUnknown()) {
++        icu::TimeZone::adoptDefault(zone.release());
++      } else {
++        LOG(ERROR) << "apostate: unknown timezone '" << *profile->timezone()
++                   << "'; keeping the host zone";
++      }
++    }
++  }
++
++  return true;
+ }
+ 
+ PlatformFile GetIcuDataFileHandle(MemoryMappedFile::Region* out_region) {
+@@ -454,7 +490,39 @@ bool InitializeICU() {
+ #error Unsupported ICU_UTIL_DATA_IMPL value
+ #endif  // (ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_STATIC)
+ 
+-  return DoCommonInitialization();
++  if (!DoCommonInitialization()) {
++    return false;
++  }
++
++  // Apostate: set the default zone here, immediately after ICU is initialised
++  // and in whatever process is initialising it.
++  //
++  // InitializeICU runs unconditionally in every process type, which is what
++  // makes this the right place: the browser, every renderer and every worker
++  // share one ICU default, and a process that missed the override would
++  // disagree with the others about what time it is. Comparing a Date in a
++  // worker against one on the main thread is a two-line probe.
++  //
++  // Only the zone name is taken from the profile. ICU's data is compiled into
++  // the binary and file access is restricted to packages at startup, so the
++  // zone list and every DST rule already come from our own build.
++  if (const ::base::apostate::Profile* profile =
++          ::base::apostate::Profile::Get()) {
++    if (profile->timezone().has_value()) {
++      std::unique_ptr<icu::TimeZone> zone(icu::TimeZone::createTimeZone(
++          icu::UnicodeString::fromUTF8(*profile->timezone())));
++      // createTimeZone returns the "unknown" zone rather than null for a name
++      // ICU does not carry; adopting that would silently produce UTC.
++      if (zone && *zone != icu::TimeZone::getUnknown()) {
++        icu::TimeZone::adoptDefault(zone.release());
++      } else {
++        LOG(ERROR) << "apostate: unknown timezone '" << *profile->timezone()
++                   << "'; keeping the host zone";
++      }
++    }
++  }
++
++  return true;
+ }
+ 
+ void AllowMultipleInitializeCallsForTesting() {

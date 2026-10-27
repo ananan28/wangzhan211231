@@ -1,0 +1,257 @@
+name: build target
+
+# Nightly and release use the same fresh build job. Their inputs select the
+# revision, artifact retention, and whether to attest the packaged artifact.
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: "Build target: macos-arm64 | linux-x64 | linux-arm64 | windows-x64"
+        required: true
+        type: string
+      runner_labels:
+        description: "JSON array literal of WarpBuild runner labels, e.g. [\"warp-macos-26-arm64-12x\"]"
+        required: true
+        type: string
+      attest:
+        description: "Publish a GitHub build-provenance attestation for the artifact"
+        required: false
+        type: boolean
+        default: false
+      ref:
+        description: "Git ref to build; empty builds the triggering ref"
+        required: false
+        type: string
+        default: ""
+      artifact_prefix:
+        description: "Uploaded artifact name prefix, e.g. nightly or release"
+        required: true
+        type: string
+      retention_days:
+        description: "Artifact retention in days"
+        required: false
+        type: number
+        default: 14
+    # Optional, and named rather than inherited: `secrets: inherit` would hand
+    # this job every secret the repository holds, including ones that have
+    # nothing to do with a build. A caller that omits them -- a fork, or a
+    # nightly before the certificate exists -- passes empty strings, and
+    # scripts/sign-macos.sh then leaves the bundle unsigned instead of failing.
+    secrets:
+      APPLE_DEVELOPER_ID_P12_BASE64:
+        description: "Base64 of the Developer ID Application certificate and private key, exported as .p12"
+        required: false
+      APPLE_DEVELOPER_ID_P12_PASSWORD:
+        description: "Export password for that .p12"
+        required: false
+      APPLE_SIGNING_IDENTITY:
+        description: "Certificate common name, e.g. Developer ID Application: Example Inc (AB12CD34EF)"
+        required: false
+      APPLE_NOTARY_KEY_P8_BASE64:
+        description: "Base64 of the App Store Connect API key .p8 used by notarytool"
+        required: false
+      APPLE_NOTARY_KEY_ID:
+        description: "Key ID of that API key"
+        required: false
+      APPLE_NOTARY_ISSUER_ID:
+        description: "Issuer ID of the App Store Connect API key"
+        required: false
+
+# id-token and attestations are what replace a release signing key: the
+# attestation is signed by a Sigstore-minted keypair that exists only for this
+# run, so there is no long-lived secret to hold, rotate, or leak. A caller
+# cannot be granted less than this and still attest.
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    name: ${{ inputs.artifact_prefix }}-${{ inputs.target }}
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    # WarpBuild runners register with GitHub as self-hosted, so the 6-hour
+    # GitHub-hosted job cap does not apply here -- the limit is 5 days. 600
+    # minutes is our own ceiling, chosen so the 12-vCPU macOS build has room
+    # to finish a full fetch plus official build instead of being killed at
+    # 95% after paying for all of it.
+    timeout-minutes: 600
+    env:
+      PYTHONUNBUFFERED: "1"
+      APOSTATE_TARGET: ${{ inputs.target }}
+      # The workspace is empty for every hosted job, including nightlies.
+      APOSTATE_FRESH_BUILD: "1"
+      # The 0.75 default leaves headroom on a workstation someone is using; a
+      # hosted runner is doing nothing else. Lower if linking OOMs.
+      APOSTATE_JOBS: ${{ inputs.target == 'macos-arm64' && '12' || '' }}
+    steps:
+      - name: Initialize job workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          # RUNNER_TEMP is a native Windows path, so appending with a forward
+          # slash produces C:\runner\_work\_temp/apostate-workspace. Windows
+          # APIs accept that but cmd.exe splits a command at the first forward
+          # slash, and bash treats the backslashes as escapes, so depot_tools'
+          # batch wrappers fail with "'\runner\_work\_temp' is not recognized".
+          # cygpath -m gives one consistent separator that both accept.
+          root="$RUNNER_TEMP"
+          if command -v cygpath >/dev/null 2>&1; then
+            root="$(cygpath -m "$RUNNER_TEMP")"
+          fi
+          workspace="$root/apostate-workspace"
+          mkdir -p "$workspace"
+          printf 'APOSTATE_WORKSPACE=%s\n' "$workspace" >> "$GITHUB_ENV"
+      - name: Report available disk
+        shell: bash
+        run: df -h "$APOSTATE_WORKSPACE"
+      - name: Check out exact revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      # The runner image is missing two different prerequisites from two
+      # different products: the Windows SDK's "Debugging Tools for Windows"
+      # feature, which vs_toolchain.py treats as mandatory, and the Visual
+      # Studio ATL component, without which base/win/atl_throw.cc cannot find
+      # <atldef.h>. Both are installed here, before the sync, from the pinned
+      # SDK installer and the VS installer respectively. Idempotent, so it
+      # costs nothing once the image ships them.
+      - name: Provision Windows toolchain
+        if: ${{ startsWith(inputs.target, 'windows-') }}
+        shell: bash
+        run: bash scripts/provision-windows-toolchain.sh
+      # 130GB is the volume size; only 55GB of it is free, against a measured
+      # 66GB build. Removes measured, build-irrelevant software from the image.
+      # Never fatal: reclaiming less than hoped must not fail a build that
+      # would otherwise have fitted.
+      - name: Reclaim Windows disk
+        if: ${{ startsWith(inputs.target, 'windows-') }}
+        shell: bash
+        run: bash scripts/reclaim-windows-disk.sh
+      # Still the first thing after checkout, which costs seconds. The tools it
+      # checks are reached by scripts that run hours in, so a gap found here is
+      # the difference between a 30-second failure and a wasted build. Shared
+      # with .github/workflows/probe-runners.yml so a runner image can be
+      # checked on its cheapest instance size without building anything.
+      - name: Verify host tooling
+        shell: bash
+        run: bash scripts/verify-host-tooling.sh "$APOSTATE_TARGET"
+      - name: Verify build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in \
+            scripts/verify-runner.sh \
+            scripts/bootstrap.sh scripts/fetch-sources.sh scripts/apply-patches.sh \
+            scripts/run-chromium-hooks.sh scripts/configure.sh scripts/build.sh \
+            scripts/smoke-binary.sh scripts/package-artifact.sh scripts/sign-macos.sh \
+            scripts/validate-release-baseline.py scripts/test_profile_resolver.py \
+            build/CHROMIUM_VERSION build/DEPOT_TOOLS_REVISION build/args/common.gni \
+            "build/args/$APOSTATE_TARGET.gn" patches/series LICENSE \
+            resources/profiles/catalogue.json .github/release/artifact-policy.json; do
+            test -f "$path" || { echo "missing build input: $path" >&2; exit 1; }
+          done
+          if [[ "$APOSTATE_TARGET" == linux-* ]]; then
+            test -f scripts/prepare-linux-sysroot.sh || { echo "missing build input: scripts/prepare-linux-sysroot.sh" >&2; exit 1; }
+          fi
+          bash scripts/verify-runner.sh "$APOSTATE_TARGET"
+      - name: Resolve artifact name from release policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$APOSTATE_TARGET" <<'PY' >> "$GITHUB_ENV"
+          import json, pathlib, sys
+          target = sys.argv[1]
+          policy = json.loads(pathlib.Path(".github/release/artifact-policy.json").read_text(encoding="utf-8"))
+          version = pathlib.Path("build/CHROMIUM_VERSION").read_text(encoding="utf-8").strip()
+          if version != policy["manifest_contract"]["chromium_version"]:
+              raise SystemExit(f"build/CHROMIUM_VERSION {version} disagrees with the release policy")
+          prefix = f"apostate-{version}-{target}."
+          names = [name for name in policy["artifacts"]["filenames"] if name.startswith(prefix)]
+          if len(names) != 1:
+              raise SystemExit(f"release policy does not name exactly one artifact for {target}: {names}")
+          print(f"ARCHIVE={names[0]}")
+          PY
+      - name: Bootstrap pinned toolchain
+        shell: bash
+        run: bash scripts/bootstrap.sh
+      - name: Fetch pinned Chromium
+        shell: bash
+        run: bash scripts/fetch-sources.sh
+      - name: Apply patch series without fuzz
+        shell: bash
+        run: bash scripts/apply-patches.sh
+      - name: Run Chromium hooks and install target sysroot
+        if: ${{ startsWith(inputs.target, 'linux-') }}
+        shell: bash
+        run: bash scripts/run-chromium-hooks.sh "$APOSTATE_TARGET" && bash scripts/prepare-linux-sysroot.sh "$APOSTATE_TARGET"
+      - name: Configure target
+        shell: bash
+        run: bash scripts/configure.sh "$APOSTATE_TARGET"
+      - name: Build official binary and manifest
+        shell: bash
+        run: bash scripts/build.sh "$APOSTATE_TARGET"
+      - name: Report disk after build
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          # Runs even on failure, because the run that dies out of space is
+          # exactly the one whose numbers we need. Windows has the least
+          # headroom of the four at 130 GB total.
+          df -h "$APOSTATE_WORKSPACE" || true
+          du -sh "$APOSTATE_WORKSPACE" 2>/dev/null || true
+      - name: Run resolver, baseline, and native smoke checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/test_profile_resolver.py
+          # scripts/build.sh has just regenerated MANIFEST.lock in this
+          # workspace, so --release asserts the build really recorded the
+          # patch set it was given rather than an earlier one.
+          python3 scripts/validate-release-baseline.py --root . --release
+          bash scripts/smoke-binary.sh "$APOSTATE_TARGET"
+      # After the smoke check and before packaging. The smoke check runs the
+      # binary the build produced, so it has to see the unsigned tree in out/;
+      # packaging is the step that decides which tree ships, and it can only
+      # choose the signed one once it exists. Signing writes to
+      # $APOSTATE_WORKSPACE/signed/macos-arm64 and never touches out/, so
+      # build/MANIFEST.lock still describes what ninja built.
+      #
+      # Without the six secrets the script prints one line and exits 0, which
+      # is what keeps nightlies and forks building.
+      - name: Sign and notarize (macOS)
+        if: ${{ inputs.target == 'macos-arm64' }}
+        shell: bash
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: bash scripts/sign-macos.sh "$APOSTATE_TARGET"
+      - name: Package artifact and manifest
+        shell: bash
+        run: bash scripts/package-artifact.sh "$APOSTATE_TARGET" "$ARCHIVE"
+      - name: Upload artifact and manifest
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ inputs.target }}-${{ inputs.ref != '' && inputs.ref || github.sha }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.manifest.json
+      # After the upload, deliberately. Attestation is the first step in this
+      # job that has never run, and it runs at the end of a build measured in
+      # hours. Attesting first would mean an OIDC or permissions fault discards
+      # a finished artifact and the whole build has to be paid for again;
+      # uploading first leaves the artifact recoverable either way.
+      - name: Attest build provenance
+        if: ${{ inputs.attest }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ env.ARCHIVE }}

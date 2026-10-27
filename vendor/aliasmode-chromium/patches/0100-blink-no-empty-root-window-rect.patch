@@ -1,0 +1,123 @@
+Subject: [PATCH] display: outerWidth and outerHeight are never zero
+
+A renderer can receive its viewport size before its window rect, and in
+that gap window.outerWidth, outerHeight, screenX and screenY read 0. A
+page can test outerHeight < innerHeight in the document head, and no
+real browser window fails it. While the window rect is empty, these four
+values report the screen's available rect, which matches
+screen.availWidth and screen.availHeight. moveTo, moveBy, resizeTo and
+resizeBy keep using the real window rect.
+
+diff --git a/third_party/blink/renderer/core/frame/local_dom_window.cc b/third_party/blink/renderer/core/frame/local_dom_window.cc
+index 0269587971..ee8f7636ad 100644
+--- a/third_party/blink/renderer/core/frame/local_dom_window.cc
++++ b/third_party/blink/renderer/core/frame/local_dom_window.cc
+@@ -200,6 +200,56 @@ int RequestAnimationFrame(Document* document,
+                                          FrameCallbackType::kWebExposed);
+ }
+ 
++// Apostate: the root window rect the outer* and screen* bindings are allowed
++// to see.
++//
++// WidgetBase::window_screen_rect_ is default-constructed empty and is written
++// from exactly one place, WidgetBase::UpdateScreenRects, which the browser
++// delivers on a different mojo call from UpdateVisualProperties. The viewport
++// size therefore arrives first, and between the two there is a window in which
++// innerWidth and innerHeight are populated while RootWindowRect() is still
++// 0x0. Blink published that straight to script.
++//
++// Measured on the shipped build of this series: three of six identical
++// --headless=new launches, all passing --window-size=1280,800 and with no
++// DevTools client attached at all, reported outerWidth and outerHeight as 0
++// while innerHeight read above 700. Both were still 0 at the load event and
++// correct by 500ms. No browser can report an outer window smaller than its own
++// viewport, let alone zero, so a detector does not need a baseline or a timing
++// measurement for this - it needs one comparison, in the document head, where
++// fingerprinting script already runs.
++//
++// Upstream knows the state exists: WebFrameWidgetImpl::MoveWindowTo skips its
++// pending-rect update when WindowRect() is empty, with a comment saying so.
++// Nothing guarded the path that reaches JavaScript.
++//
++// The substitute is the screen's available rect, which is the area a maximised
++// window occupies and which the page already reads back as screen.availWidth
++// and screen.availHeight. Taking it from the ScreenInfo the page is already
++// being shown means this agrees with the screen surfaces patches 0010 and 0041
++// compose, rather than introducing a second and independently wrong answer for
++// the same window. It is also deterministic from launch, which is the point:
++// the race is removed rather than narrowed, because the value no longer depends
++// on an IPC having arrived.
++//
++// This deliberately does not touch WidgetBase::WindowRect() itself. That rect's
++// emptiness is load-bearing for MoveWindowTo and ResizeWindowTo, which branch
++// on it, and making it non-empty would push a fabricated rect into a real
++// window-placement path. The correction belongs where the value becomes an
++// observable.
++gfx::Rect RootWindowRectForBindings(LocalFrame& frame,
++                                    ChromeClient& chrome_client) {
++  const gfx::Rect rect = chrome_client.RootWindowRect(frame);
++  if (!rect.IsEmpty()) {
++    return rect;
++  }
++  const display::ScreenInfo& screen_info = chrome_client.GetScreenInfo(frame);
++  if (!screen_info.available_rect.IsEmpty()) {
++    return screen_info.available_rect;
++  }
++  return screen_info.rect;
++}
++
+ }  // namespace
+ 
+ class LocalDOMWindow::NetworkStateObserver final
+@@ -1688,10 +1738,10 @@ int LocalDOMWindow::outerHeight() const {
+   ChromeClient& chrome_client = page->GetChromeClient();
+   if (page->GetSettings().GetReportScreenSizeInPhysicalPixelsQuirk()) {
+     return static_cast<int>(
+-        lroundf(chrome_client.RootWindowRect(*frame).height() *
++        lroundf(RootWindowRectForBindings(*frame, chrome_client).height() *
+                 chrome_client.GetScreenInfo(*frame).device_scale_factor));
+   }
+-  int height = chrome_client.RootWindowRect(*frame).height();
++  int height = RootWindowRectForBindings(*frame, chrome_client).height();
+   if (document() && document()->TextScaleMetaTagPresent()) {
+     height = static_cast<int>(lroundf(
+         height * chrome_client.GetScreenInfo(*frame).text_scale_multiplier));
+@@ -1720,10 +1770,10 @@ int LocalDOMWindow::outerWidth() const {
+   ChromeClient& chrome_client = page->GetChromeClient();
+   if (page->GetSettings().GetReportScreenSizeInPhysicalPixelsQuirk()) {
+     return static_cast<int>(
+-        lroundf(chrome_client.RootWindowRect(*frame).width() *
++        lroundf(RootWindowRectForBindings(*frame, chrome_client).width() *
+                 chrome_client.GetScreenInfo(*frame).device_scale_factor));
+   }
+-  int width = chrome_client.RootWindowRect(*frame).width();
++  int width = RootWindowRectForBindings(*frame, chrome_client).width();
+   if (document() && document()->TextScaleMetaTagPresent()) {
+     width = static_cast<int>(lroundf(
+         width * chrome_client.GetScreenInfo(*frame).text_scale_multiplier));
+@@ -1796,10 +1846,10 @@ int LocalDOMWindow::screenX() const {
+   ChromeClient& chrome_client = page->GetChromeClient();
+   if (page->GetSettings().GetReportScreenSizeInPhysicalPixelsQuirk()) {
+     return static_cast<int>(
+-        lroundf(chrome_client.RootWindowRect(*frame).x() *
++        lroundf(RootWindowRectForBindings(*frame, chrome_client).x() *
+                 chrome_client.GetScreenInfo(*frame).device_scale_factor));
+   }
+-  int screenX = chrome_client.RootWindowRect(*frame).x();
++  int screenX = RootWindowRectForBindings(*frame, chrome_client).x();
+   if (document() && document()->TextScaleMetaTagPresent()) {
+     screenX = static_cast<int>(lroundf(
+         screenX * chrome_client.GetScreenInfo(*frame).text_scale_multiplier));
+@@ -1821,10 +1871,10 @@ int LocalDOMWindow::screenY() const {
+   ChromeClient& chrome_client = page->GetChromeClient();
+   if (page->GetSettings().GetReportScreenSizeInPhysicalPixelsQuirk()) {
+     return static_cast<int>(
+-        lroundf(chrome_client.RootWindowRect(*frame).y() *
++        lroundf(RootWindowRectForBindings(*frame, chrome_client).y() *
+                 chrome_client.GetScreenInfo(*frame).device_scale_factor));
+   }
+-  int screenY = chrome_client.RootWindowRect(*frame).y();
++  int screenY = RootWindowRectForBindings(*frame, chrome_client).y();
+   if (document() && document()->TextScaleMetaTagPresent()) {
+     screenY = static_cast<int>(lroundf(
+         screenY * chrome_client.GetScreenInfo(*frame).text_scale_multiplier));

@@ -1,0 +1,104 @@
+Subject: [PATCH] audio: output buffer size from the profile
+
+AudioContext.baseLatency reveals the host's audio buffer size, 2048
+frames on the Linux backend and 256 on a Mac. The profile sets the
+hardware buffer size the renderer uses for Web Audio, so baseLatency
+matches the claimed platform and the audio pipeline really runs at that
+size. The host device's own buffer limits are cleared so they cannot
+clamp the claim back. Any size from 128 to 8192 frames is accepted,
+which covers the 480 frames Windows uses.
+
+diff --git a/base/apostate/profile.cc b/base/apostate/profile.cc
+index 7dc9803d94..d49a6cd3b1 100644
+--- a/base/apostate/profile.cc
++++ b/base/apostate/profile.cc
+@@ -184,6 +184,21 @@ Profile* Profile::ParseOrNull(const std::string& encoded) {
+     }
+   }
+ 
++  if (const DictValue* audio = dict->FindDict("audio")) {
++    if (std::optional<int> v = audio->FindInt("hardware_buffer_frames")) {
++      // Range only, matching media::limits::kMinWebAudioBufferSize and
++      // kMaxWebAudioBufferSize. An earlier version also required a power of
++      // two, generalised from one sample (CoreAudio's 256); it rejected the
++      // real Windows value of 480 and silently kept the host's buffer.
++      if (*v >= 128 && *v <= 8192) {
++        profile->audio_hardware_buffer_frames_ = *v;
++      } else {
++        LOG(ERROR) << "apostate: audio.hardware_buffer_frames must be in "
++                      "[128, 8192]; ignoring";
++      }
++    }
++  }
++
+   if (const DictValue* locale = dict->FindDict("locale")) {
+     if (const std::string* v = locale->FindString("timezone")) {
+       profile->timezone_ = *v;
+diff --git a/base/apostate/profile.h b/base/apostate/profile.h
+index 38a189d1bd..546eda36a2 100644
+--- a/base/apostate/profile.h
++++ b/base/apostate/profile.h
+@@ -160,6 +160,15 @@ class BASE_EXPORT Profile {
+   }
+   std::optional<bool> screen_hdr() const { return screen_hdr_; }
+ 
++  // Frames per buffer of the claimed machine's audio output device, at its
++  // native sample rate. CoreAudio reports 256 on Apple hardware; the Linux
++  // backends we build on report 2048 or 480. AudioContext.baseLatency is
++  // max(framesPerBuffer, renderQuantumSize) / sampleRate, so this is what a
++  // page reads when it asks how long the audio pipeline is.
++  std::optional<int> audio_hardware_buffer_frames() const {
++    return audio_hardware_buffer_frames_;
++  }
++
+   // IANA timezone name, e.g. "Europe/Warsaw".
+   //
+   // Only the zone *name* is a host fact. ICU's data is compiled into the binary
+@@ -239,6 +248,7 @@ class BASE_EXPORT Profile {
+   std::optional<int> screen_color_depth_;
+   std::optional<std::string> screen_color_gamut_;
+   std::optional<bool> screen_hdr_;
++  std::optional<int> audio_hardware_buffer_frames_;
+   std::optional<std::string> timezone_;
+   std::optional<bool> prefers_dark_;
+   std::optional<std::string> accept_languages_;
+diff --git a/content/renderer/media/renderer_webaudiodevice_impl.cc b/content/renderer/media/renderer_webaudiodevice_impl.cc
+index aaf515a17d..7b9d096232 100644
+--- a/content/renderer/media/renderer_webaudiodevice_impl.cc
++++ b/content/renderer/media/renderer_webaudiodevice_impl.cc
+@@ -41,6 +41,7 @@
+ #include "third_party/blink/public/web/modules/media/audio/audio_device_factory.h"
+ #include "third_party/blink/public/web/web_local_frame.h"
+ #include "third_party/blink/public/web/web_local_frame_client.h"
++#include "base/apostate/profile.h"
+ 
+ using blink::AudioDeviceFactory;
+ using blink::WebAudioLatencyHint;
+@@ -292,6 +293,27 @@ void RendererWebAudioDeviceImpl::HandleDeviceStatus(
+         base::BindOnce(&RendererWebAudioDeviceImpl::NotifyRenderError,
+                        weak_ptr_factory_.GetWeakPtr()));
+   }
++  // Replace the host's audio buffer size with the claimed device's, before
++  // anything derives from it. GetOutputBufferSize below scales and clamps this
++  // per latency hint exactly as upstream does, and the result feeds both
++  // AudioContext.baseLatency and the real render pipeline — so the browser
++  // genuinely runs the buffer it reports rather than reporting one number and
++  // rendering with another.
++  //
++  // The hardware capability limits are cleared along with it. They describe the
++  // host's real device, so a Linux backend advertising a 480-frame minimum
++  // would clamp a claimed 256 straight back up and the override would silently
++  // do nothing. Cleared, the code falls through to kMinWebAudioBufferSize and
++  // kMaxWebAudioBufferSize, which are the constants a device with unknown
++  // limits already gets.
++  if (const base::apostate::Profile* profile = base::apostate::Profile::Get()) {
++    if (profile->audio_hardware_buffer_frames().has_value()) {
++      original_sink_params_.set_frames_per_buffer(
++          *profile->audio_hardware_buffer_frames());
++      original_sink_params_.set_hardware_capabilities(std::nullopt);
++    }
++  }
++
+   SendLogMessage(base::StringPrintf(
+       "%s => (hardware_params=[%s])", __func__,
+       original_sink_params_.AsHumanReadableString().c_str()));

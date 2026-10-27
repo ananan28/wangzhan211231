@@ -1,0 +1,195 @@
+Subject: [PATCH] fonts: assume the claimed platform's fonts are installed
+
+Composition offers a font pack without checking the disk for its files.
+The operator installs the claimed platform's fonts into the system font
+directories, and the browser assumes they are there. A launch-time check
+cannot see the host's fonts anyway, since Skia enumerates them later.
+The allowlist filter only hides families, so a family whose files are
+missing still fails to match on a page, as on any other browser.
+
+diff --git a/base/apostate/compose.cc b/base/apostate/compose.cc
+index e32d9a7fa2..033469459a 100644
+--- a/base/apostate/compose.cc
++++ b/base/apostate/compose.cc
+@@ -22,7 +22,6 @@
+ #include "base/command_line.h"
+ #include "base/containers/span.h"
+ #include "base/files/file_path.h"
+-#include "base/files/file_util.h"
+ #include "base/json/json_reader.h"
+ #include "base/json/json_writer.h"
+ #include "base/logging.h"
+@@ -55,10 +54,8 @@ constexpr char kProcessTypeSwitch[] = "type";
+ // switch is present only when the launch passed one explicitly.
+ constexpr char kUserDataDirSwitch[] = "user-data-dir";
+ 
+-// This project's subdirectory of the user data directory, and the directory
+-// under it where a provisioned font family lives.
++// This project's subdirectory of the user data directory.
+ constexpr char kStateDirectoryName[] = "apostate";
+-constexpr char kProvisionedFontsDirectory[] = "fonts";
+ 
+ constexpr std::string_view kLayerAnchor = "anchor";
+ constexpr std::string_view kLayerDispersion = "dispersion";
+@@ -138,8 +135,6 @@ std::string ProjectLanguages(const DispersionAxis& axis,
+ 
+ struct FilterOutcome {
+   std::vector<const DispersionOption*> options;
+-  // Per-option notes that must be reported rather than dropped silently.
+-  std::vector<std::string> limitations;
+ };
+ 
+ // Applies the axis's servability clamp to an option set *before* drawing.
+@@ -153,8 +148,7 @@ struct FilterOutcome {
+ FilterOutcome FilterServable(const DispersionAxis& axis,
+                              const DispersionOptionSet& option_set,
+                              const HostCapability& host,
+-                             const Anchor* anchor,
+-                             const FilePath& fonts_directory) {
++                             const Anchor* anchor) {
+   FilterOutcome outcome;
+ 
+   for (const DispersionOption& option : option_set.options) {
+@@ -204,37 +198,26 @@ FilterOutcome FilterServable(const DispersionAxis& axis,
+         break;
+ 
+       case Servability::kFilesPresent:
+-        // Core packs are never dropped: the mandatory set for an OS release is
+-        // what makes the claim coherent at all, and a machine claiming macOS
+-        // without its core faces is not a Mac. What is reported here is the
+-        // inability to check, not a missing face. FamiliesProvisioned only
+-        // asks whether a family was copied into this profile's fonts
+-        // directory, nothing in the tree ever writes that directory, and the
+-        // host's own installed families cannot be enumerated before Skia
+-        // starts -- so on a host presenting its own platform the faces are
+-        // all there and the check still cannot say so.
+-        if (option.pack_kind == PackKind::kCore) {
+-          if (requirement && !fonts_directory.empty() &&
+-              !FamiliesProvisioned(fonts_directory, requirement->families)) {
+-            outcome.limitations.push_back(
+-                "core font pack '" + std::string(option.id) +
+-                "' could not be checked: nothing is provisioned into this "
+-                "profile and the host's installed families cannot be "
+-                "enumerated before the graphics stack starts, so the pack was "
+-                "offered unchecked. This is a gap in what was established, not "
+-                "a missing face -- a host presenting its own platform has the "
+-                "core faces already");
+-          }
+-          break;
+-        }
+-        // An optional pack is only offered when its families are provisioned.
+-        // When nothing is provisioned the host's own families are the only
+-        // ones in play and presence is not answerable from here, so the packs
+-        // stay offered and the gap is reported on the axis.
+-        if (!fonts_directory.empty()) {
+-          servable = requirement &&
+-                     FamiliesProvisioned(fonts_directory, requirement->families);
+-        }
++        // No compiled table selects this any more: the font_packs axis now
++        // declares no servability, so a pack is decided by the seed alone.
++        // The enumerator stays because it is part of the table format that
++        // the generator writes, and the switch is exhaustive.
++        //
++        // What used to be here looked for each of a pack's families as a path
++        // under the profile's fonts directory. Nothing in the tree ever wrote
++        // that directory, and the host's own installed families cannot be
++        // enumerated before the graphics stack starts, so the check could
++        // only ever fail to answer -- and it reported that as though the
++        // claimed platform were missing faces it cannot be without. The user
++        // installs the claimed platform's fonts into the OS font directories
++        // and the browser assumes they are there, which the setup
++        // documentation states.
++        //
++        // Assuming it means we stop checking, not that we start claiming
++        // absent faces. Enumeration is filtered from the composed allowlist
++        // and that filter is subtractive, so a family whose files really are
++        // missing still cannot be made to measure: it fails to match exactly
++        // as it does on any other browser.
+         break;
+     }
+ 
+@@ -761,19 +744,6 @@ bool SubsetIncluded(uint64_t value, uint32_t percent) {
+   return ScaleToRange(value, 100) < percent;
+ }
+ 
+-bool FamiliesProvisioned(const FilePath& fonts_directory,
+-                         span<const std::string_view> families) {
+-  if (families.empty() || fonts_directory.empty()) {
+-    return false;
+-  }
+-  for (const std::string_view family : families) {
+-    if (!PathExists(fonts_directory.AppendASCII(family))) {
+-      return false;
+-    }
+-  }
+-  return true;
+-}
+-
+ // ---------------------------------------------------------------------------
+ // Composition
+ // ---------------------------------------------------------------------------
+@@ -819,11 +789,6 @@ std::optional<Composition> Compose(const ComposeRequest& request,
+   std::map<std::string, std::string> resolved;
+   resolved["platform"] = composition.platform;
+ 
+-  const FilePath fonts_directory =
+-      request.state_directory.empty()
+-          ? FilePath()
+-          : request.state_directory.AppendASCII(kProvisionedFontsDirectory);
+-
+   // ---- the anchor, before any axis that can be conditioned on it ----
+   //
+   // The GPU cluster is selected from anchors the host can actually serve, and
+@@ -1126,12 +1091,8 @@ std::optional<Composition> Compose(const ComposeRequest& request,
+                     "compiled catalogue is incomplete";
+     }
+ 
+-    FilterOutcome outcome = FilterServable(axis, *option_set, request.host,
+-                                           anchor, fonts_directory);
+-    for (std::string& limitation : outcome.limitations) {
+-      composition.limitations.push_back(std::string(axis.axis) + ": " +
+-                                        limitation);
+-    }
++    FilterOutcome outcome =
++        FilterServable(axis, *option_set, request.host, anchor);
+ 
+     if (outcome.options.empty()) {
+       if (axis.servability == Servability::kAnchorMember) {
+@@ -1279,16 +1240,6 @@ std::optional<Composition> Compose(const ComposeRequest& request,
+       });
+     }
+     resolved[std::string(axis.axis)] = included;
+-
+-    if (axis.servability == Servability::kFilesPresent &&
+-        fonts_directory.empty()) {
+-      composition.limitations.push_back(
+-          std::string(axis.axis) +
+-          ": font presence could not be checked, because the host's installed "
+-          "families cannot be enumerated before the graphics stack starts and "
+-          "nothing is provisioned into this profile; every pack the table "
+-          "offers was therefore offered");
+-    }
+   }
+ 
+   if (!locale_resolved) {
+diff --git a/base/apostate/compose.h b/base/apostate/compose.h
+index 9a96eff7ec..eb3373fe5b 100644
+--- a/base/apostate/compose.h
++++ b/base/apostate/compose.h
+@@ -303,16 +303,6 @@ BASE_EXPORT void MergeFragment(DictValue& target,
+                                span<const std::string_view> union_array_paths,
+                                std::string_view path = {});
+ 
+-// Whether every family in `families` has been provisioned into this profile,
+-// i.e. exists under `fonts_directory`.
+-//
+-// base/ cannot enumerate the host's installed families at composition time --
+-// that is Skia's job and Skia starts later -- so "present on the host" is not
+-// answerable here, and a launch that provisions nothing has every pack offered
+-// with the gap reported. Exposed for tests.
+-BASE_EXPORT bool FamiliesProvisioned(const FilePath& fonts_directory,
+-                                     span<const std::string_view> families);
+-
+ // Turns panel geometry plus furniture insets into the avail_* rectangle, and
+ // removes the four inset keys either way.
+ //

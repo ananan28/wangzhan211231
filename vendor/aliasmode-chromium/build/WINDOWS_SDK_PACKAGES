@@ -1,0 +1,69 @@
+# The pinned Windows SDK's headers and x64 libraries, as Microsoft's own NuGet
+# packages, with the digest of each.
+#
+# Three whitespace-separated columns. Lines starting with # are comments.
+#
+#   <nuget-package-id>  <sha256-of-the-nupkg>  <destination>
+#
+# The version comes from build/WINDOWS_SDK_INSTALLER_VERSION, so the headers,
+# the libraries and the Debugging Tools are all one revision by construction and
+# there is no second version to keep in step. The URL is derived from the id and
+# the version: nuget.org's flat container is
+# https://api.nuget.org/v3-flatcontainer/<id>/<version>/<id>.<version>.nupkg
+#
+# <destination> says where the package's payload is overlaid, relative to the
+# SDK root, with <version> replaced by build/WINDOWS_SDK_VERSION:
+#
+#   include   c/Include/<version>/  ->  <SDK>/Include/<version>/
+#   bin       c/bin/<version>/{x64,x86}/  ->  <SDK>/bin/<version>/{x64,x86}/
+#   lib-x64   c/um/x64/ and c/ucrt/x64/  ->  <SDK>/Lib/<version>/{um,ucrt}/x64/
+#   lib-x86   c/um/x86/ and c/ucrt/x86/  ->  <SDK>/Lib/<version>/{um,ucrt}/x86/
+#
+# A package may name several destinations, separated by commas.
+#
+# WHY NOT THE SDK INSTALLER
+#
+# Because it does not finish. Measured on blacksmith-2vcpu-windows-2025:
+# winsdksetup.exe asked for OptionId.DesktopCPPx64, OptionId.DesktopCPPx86 and
+# OptionId.WindowsDesktopDebuggers ran the full 25-minute bound and had reached
+# only package 004, exit 124. It was making progress -- slow, not stuck -- but a
+# quarter of the gate's 180-minute budget spent before the first compile, every
+# run, is not a cost worth paying for a file copy. For contrast on the same
+# runner: the ATL component through the VS installer takes 26 seconds, and the
+# Debuggers feature alone through this same winsdksetup takes 8, which is why
+# the Debuggers still come from it.
+#
+# Measured for the overlay on the same runner class: both packages fetched,
+# digest-checked and copied in 15 seconds, and the whole SDK phase including the
+# Debuggers install in 24. The Include and Lib trees still list only
+# 10.0.22621.0 and 10.0.26100.0 afterwards, so this upgrades in place and does
+# not leave two revisions side by side.
+#
+# The packages are also better provenance than the installer, not worse.
+# winsdksetup.exe is a 1.4 MB bootstrapper: we can pin its bytes, and then it
+# downloads whatever the service gives it. These are the payload itself, pinned
+# by digest, so what lands on the runner is what this file names.
+#
+# WHAT IS AND IS NOT COVERED
+#
+# Chrome 155 moved to SDK 10.0.28000, a major the runner image does not carry,
+# so the overlay lays down the whole tree the build reads rather than refreshing
+# one that exists: headers, the x64 and x86 libraries, and bin/<version>, whose
+# midl.exe the build runs from PATH. The x86 libraries are there because
+# build/toolchain/win/BUILD.gn instantiates win_toolchains("x86") alongside x64
+# and setup_toolchain.py fails when a LIB directory does not exist; nothing
+# links x86. The Debugging Tools are not in these packages and still come from
+# the installer, but they live outside the versioned directories and the image
+# already carries a new enough dbghelp.dll.
+#
+# The libraries are overlaid and not only the headers, because the headers alone
+# would compile and then fail at link. um/UIAutomationCore.h declares
+# EXTERN_C const CLSID CLSID_CUIAutomationClientInfoSource, which is DEFINED in
+# a library -- found in this package's c/um/x64/Uuid.Lib -- and
+# ui/accessibility/platform/uia_client_info_source_win.cc:144 passes it to
+# CoCreateInstance. The series compile gate never links, so the gate would not
+# have caught that and a nightly build would have.
+
+microsoft.windows.sdk.cpp	0a4887a64d1b17128f9ffd80032f20debabf943f34eea927aac00cc46cb32879	include,bin
+microsoft.windows.sdk.cpp.x64	72076d00b16c3882bf9eab0c80e350f33d8bc65e5f29e2f0e9b66a3f2569ccb1	lib-x64
+microsoft.windows.sdk.cpp.x86	5bf7b8811cd8e7640b5475ddbbf0a873f90077622c73bc6f6c2f1d368d5d55e3	lib-x86

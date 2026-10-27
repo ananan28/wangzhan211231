@@ -1,0 +1,44 @@
+Subject: [PATCH] headless: navigator.languages from the profile
+
+Headless mode fills renderer preferences on its own code path, a copy of
+the one in chrome/browser. The profile's language list applies there
+too, so navigator.languages in headless mode matches the Accept-Language
+header.
+
+diff --git a/headless/lib/browser/headless_web_contents_impl.cc b/headless/lib/browser/headless_web_contents_impl.cc
+index 5a963a45e9..50f7bc6a99 100644
+--- a/headless/lib/browser/headless_web_contents_impl.cc
++++ b/headless/lib/browser/headless_web_contents_impl.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "headless/lib/browser/headless_web_contents_impl.h"
+ 
++#include "base/apostate/profile.h"
++
+ #include <memory>
+ #include <optional>
+ #include <string>
+@@ -476,8 +478,21 @@ HeadlessWebContentsImpl::HeadlessWebContentsImpl(
+   HeadlessPrintManager::CreateForWebContents(web_contents_.get());
+ #endif
+   UpdatePrefsFromSystemSettings(web_contents_->GetMutableRendererPrefs());
+-  web_contents_->GetMutableRendererPrefs()->accept_languages =
+-      browser_context()->options()->accept_language();
++  // Apostate: headless sets renderer preferences on its own path, with the
++  // values copied from chrome/browser/renderer_preferences_util.cc rather than
++  // shared with it — so patching that file left navigator.languages reporting
++  // the host here while the Accept-Language header, which comes from the
++  // network service, was already correct. One value, two producers, and the
++  // headless copy is easy to miss precisely because it is a copy.
++  if (const base::apostate::Profile* apostate_profile =
++          base::apostate::Profile::Get();
++      apostate_profile && apostate_profile->accept_languages().has_value()) {
++    web_contents_->GetMutableRendererPrefs()->accept_languages =
++        *apostate_profile->accept_languages();
++  } else {
++    web_contents_->GetMutableRendererPrefs()->accept_languages =
++        browser_context()->options()->accept_language();
++  }
+   web_contents_->GetMutableRendererPrefs()->hinting =
+       browser_context()->options()->font_render_hinting();
+ 

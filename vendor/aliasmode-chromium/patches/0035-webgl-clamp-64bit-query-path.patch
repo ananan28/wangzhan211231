@@ -1,0 +1,84 @@
+Subject: [PATCH] webgl: clamp limits read through glGetInteger64v
+
+Limits that WebGL reads through glGetInteger64v go through the same
+gl_limits clamp as the 32-bit path. The WebGL2 combined uniform
+component counts and MAX_ELEMENT_INDEX use this path, so without the
+hook a page sees the host's values for them. The served value is the
+smaller of the profile and the driver, so the wider type cannot report
+more than the GPU supports.
+
+diff --git a/ui/gl/gl_gl_api_implementation.cc b/ui/gl/gl_gl_api_implementation.cc
+index 9b07c93979..1e702dcc59 100644
+--- a/ui/gl/gl_gl_api_implementation.cc
++++ b/ui/gl/gl_gl_api_implementation.cc
+@@ -267,6 +267,11 @@ constexpr ApostateGlLimit kApostateGlLimits[] = {
+     {GL_MAX_SAMPLES, "MAX_SAMPLES"},
+     {GL_MAX_ELEMENTS_INDICES, "MAX_ELEMENTS_INDICES"},
+     {GL_MAX_ELEMENTS_VERTICES, "MAX_ELEMENTS_VERTICES"},
++    // Read through glGetInteger64v, so these only take effect with the 64-bit
++    // hook above. MAX_ELEMENT_INDEX is listed for completeness: the reference
++    // claims more than SwiftShader supports, so the clamp keeps ours and the
++    // row stays red, which is the correct outcome rather than a missing entry.
++    {GL_MAX_ELEMENT_INDEX, "MAX_ELEMENT_INDEX"},
+     // WebGL2's uniform-block, varying and shader-interface limits. Added after
+     // measurement rather than by reading the spec: with the list above served
+     // and the shader precision block corrected, these were what the reference
+@@ -337,6 +342,46 @@ void RealGLApi::glGetIntegervFn(GLenum pname, GLint* params) {
+   }
+ }
+ 
++void RealGLApi::glGetInteger64vFn(GLenum pname, GLint64* params) {
++  GLApiBase::glGetInteger64vFn(pname, params);
++
++  // Same clamp, same table, different entry point. Several WebGL2 limits are
++  // read through glGetInteger64v rather than glGetIntegerv — the combined
++  // uniform component counts and MAX_ELEMENT_INDEX among them — so a hook on
++  // the 32-bit path alone silently misses them. That is exactly what happened:
++  // MAX_COMBINED_VERTEX_UNIFORM_COMPONENTS and its fragment counterpart were
++  // added to the table and kept reporting the host's value, because nothing
++  // consulted the table for them.
++  //
++  // Taking the minimum is what makes this safe to apply blind. Where the claim
++  // is lower than the driver it wins, and where it is higher the driver's
++  // number survives, so a limit like MAX_ELEMENT_INDEX that the profile claims
++  // larger than SwiftShader supports stays honest rather than becoming an
++  // over-claim on a wider integer.
++  const base::apostate::Profile* profile = base::apostate::Profile::Get();
++  if (!profile || profile->gl_limits().empty() || !params) {
++    return;
++  }
++  for (const auto& limit : kApostateGlLimits) {
++    if (limit.pname != pname) {
++      continue;
++    }
++    auto it = profile->gl_limits().find(limit.name);
++    if (it == profile->gl_limits().end()) {
++      return;
++    }
++    const GLint64 real = *params;
++    const GLint64 claimed = static_cast<GLint64>(it->second);
++    *params = std::min(claimed, real);
++    if (claimed > real) {
++      LOG(WARNING) << "apostate: profile claims " << limit.name << " = "
++                   << claimed << " but this driver reports " << real
++                   << "; serving " << real << ".";
++    }
++    return;
++  }
++}
++
+ void RealGLApi::glGetShaderPrecisionFormatFn(GLenum shadertype,
+                                              GLenum precisiontype,
+                                              GLint* range,
+diff --git a/ui/gl/gl_gl_api_implementation.h b/ui/gl/gl_gl_api_implementation.h
+index 9aa8325abe..4971a0ba7e 100644
+--- a/ui/gl/gl_gl_api_implementation.h
++++ b/ui/gl/gl_gl_api_implementation.h
+@@ -55,6 +55,7 @@ class GL_EXPORT RealGLApi : public GLApiBase {
+   void SetDisabledExtensions(const std::string& disabled_extensions) override;
+ 
+   void glGetIntegervFn(GLenum pname, GLint* params) override;
++  void glGetInteger64vFn(GLenum pname, GLint64* params) override;
+   void glGetShaderPrecisionFormatFn(GLenum shadertype,
+                                     GLenum precisiontype,
+                                     GLint* range,

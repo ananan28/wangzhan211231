@@ -1,0 +1,88 @@
+Subject: [PATCH] screen: isExtended from the profile
+
+screen.isExtended returns the profile's screen.is_extended value. A page
+reads it with no permission, while other details about extra displays
+need the window-management permission, so a two-screen profile that
+reports false here contradicts itself. The value is set where the
+browser builds ScreenInfo, so the browser and every renderer agree.
+
+diff --git a/base/apostate/profile.cc b/base/apostate/profile.cc
+index b5155fcefd..2d05c8a790 100644
+--- a/base/apostate/profile.cc
++++ b/base/apostate/profile.cc
+@@ -140,6 +140,12 @@ Profile* Profile::ParseOrNull(const std::string& encoded) {
+     }
+   }
+ 
++  if (const DictValue* screen_extra = dict->FindDict("screen")) {
++    if (std::optional<bool> v = screen_extra->FindBool("is_extended")) {
++      profile->screen_is_extended_ = *v;
++    }
++  }
++
+   if (const DictValue* screen = dict->FindDict("screen")) {
+     if (std::optional<int> v = screen->FindInt("width")) {
+       profile->screen_width_ = *v;
+diff --git a/base/apostate/profile.h b/base/apostate/profile.h
+index 7760755352..4d594d54f4 100644
+--- a/base/apostate/profile.h
++++ b/base/apostate/profile.h
+@@ -263,6 +263,15 @@ class BASE_EXPORT Profile {
+     return css_system_fonts_;
+   }
+ 
++  // Whether the claimed machine has more than one display.
++  //
++  // Readable with no permission at all, unlike everything else about the extra
++  // screen — getScreenDetails() needs window-management, but Screen.isExtended
++  // is free. A laptop profile that reports a single screen on a machine whose
++  // other display values were replayed from a two-screen capture disagrees with
++  // itself for one boolean.
++  std::optional<bool> screen_is_extended() const { return screen_is_extended_; }
++
+   // IANA timezone name, e.g. "Europe/Warsaw".
+   //
+   // Only the zone *name* is a host fact. ICU's data is compiled into the binary
+@@ -350,6 +359,7 @@ class BASE_EXPORT Profile {
+   std::set<std::string> gl_extensions_;
+   std::map<std::string, ShaderPrecision> gl_precisions_;
+   std::map<std::string, SystemFont> css_system_fonts_;
++  std::optional<bool> screen_is_extended_;
+   std::optional<std::string> timezone_;
+   std::optional<bool> prefers_dark_;
+   std::optional<std::string> accept_languages_;
+diff --git a/ui/display/display_util.cc b/ui/display/display_util.cc
+index 7afaf10aad..88aa25d555 100644
+--- a/ui/display/display_util.cc
++++ b/ui/display/display_util.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "ui/display/display_util.h"
+ 
++#include "base/apostate/profile.h"
++
+ #include "base/apostate/profile.h"
+ #include "ui/gfx/color_space.h"
+ #include "ui/gfx/display_color_spaces.h"
+@@ -155,6 +157,21 @@ void DisplayUtil::DisplayToScreenInfo(ScreenInfo* screen_info,
+   auto* screen = Screen::Get();
+   // Some tests are run with no Screen initialized.
+   screen_info->is_extended = screen && screen->GetNumDisplays() > 1;
++  // Apostate: the claimed machine's display count, not this host's.
++  //
++  // Screen.isExtended is readable with no permission, while everything else
++  // about the second display sits behind window-management. So a profile
++  // replayed from a two-screen capture reports one screen here and the richer
++  // values everywhere else, and the two disagree for free.
++  //
++  // Set here rather than in Blink because ScreenInfo is assembled once in the
++  // browser process and sent to every renderer; overriding it at the accessor
++  // would leave the browser's own copy saying something else.
++  if (const base::apostate::Profile* profile = base::apostate::Profile::Get()) {
++    if (profile->screen_is_extended().has_value()) {
++      screen_info->is_extended = *profile->screen_is_extended();
++    }
++  }
+   screen_info->is_primary =
+       screen && (screen->GetPrimaryDisplay().id() == display.id());
+   screen_info->is_internal = display.IsInternal();

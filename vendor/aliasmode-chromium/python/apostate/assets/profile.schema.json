@@ -1,0 +1,836 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/apostate/apostate/config/profile.schema.json",
+  "title": "Apostate device profile",
+  "description": "The native device profile accepted by base/apostate/profile.cc. A profile is composed in the browser process from the anchors in corpus/anchors/ and the dispersion tables in resources/profiles/dispersion/; provenance, catalogue version, browser build and profile schema version remain resolver metadata outside this payload. Every field is optional: an absent field leaves that surface inherited from the host, whereas an invented default is incoherent. Each field's description names the evidence class its values carry. source_capture is a resolver provenance reference and is not consumed by the native loader.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Native source identifier consumed by base/apostate/profile.cc; it identifies the selected profile and remains in the runtime payload."
+    },
+    "source_capture": {
+      "type": "string",
+      "description": "Resolver provenance reference for the source capture or composition. It is stripped before native payload emission."
+    },
+    "cpu": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "logical_cores": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Clamped to the host's real count at launch. Claiming fewer is achievable; claiming more is contradicted by a worker scaling curve whatever this says, so the loader warns rather than refusing."
+        }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Real installed memory, not the reported value. Chromium rounds to the nearer power of two and clamps to [2,32] GiB on desktop, so supplying the input keeps an out-of-bucket number from ever shipping."
+        }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Client Hints platform, e.g. macOS."
+        },
+        "version": {
+          "type": "string"
+        },
+        "architecture": {
+          "type": "string"
+        },
+        "bitness": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "mobile": {
+          "type": "boolean"
+        },
+        "navigator_platform": {
+          "type": "string",
+          "description": "navigator.platform, e.g. MacIntel. Must agree with name: the two come from different emitters and a profile setting one alone produces a browser that contradicts itself."
+        },
+        "wow64": {
+          "type": "boolean",
+          "description": "Sec-CH-UA-WoW64. blink::UserAgentMetadata::wow64, populated from IsWoW64() in components/embedder_support/user_agent_utils.cc, so it is true only for a 32-bit browser on 64-bit Windows. A profile claiming true on any other platform contradicts its own platform name. Measured false on all four reference hosts. Evidence class: physical-ground-truth when captured, catalogue-value otherwise."
+        },
+        "form_factors": {
+          "type": "array",
+          "description": "Sec-CH-UA-Form-Factors. blink::UserAgentMetadata::form_factors; the accepted names are the spec list in third_party/blink/public/common/user_agent/user_agent_metadata.h and are validated by UserAgentMetadata::IsValidFormFactor. A desktop build emits [\"Desktop\"] and cannot serve \"Mobile\", so an unservable claim is reduced rather than emitted. Measured [\"Desktop\"] on all four reference hosts. Evidence class: physical-ground-truth when captured, catalogue-value otherwise.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "Desktop",
+              "Automotive",
+              "Mobile",
+              "Tablet",
+              "XR",
+              "EInk",
+              "Watch"
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      }
+    },
+    "browser": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "user_agent": {
+          "type": "string",
+          "description": "The complete UA string. Not assembled from parts, because the OS token, AppleWebKit version and Safari token vary together. Its browser version must match the binary \u2014 Apostate does not spoof its own version."
+        },
+        "brands": {
+          "type": "array",
+          "description": "Reference record of the Sec-CH-UA brand list in major-version form. The brand list is a build invariant, not a profile value: user_agent_utils.cc adds the product brand only under #if !BUILDFLAG(CHROMIUM_BRANDING), so a Chromium build emits two brands where Chrome emits three (docs/concepts/how-it-works.mdx), and patch 0008 restores the third rather than composing a list. The native loader does not read this field and does not rewrite the emitted list. Evidence class: native-derived.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "brand",
+              "version"
+            ],
+            "properties": {
+              "brand": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            }
+          },
+          "minItems": 1,
+          "maxItems": 8
+        },
+        "full_version_list": {
+          "type": "array",
+          "description": "Reference record of Sec-CH-UA-Full-Version-List. Same build-invariant semantics as brands. The versions are the binary's own, which Apostate does not spoof. Evidence class: native-derived.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "brand",
+              "version"
+            ],
+            "properties": {
+              "brand": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            }
+          },
+          "minItems": 1,
+          "maxItems": 8
+        },
+        "full_version": {
+          "type": "string",
+          "description": "Reference record of Sec-CH-UA-Full-Version and navigator.userAgentData.uaFullVersion. blink::UserAgentMetadata::full_version comes from version_info::GetVersionNumber(), so it must equal the binary's version. Evidence class: native-derived.",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      }
+    },
+    "speech": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Constraints on real registered speech providers. Names and metadata do not create synthesis capabilities. An omitted voices field inherits native providers; an explicit empty list permits none.",
+      "properties": {
+        "voices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "lang"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "lang": {
+                "type": "string",
+                "minLength": 2
+              },
+              "default": {
+                "type": "boolean",
+                "description": "Captured default identity; never used to rewrite native provider ordering or metadata."
+              },
+              "local_service": {
+                "type": "boolean",
+                "description": "Require the real provider's localService value to match. Missing means unknown and inherits real metadata, never true by default."
+              }
+            }
+          }
+        }
+      }
+    },
+    "screen": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-precedence": {
+        "available_work_area": [
+          "avail_inset_left/top/right/bottom, whenever the profile is composed: base/apostate/compose.cc DeriveWorkArea reads the four insets, REMOVES them from the payload, and Sets the four absolute avail_* from them. Both sets are declared, a profile may carry both, and on this path the insets win outright because the Set overwrites whatever was there.",
+          "avail_left/top/width/height as supplied, on the --apostate-profile path: ComposeProfileForCurrentProcess returns before DeriveWorkArea when that switch is present, so nothing derives anything, base/apostate/profile.cc reads only the four absolutes, and any insets beside them are inert. That is the one path on which a profile's insets change nothing a page can see."
+        ]
+      },
+      "properties": {
+        "displays": {
+          "type": "array",
+          "description": "Native virtual-monitor model derived from screen.details. Coordinates and dimensions are CSS DIP. Missing workarea origins are unmeasured and inherit the headless display origin; dimensions remain measured. Consumed by the Ozone headless display manager, not ScreenDetailed accessors. Exactly one primary is required.",
+          "minItems": 1,
+          "maxItems": 16,
+          "contains": {
+            "type": "object",
+            "properties": {
+              "is_primary": {
+                "const": true
+              }
+            },
+            "required": [
+              "is_primary"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "left",
+              "top",
+              "width",
+              "height",
+              "avail_width",
+              "avail_height",
+              "device_pixel_ratio",
+              "color_depth",
+              "is_primary",
+              "is_internal",
+              "label"
+            ],
+            "properties": {
+              "left": {
+                "type": "integer",
+                "minimum": -1000000,
+                "maximum": 1000000
+              },
+              "top": {
+                "type": "integer",
+                "minimum": -1000000,
+                "maximum": 1000000
+              },
+              "avail_left": {
+                "type": "integer",
+                "minimum": -1000000,
+                "maximum": 1000000
+              },
+              "avail_top": {
+                "type": "integer",
+                "minimum": -1000000,
+                "maximum": 1000000
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "avail_width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "avail_height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "device_pixel_ratio": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 8
+              },
+              "color_depth": {
+                "type": "integer",
+                "enum": [
+                  24,
+                  30
+                ]
+              },
+              "is_primary": {
+                "type": "boolean"
+              },
+              "is_internal": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 1024
+              }
+            }
+          }
+        },
+        "is_extended": {
+          "type": "boolean",
+          "description": "Whether the claimed machine has more than one display. Readable with no permission, unlike everything else about the second screen, so a profile replayed from a two-screen capture contradicts itself here for free."
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "avail_width": {
+          "type": "integer",
+          "description": "screen.availWidth. A derived output on the composed path: DeriveWorkArea overwrites it with width - avail_inset_left - avail_inset_right, so a value supplied beside the insets is discarded rather than merged. Read as given only when composition is skipped. See x-precedence on this object."
+        },
+        "avail_height": {
+          "type": "integer",
+          "description": "screen.availHeight. Same precedence as avail_width: DeriveWorkArea overwrites it with height - avail_inset_top - avail_inset_bottom on the composed path, and it is read as given only when composition is skipped."
+        },
+        "device_pixel_ratio": {
+          "type": "number",
+          "description": "THE DEVICE SCALE FACTOR, NOT devicePixelRatio. The name matches ScreenDetailed.devicePixelRatio, the observable it replays, and not the arithmetic: window.devicePixelRatio is DSF x page zoom x CSS zoom (LocalFrame::DevicePixelRatio over LayoutZoomFactor), so a 2x display at 110% zoom reports 2.2 while this field holds 2. base/apostate/profile.cc stores it as device_scale_factor_ and it is served into ScreenInfo::device_scale_factor, which is the input to that product, so Chromium re-forms the ratio exactly as navigator.deviceMemory re-does its bucketing from real RAM. Do NOT pin LocalDOMWindow::devicePixelRatio to this value: that fails three ways at once, because the CSS resolution feature and the DPR client hint keep reading the real product and the ratio stops responding to zoom, which no real browser does. Evidence class: physical-ground-truth when captured, catalogue-value otherwise."
+        },
+        "color_depth": {
+          "type": "integer",
+          "enum": [
+            24,
+            30
+          ],
+          "description": "Chromium uses this as an HDR flag rather than a bit depth; only 24 and 30 exist. It drives screen.colorDepth and screen.pixelDepth only. The dynamic-range and color-gamut media features come from color_gamut and hdr below, not from this: conformance showed colorDepth matching the reference device while both media features did not."
+        },
+        "avail_left": {
+          "type": "integer",
+          "description": "screen.availLeft. A derived output on the composed path: DeriveWorkArea overwrites it with avail_inset_left, the panel origin being zero by construction since patch 0101 removed a screen.left lookup no profile can answer. Read as given only when composition is skipped."
+        },
+        "avail_top": {
+          "type": "integer",
+          "description": "screen.availTop: height of the menu bar on macOS or a top-docked taskbar on Windows. Not derivable from the sizes, because a total inset says nothing about how it splits above and below. A derived output on the composed path, where DeriveWorkArea overwrites it with avail_inset_top; read as given only when composition is skipped."
+        },
+        "color_gamut": {
+          "type": "string",
+          "enum": [
+            "srgb",
+            "p3",
+            "rec2020"
+          ],
+          "description": "Display gamut. With hdr, produces ScreenInfo::display_color_spaces, the single source of truth for the color-gamut and dynamic-range media features."
+        },
+        "hdr": {
+          "type": "boolean",
+          "description": "Whether the display has HDR headroom. Not independent of color_gamut: an HDR color space implies a wide gamut, so hdr true with color_gamut srgb describes a display that cannot exist and is derived as p3."
+        },
+        "avail_inset_left": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Work-area inset the OS furniture contributes on the left edge, in CSS pixels. Insets are the composition-time input and the absolute avail_* coordinates are its output, because availLeft and availTop are panel-relative: the Windows reference capture ran on a second monitor at x=1920 and reported availLeft 1920 with a zero inset. base/apostate/compose.cc DeriveWorkArea derives avail_left = avail_inset_left and avail_width = width - avail_inset_left - avail_inset_right, then removes all four insets from the payload, so the native loader never reads one. Evidence class: physical-ground-truth when measured, catalogue-value for an authored furniture model."
+        },
+        "avail_inset_top": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Work-area inset the OS furniture contributes on the top edge, in CSS pixels. Insets are the composition-time input and the absolute avail_* coordinates are its output, for the reason given on avail_inset_left. base/apostate/compose.cc DeriveWorkArea derives avail_top = avail_inset_top and avail_height = height - avail_inset_top - avail_inset_bottom, then removes all four insets from the payload. It adds no panel origin: patch 0101 deleted the screen.top lookup because the schema declares no such key and forbids additional properties here, so that fallback could only ever be zero. Evidence class: physical-ground-truth when measured, catalogue-value for an authored furniture model."
+        },
+        "avail_inset_right": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Work-area inset the OS furniture contributes on the right edge, in CSS pixels. Composition-time input only, like the other three: DeriveWorkArea derives avail_width from the two horizontal insets and then removes them. Evidence class: physical-ground-truth when measured, catalogue-value for an authored furniture model."
+        },
+        "avail_inset_bottom": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Work-area inset the OS furniture contributes on the bottom edge, in CSS pixels. Composition-time input only, like the other three: DeriveWorkArea derives avail_height from the two vertical insets and then removes them. A partial inset set is dropped without deriving anything, because DeriveWorkArea removes the insets before it checks that width, height and all four are present. Evidence class: physical-ground-truth when measured, catalogue-value for an authored furniture model."
+        }
+      }
+    },
+    "gl_limits": {
+      "type": "object",
+      "description": "Measured GL limits a page can read in one getParameter call, keyed as the parameter is spelled. A two-element range arrives as two scalars, because both the loader and ANGLE's cap lookup read scalars: ALIASED_LINE_WIDTH_RANGE and ALIASED_POINT_SIZE_RANGE as _MIN/_MAX, MAX_VIEWPORT_DIMS as _WIDTH/_HEIGHT. A WebGL context is served these values on every backend; the compositor, raster and Skia keep the host's own caps, and what the backend enforces is unchanged, so an operation taken to a claim the host cannot meet is refused. A MIN_ limit is a floor, so where the intersection applies it reverses. No positive lower bound: MIN_PROGRAM_TEXEL_OFFSET is measured -8 and MAX_SERVER_WAIT_TIMEOUT 0 on all four anchors, and a minimum of 1 silently excluded both from every composed profile. Number rather than integer for the same reason in the other direction: almost every limit is a count and is whole, but the three GL parameters that are float-valued in GL itself -- ALIASED_LINE_WIDTH_RANGE, ALIASED_POINT_SIZE_RANGE and MAX_TEXTURE_LOD_BIAS -- can carry a real fraction. The Linux/Vulkan anchor measures a point-size maximum of 2047.9375, which is 2047 + 15/16 from a four-bit subpixel point size; an integer type dropped it and the host's value was served instead. The resolver still refuses a fraction on any other name.",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "gl_extensions": {
+      "type": "array",
+      "description": "WebGL extension names the claimed device exposes, as getSupportedExtensions() spells them. Used only to remove extensions this host advertises and the claimed device does not. An extension cannot be added: a page calls getExtension() and then calls methods on what it gets back, so a claimed-but-unimplemented extension fails at first use.",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_]+$"
+      },
+      "uniqueItems": true
+    },
+    "gl_precisions": {
+      "type": "object",
+      "description": "getShaderPrecisionFormat() results, keyed \"<SHADER>.<QUALIFIER>\". The third component of the WebGL identity, independent of gl_limits and gl_extensions. Chromium seeds the desktop answer itself (127/127/23 float, 31/30/0 int) and the driver overwrites it only where the entry point is implemented, so real desktop Chrome reports Chromium's constants while ANGLE reports its backend's declaration.",
+      "propertyNames": {
+        "pattern": "^(VERTEX|FRAGMENT)_SHADER\\.(LOW|MEDIUM|HIGH)_(FLOAT|INT)$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rangeMin",
+          "rangeMax",
+          "precision"
+        ],
+        "properties": {
+          "rangeMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 127,
+            "description": "log2 of the smallest representable magnitude."
+          },
+          "rangeMax": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 127,
+            "description": "log2 of the largest representable magnitude."
+          },
+          "precision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 23,
+            "description": "Mantissa bits. 0 for integer types, 23 for IEEE binary32."
+          }
+        }
+      }
+    },
+    "webgpu": {
+      "type": "object",
+      "description": "Measured WebGPU adapter identity: the feature set, vendor and architecture strings, subgroup sizes, and numeric limits. Served the way the GL components are: features intersect (the emitter drops backend features the claimed device lacks and never adds ones the backend cannot execute), limits take the minimum, and the vendor and architecture strings and the subgroup sizes are served as claimed. An absent section leaves the host adapter untouched. `available: false` claims a device that has no adapter: requestAdapter() resolves to null on any host.",
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "type": "boolean",
+          "description": "false when the claimed device reported no WebGPU adapter, as some GPUs do in Chrome 152 (the Adreno X1-45, two Linux NVIDIA cards). requestAdapter() then resolves to null on any host. Absent or true: the adapter the other fields describe."
+        },
+        "features": {
+          "type": "array",
+          "description": "Feature names as the JS API spells them. Used only to remove backend features the claimed device lacks.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "info": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vendor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "architecture": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subgroup_min_size": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "GPUAdapterInfo.subgroupMinSize of the claimed device. Served as claimed on any host; a value that is not a power of two is ignored. Absent: the host adapter's value."
+            },
+            "subgroup_max_size": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "GPUAdapterInfo.subgroupMaxSize of the claimed device. Served as claimed on any host; a value that is not a power of two is ignored. Absent: the host adapter's value."
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "description": "Numeric limits keyed as the IDL spells them. Served as the minimum of claim and backend, like gl_limits.",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "gpu": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "unmasked_renderer": {
+          "type": "string"
+        },
+        "unmasked_vendor": {
+          "type": "string"
+        }
+      }
+    },
+    "locale": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timezone": {
+          "type": "string",
+          "description": "IANA name. Only the name is a host fact; ICU's data is compiled in."
+        },
+        "accept_languages": {
+          "type": "string",
+          "description": "Comma list as the pref stores it, e.g. en-US,en. Read by navigator.languages and the Accept-Language header. Absent, the list is the one the application locale's resource bundle declares (en-US,en for en-US, en-GB,en-US,en for en-GB)."
+        },
+        "application": {
+          "type": "string",
+          "description": "The application (UI) locale as one tag, e.g. de-DE, when no list is named. It decides Intl's default locale and, with no accept_languages, the default list. Written for a single --fingerprint-locale tag; with only accept_languages present, its first tag is the application locale, and when both are present this one wins."
+        }
+      }
+    },
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prefers_dark": {
+          "type": "boolean",
+          "description": "Moves roughly thirty CSS system colours at once."
+        },
+        "highlight_argb": {
+          "type": "integer",
+          "description": "0xAARRGGBB; alpha is load-bearing."
+        },
+        "highlight_text_argb": {
+          "type": "integer"
+        },
+        "system_fonts": {
+          "type": "object",
+          "description": "CSS system font keywords and what they resolve to. Chromium picks the font provider at compile time, so a Linux build claiming Windows cannot reach the Windows values by any runtime path. Windows routes only menu, small-caption and status-bar to SPI_GETNONCLIENTMETRICS; the other three fall through to the same Arial/16px default Linux uses.",
+          "propertyNames": {
+            "enum": [
+              "caption",
+              "icon",
+              "menu",
+              "message-box",
+              "small-caption",
+              "status-bar"
+            ]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "family",
+              "size_px"
+            ],
+            "properties": {
+              "family": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Resolved family name, without CSS quoting."
+              },
+              "size_px": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 200
+              }
+            }
+          }
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pointer_type": {
+          "type": "string",
+          "enum": [
+            "fine",
+            "coarse",
+            "none"
+          ],
+          "description": "Headless reports none, and a desktop with no pointer and no hover is a contradiction no real machine produces. Desktop profiles claim fine with hover."
+        },
+        "hover": {
+          "type": "boolean"
+        }
+      }
+    },
+    "audio": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hardware_buffer_frames": {
+          "type": "integer",
+          "minimum": 128,
+          "maximum": 8192,
+          "description": "Frames per buffer of the claimed device's audio output, at its native sample rate. CoreAudio reports 256 on Apple hardware; Windows shared-mode WASAPI reports 480 (a 10 ms period at 48 kHz); the Linux backends we build on report 2048. Not constrained to powers of two \u2014 real devices are not. Drives AudioContext.baseLatency, which is max(framesPerBuffer, renderQuantumSize) / sampleRate."
+        }
+      }
+    },
+    "media": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hw_decode_codecs": {
+          "type": "array",
+          "description": "Video codecs the claimed GPU decodes in fixed function, lowercase. Drives MediaCapabilities.decodingInfo().powerEfficient, which is a property of the GPU generation: Intel Gen9.5 (UHD 630) decodes h264, vp9 and hevc but not av1. Never widens `supported` \u2014 that is a capability, and claiming a decoder we lack is falsified by playing one file.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "h264",
+              "vp8",
+              "vp9",
+              "hevc",
+              "av1"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "audioinput_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "description": "Microphones the claimed machine has. A floor, not an exact count: real host devices are kept and the list is topped up. Readable from any page via enumerateDevices() without permission."
+        },
+        "videoinput_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "description": "Cameras the claimed machine has. Same semantics as audioinput_count."
+        },
+        "audiooutput_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "description": "Audio outputs the claimed machine has. Accepted and inert: unlike audioinput_count it is read by no C++, so enumerateDevices() reports the host's real speakers. Measured 1 on the macOS, Windows and stock Linux reference hosts. Evidence class: physical-ground-truth when captured, catalogue-value otherwise."
+        },
+        "devices": {
+          "type": "array",
+          "description": "The claimed enumerateDevices() topology. deviceId and groupId are already per-origin HMACs in Chromium, so the fingerprint content is the count, the kind mix, the group pairing and the labels once a permission is granted. group is a stable pairing key rather than a groupId: entries sharing it are one physical device and the emitter gives them the same per-origin groupId. Labels must be vendor-real and platform-correct, so a Realtek codec string is a Windows artifact and is never selectable on macOS or Linux. Counts must agree with audioinput_count, audiooutput_count and videoinput_count. Evidence class: physical-ground-truth for counts measured without a permission, catalogue-value for labels, which a page cannot read until permission is granted and which the reference captures therefore do not carry.",
+          "maxItems": 48,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "label",
+              "group"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "audioinput",
+                  "audiooutput",
+                  "videoinput"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "group": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        }
+      }
+    },
+    "keyboard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout_map": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "navigator.keyboard.getLayoutMap(), replayed from the capture. A user setting rather than a device property and not derivable from anything else, so it is carried verbatim (axiom A3). Replaces the host map wholesale; omit or leave empty to keep the host's."
+        }
+      }
+    },
+    "fonts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "generic_family_map": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Common-script generic font preference identities. Derived only when the detected native preferred face matches every captured generic metric. Unmeasured generic and per-script settings remain inherited.",
+          "properties": {
+            "serif": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sans-serif": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "monospace": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "cursive": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "fantasy": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "math": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        },
+        "enumeration_allowlist": {
+          "type": "array",
+          "description": "The exact family set the claimed machine enumerates. Subtractive: the emitter removes families this host has and the claimed device does not, and never adds one. A family the host genuinely lacks therefore cannot be made to measure, whatever this list says. Gating an absent family on a provisioned font directory is superseded and that field is gone: the browser assumes the families in an optional pack are installed, and tells the user to install them when they are not. That is the opposite of the memory rule and consistently so. Memory is clamped to the host because a user cannot install RAM to make a claim true, so an unbacked claim is falsifiable by allocation; fonts are assumed because a user can install them, so the honest move is to tell them to. The distinguishing factor is whether the user can change the host, not how loud the tell is. Assuming provisioning means we stop checking, not that we start claiming absent faces. Installed fonts arrive in bundles, so this list is composed from whole packs and never from individually drawn families, which would be synthesis and a tell. Evidence class: physical-ground-truth for a measured platform core set, catalogue-value for a published software bundle.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "uniqueItems": true,
+          "maxItems": 4096
+        }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Browser window chrome deltas. outerWidth/outerHeight minus innerWidth/innerHeight is the space the browser's own frame, tabstrip and toolbar occupy; it follows the OS window decoration for the claimed release rather than anything about the page. Accepted and inert: no C++ reads either field, because the delta is the real furniture of the window the host draws. Measured: 87 CSS pixels of height on macOS 26, 121 on Windows 11, and 143 on both Linux reference hosts, with a zero width delta on all four.",
+      "properties": {
+        "outer_inner_delta_width": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "outerWidth - innerWidth. Zero on every reference host measured. Evidence class: physical-ground-truth when captured, catalogue-value otherwise."
+        },
+        "outer_inner_delta_height": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "outerHeight - innerHeight. Evidence class: physical-ground-truth when captured, catalogue-value otherwise."
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The network the claimed device is on, as the Network Information API reports it. Served into Blink's NetworkStateNotifier stored state rather than at navigator.connection, because that one struct feeds navigator.connection.{effectiveType,rtt,downlink,saveData}, the deprecated rtt/downlink/ect client hints FrameFetchContext sends when a site opts in with Accept-CH, the Save-Data request header, and the prefers-reduced-data media feature. Overriding the JS accessor alone would leave the request headers describing the host's real link. Absent means the host's own estimate, which contradicts both the composed device and the proxy exit.",
+      "properties": {
+        "effective_type": {
+          "type": "string",
+          "enum": [
+            "slow-2g",
+            "2g",
+            "3g",
+            "4g"
+          ],
+          "description": "Spelled as the JS EffectiveConnectionType enum spells it. Pinned against http_rtt_ms by the emitter using net::kHttpRttEffectiveConnectionTypeThresholds, the same table SetNetworkConnectionInfoOverride uses: 4g is under 272 ms, 3g is 272-1419, 2g is 1420-2009, slow-2g is 2010 and above. A named type holds the round trip inside its band; a round trip supplied alone selects the type Chromium would have derived. Near every real desktop reports 4g."
+        },
+        "http_rtt_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3000,
+          "description": "The raw HTTP round-trip estimate, not the number a page reads. No granularity constraint on purpose: real NQE estimates are arbitrary integer milliseconds, and NetworkStateNotifier::RoundRtt produces the observable value from this one by multiplying by a per-origin salted 0.90-1.10, rounding to the nearest 50 ms and capping at 3 s. Feeding the estimate into that path rather than bypassing it is what keeps the emitted granularity Chromium's own. Note 50 ms, not the 25 ms the spec text describes."
+        },
+        "downlink_mbps": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "The raw downlink throughput estimate in Mbps, again pre-rounding. NetworkStateNotifier::RoundMbps applies the same per-origin multiplier, rounds to the nearest 50 kbps bucket and caps at 10 Mbps, so a larger figure is not observable and the ceiling here is that cap rather than a claim about real links. Floored by the emitter at the claimed type's own typical throughput from kTypicalDownlinkMbpsEffectiveConnectionType (4g 1.600, 3g 0.400, 2g 0.075, slow-2g 0.040), so 4g cannot ship a 2G figure."
+        },
+        "save_data": {
+          "type": "boolean",
+          "description": "Whether data saver is on. One value with four emitters: navigator.connection.saveData, the Save-Data request header, the prefers-reduced-data media feature, and Blink's loading heuristics. Desktop Chrome ships no UI that turns this on, so true is a claim desktop Chrome cannot produce and a desktop profile should leave it absent or false."
+        }
+      }
+    },
+    "battery": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The battery the claimed device has, as the Battery Status API reports it. navigator.getBattery is exposed in this build and resolves with the host's real battery unless this section is present, so a profile that omits it inherits the host: a laptop-shaped profile on a battery-less host reports charging true with level 1.0 and dischargingTime Infinity, which is exactly what a server reports, and a desktop-shaped profile on a laptop reports a discharging battery no desktop has. Served by BatteryDispatcher, which does not bind the BatteryMonitor pipe at all when this section is present, so the host is never read and one status stands for the whole launch.",
+      "properties": {
+        "present": {
+          "type": "boolean",
+          "description": "Whether the claimed chassis has a battery. false does not hide the API and must not be read as doing so: desktop Chrome still resolves getBattery(), answering charging true, level 1.0, chargingTime 0 and dischargingTime Infinity, which is BatteryStatus's own default. So false means emit that tuple, and it is coherent only for a chassis with no battery. Presence must agree with the claimed chassis. Nothing in the profile names a chassis directly \u2014 every os_release option reports form_factors [\"Desktop\"] because Chromium's form-factors hint has no Laptop value \u2014 so the dispersion catalogue conditions this on the panel axis, which is what actually encodes a laptop display versus an external monitor."
+        },
+        "charging": {
+          "type": "boolean",
+          "description": "Whether the battery is charging. Ignored when present is false. Determines which of the two times is Infinity: the emitter derives that rather than trusting the profile, because a pair the API forbids is a harder tell than any single value."
+        },
+        "level": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "multipleOf": 0.01,
+          "description": "Charge as a fraction. Ignored when present is false, which reports 1.0. The 0.01 step is Blink's constraint rather than the platform's: BatteryStatus::EnsureTwoSignificantDigits does round(level * 100) / 100 on every construction on every platform, so finer detail is discarded even where the platform is finer \u2014 macOS computes current_capacity / max_capacity, which is an arbitrary fraction before Blink rounds it. A level of 1.0 with charging true also forces chargingTime to zero."
+        },
+        "charging_time_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 604800,
+          "multipleOf": 60,
+          "description": "Seconds until full. Omit for Infinity, which is what the API requires whenever the battery is not charging. Whole minutes are mandatory rather than stylistic: battery_status_manager_mac.cc reports base::Minutes(n).InSeconds() from the IOPM minute count, so macOS cannot produce anything else, while Windows BatteryLifeTime and UPower TimeToFull report seconds where a whole minute is one of the values they can produce. The emitter rounds to the nearest minute regardless, so a figure no platform could have produced cannot reach a page."
+        },
+        "discharging_time_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 604800,
+          "multipleOf": 60,
+          "description": "Seconds until empty. Omit for Infinity, which is what the API requires whenever the battery is charging. Whole minutes for the same reason as charging_time_seconds. Should be consistent with level: a 0.98 charge reporting forty minutes of runtime describes a battery nothing would ship."
+        }
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What the claimed machine's installed extensions expose to an ordinary web page. Not an extension list: a fixed extension id is a cross-instance correlator, so nothing here names or installs one. Only the page-visible consequence is described, and only the one consequence a real population is split on.",
+      "properties": {
+        "externally_connectable": {
+          "type": "boolean",
+          "description": "Whether some installed extension's externally_connectable manifest key matches an ordinary http/https page, which is the entire gate on chrome.runtime and window.browser being present there (extensions/renderer/native_extension_bindings_system.cc CanWebpageContextConnectExternally, read at UpdateBindingsForContext). false is fresh Chrome and the common case: measured on stock Chrome 153 with a fresh profile, window.chrome is exactly [loadTimes, csi, app] and chrome.runtime is undefined on https://example.com and on file://. true is the MetaMask shape \u2014 externally_connectable.matches [\"http://*/*\", \"https://*/*\"], tens of millions of installs \u2014 where every http/https page gets chrome.runtime and window.browser.runtime through the real binding path, with id and dynamicId reading undefined, and file:// and about:blank stay bare. The historical folklore that a full Chrome always exposes chrome.runtime comes from the CryptoToken component extension, which shipped externally_connectable https://*/* in every build until roughly Chrome 98 and has not existed since 2022."
+        }
+      }
+    }
+  }
+}

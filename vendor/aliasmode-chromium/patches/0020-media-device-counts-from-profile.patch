@@ -1,0 +1,70 @@
+Subject: [PATCH] media: capture device counts in the profile
+
+The profile lists how many microphones, cameras and audio outputs the
+claimed machine has, up to 16 of each. enumerateDevices() shows these
+counts to any page without permission, and a headless host often has no
+microphone or camera at all. The counts set a floor, so real devices on
+the host are kept and only the shortfall is filled. This patch parses
+the counts, and patch 0092 creates the devices.
+
+diff --git a/base/apostate/profile.cc b/base/apostate/profile.cc
+index d49a6cd3b1..872746b969 100644
+--- a/base/apostate/profile.cc
++++ b/base/apostate/profile.cc
+@@ -199,6 +199,26 @@ Profile* Profile::ParseOrNull(const std::string& encoded) {
+     }
+   }
+ 
++  if (const DictValue* media = dict->FindDict("media")) {
++    // A machine can have several cameras, so these are counts rather than
++    // booleans. The ceiling is arbitrary but finite: it exists so a malformed
++    // profile cannot make the browser synthesise an unbounded device list.
++    for (const auto& [key, sink] :
++         {std::pair<const char*, std::optional<int>*>{
++              "audioinput_count", &profile->media_audioinput_count_},
++          std::pair<const char*, std::optional<int>*>{
++              "videoinput_count", &profile->media_videoinput_count_}}) {
++      if (std::optional<int> v = media->FindInt(key)) {
++        if (*v >= 0 && *v <= 16) {
++          *sink = *v;
++        } else {
++          LOG(ERROR) << "apostate: media." << key << " must be in [0, 16]; "
++                     << "ignoring";
++        }
++      }
++    }
++  }
++
+   if (const DictValue* locale = dict->FindDict("locale")) {
+     if (const std::string* v = locale->FindString("timezone")) {
+       profile->timezone_ = *v;
+diff --git a/base/apostate/profile.h b/base/apostate/profile.h
+index 546eda36a2..6e71f8612c 100644
+--- a/base/apostate/profile.h
++++ b/base/apostate/profile.h
+@@ -169,6 +169,16 @@ class BASE_EXPORT Profile {
+     return audio_hardware_buffer_frames_;
+   }
+ 
++  // How many capture devices of each kind the claimed machine has. A laptop
++  // with neither a microphone nor a camera is not a laptop, and a headless
++  // host has neither, so these cannot be left to the host to answer.
++  std::optional<int> media_audioinput_count() const {
++    return media_audioinput_count_;
++  }
++  std::optional<int> media_videoinput_count() const {
++    return media_videoinput_count_;
++  }
++
+   // IANA timezone name, e.g. "Europe/Warsaw".
+   //
+   // Only the zone *name* is a host fact. ICU's data is compiled into the binary
+@@ -249,6 +259,8 @@ class BASE_EXPORT Profile {
+   std::optional<std::string> screen_color_gamut_;
+   std::optional<bool> screen_hdr_;
+   std::optional<int> audio_hardware_buffer_frames_;
++  std::optional<int> media_audioinput_count_;
++  std::optional<int> media_videoinput_count_;
+   std::optional<std::string> timezone_;
+   std::optional<bool> prefers_dark_;
+   std::optional<std::string> accept_languages_;

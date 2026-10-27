@@ -1,0 +1,112 @@
+Subject: [PATCH] fonts: Windows stretch-suffix retry for missing families
+
+Under a Windows profile, a missing family such as Arial Narrow is
+retried as Arial with a condensed stretch, the way Windows handles it.
+On a host without a narrow face this returns Arial at normal width,
+which matches a Windows machine with no narrow face. Without the retry,
+Blink moves on to the next fallback family and a width-based font probe
+reports Arial Narrow as missing. No synthetic condensing is added, and
+other profiles keep the Linux path.
+
+diff --git a/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc b/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc
+index 31af2c1f7c..3c8bc3925a 100644
+--- a/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc
++++ b/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc
+@@ -33,6 +33,7 @@
+ #include <memory>
+ #include <utility>
+ 
++#include "base/apostate/profile.h"
+ #include "base/check_op.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/notreached.h"
+@@ -72,6 +73,59 @@ AtomicString ToAtomicString(const SkString& str) {
+ }
+ 
+ namespace {
++#if BUILDFLAG(IS_LINUX)
++bool MatchesWindowsFamily(SkTypeface* face, const AtomicString& family) {
++  auto* names = face->createFamilyNameIterator();
++  SkTypeface::LocalizedString name;
++  bool matches = false;
++  while (names->next(&name)) {
++    if (DeprecatedEqualIgnoringCase(family, ToAtomicString(name.fString))) {
++      matches = true;
++      break;
++    }
++  }
++  names->unref();
++  if (!matches) {
++    SkString primary;
++    face->getFamilyName(&primary);
++    matches = DeprecatedEqualIgnoringCase(family, ToAtomicString(primary));
++  }
++  return matches;
++}
++
++bool WindowsStretchSuffix(const AtomicString& family,
++                          AtomicString& adjusted_name,
++                          FontSelectionValue& stretch) {
++  // Same backward-compatible family-name translation as
++  // win/font_cache_skia_win.cc. This changes a font request, not glyph scale.
++  struct Suffix {
++    const char* text;
++    wtf_size_t length;
++    FontSelectionValue stretch;
++  };
++  static const Suffix kSuffixes[] = {
++      {" ultracondensed", 15, kUltraCondensedWidthValue},
++      {" extracondensed", 15, kExtraCondensedWidthValue},
++      {" condensed", 10, kCondensedWidthValue},
++      {" narrow", 7, kCondensedWidthValue},
++      {" semicondensed", 14, kSemiCondensedWidthValue},
++      {" semiexpanded", 13, kSemiExpandedWidthValue},
++      {" expanded", 9, kExpandedWidthValue},
++      {" extraexpanded", 14, kExtraExpandedWidthValue},
++      {" ultraexpanded", 14, kUltraExpandedWidthValue}};
++  for (const auto& suffix : kSuffixes) {
++    if (family.EndsWithIgnoringAsciiCase(suffix.text)) {
++      StringView base_family(family);
++      base_family.remove_suffix(suffix.length);
++      adjusted_name = AtomicString(base_family);
++      stretch = suffix.stretch;
++      return true;
++    }
++  }
++  return false;
++}
++#endif  // BUILDFLAG(IS_LINUX)
++
+ const FontPlatformData* CreateFontPlatformDataForTypeface(
+     sk_sp<SkTypeface> typeface,
+     const FontDescription& font_description) {
+@@ -341,6 +395,29 @@ const FontPlatformData* FontCache::CreateFontPlatformData(
+   typeface = CreateTypeface(font_description, creation_params, name);
+ #endif
+ 
++#if BUILDFLAG(IS_LINUX)
++  const auto* profile = base::apostate::Profile::Get();
++  if (profile && profile->ua_platform() &&
++      *profile->ua_platform() == "Windows" &&
++      creation_params.CreationType() == kCreateFontByFamily &&
++      alternate_name != AlternateFontName::kLocalUniqueFace &&
++      alternate_name != AlternateFontName::kLastResort &&
++      (!typeface ||
++       !MatchesWindowsFamily(typeface.get(), creation_params.Family()))) {
++    AtomicString adjusted_name;
++    FontSelectionValue stretch;
++    if (WindowsStretchSuffix(creation_params.Family(), adjusted_name, stretch)) {
++      FontDescription adjusted_description = font_description;
++      adjusted_description.SetStretch(stretch);
++      typeface = CreateTypeface(adjusted_description,
++                                FontFaceCreationParams(adjusted_name), name);
++      if (!typeface || !MatchesWindowsFamily(typeface.get(), adjusted_name)) {
++        return nullptr;
++      }
++    }
++  }
++#endif  // BUILDFLAG(IS_LINUX)
++
+   if (!typeface)
+     return nullptr;
+ 

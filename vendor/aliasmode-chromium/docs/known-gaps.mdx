@@ -1,0 +1,254 @@
+---
+title: "Known gaps"
+description: "What Apostate does not do yet or cannot hide, with the measurements behind each gap and what you can do about it."
+---
+
+Each gap below is something a page, a detector or the host can still see. Measurements carry the date, the Apostate version, the persona and the host they were taken on. `--fingerprint-explain` lists the gaps that apply to one launch under `limitations`.
+
+## Detector findings
+
+### The Linux Widevine module under a Windows persona
+
+FingerprintJS Pro flags `anti_detect_browser` when the Linux Widevine module answers for a Windows persona. On a bare-metal x86 Linux server under Xvfb, Windows personas with the module present were flagged in 6 of 6 runs. The same binary, seeds (1, 369, 7, 42, 1000, 12345) and exit without the module were not flagged in 6 of 6, and their suspect score dropped from 20 to 12 on a home connection (2026-09-26, Apostate 0.4.3 release binary, plain Playwright).
+
+The packages install Widevine on every launch, so every package launch of a Windows persona on Linux carries the module. An earlier set of runs that found no difference went through the package, which put the module back in the runs meant to be without it. The same module in an emulated Linux container on a Mac was not flagged in 4 of 4 runs, so the module may not be the only input.
+
+**What to do.** Not fixed in the packages: they and `apostate run` put the module back beside the browser on every launch, and on Linux the browser loads it from there whatever switches you pass. To run without it, delete the `WidevineCdm` directory beside the executable (`apostate path` names it) and start the binary directly, not through the packages or `apostate run`. [Widevine](/guides/widevine) covers provisioning.
+
+### The tampering score follows the driver
+
+On FingerprintJS Pro's playground, the tampering score read about 1.0 under the default Patchright driver and 0 under plain Playwright, which raised `developer_tools` instead (2026-09-26, Apostate 0.4.3 builds, Windows personas, bare-metal x86 Linux server). Runs on the same server with no driver attached gave tampering scores from 0.26 to 0.998 depending on the persona, so the driver is not the only input.
+
+**What to do.** Keep Patchright, the default. [Detection](/concepts/detection#automation-traces) explains the `developer_tools` flag, and [FingerprintJS](/testing/fingerprintjs) has the dated scores.
+
+### Linux personas score as an anomaly
+
+Linux personas and `--fingerprint=host` score `anomaly_score` 1 in FingerprintJS Pro on a bare-metal x86 Linux server, as stock Chrome does there (4 of 4 runs, 2026-09-26, the build released as 0.4.3). The cause is not isolated.
+
+A Linux persona on an Apple silicon Mac was flagged too: suspect score 18 with `tampering` and `anti_detect_browser`, where Windows and macOS personas in the same run had no browser flags (2026-09-27, Apostate 0.4.3, headless, [Latest results](/testing/results)).
+
+**What to do.** For FingerprintJS-facing work, use a Windows persona on Linux and Windows hosts, and a macOS persona on a Mac.
+
+### iphey and the font filter
+
+iphey.com rates every composed persona "Unreliable" with the signal "inconsistent browser fingerprint (roadmap)", the macOS persona on a Mac included. Up to 0.4.3 it also flags the Windows persona with "(butterfly)". Both come from the `fonts` section: removing it clears both, whether the Windows persona claims `arm` or `x86` (measured 2026-09-28 on an Apple silicon Mac, development build with the Adreno family). The butterfly signal was the names of two variable fonts. Windows 11 lists each named instance of Segoe UI Variable and Sitka as its own family, such as "Segoe UI Variable Display" and "Sitka Small", and never the base name. The 0.4.3 persona did the reverse. From 0.4.4 it lists the instances, and a Linux test with those names resolving no longer showed butterfly. Roadmap remains. The same macOS profile without its `fonts` section is rated "Trustworthy", and so are `--fingerprint=host` and stock Google Chrome on the same Mac. A `fonts` section trips it even when it allows every font on the host. One symptom: under any font allowlist, `BlinkMacSystemFont`, the name Chrome on a Mac gives the system UI font, no longer resolves (measured 2026-09-28, Apostate 0.4.3, Apple silicon Mac).
+
+**What to do.** Not fixed; the fix belongs in the browser's font filter. Other detectors in the [test suite](/testing/results) do not flag it.
+
+## The host shows through
+
+### ARM hosts
+
+On Apple silicon and Linux arm64, a Windows or Linux persona reports the `arm` architecture in User-Agent Client Hints. A page can tell the CPU family from arithmetic, such as the sign of a computed NaN, and from Web Audio output, which the host CPU renders. Claiming x86 instead is worse. The arithmetic shows ARM, and FingerprintJS Pro then flags `virtual_machine` (suspect score 34 with x86, 20 with arm, 2026-09-23, development build before 0.4.0). `navigator.platform` stays `Linux x86_64`, which Chrome reports on every Linux CPU.
+
+In 0.4.3 and earlier, a Windows persona on an ARM host names a desktop Intel or NVIDIA GPU next to `arm`, a pair no real Windows machine has. From 0.4.4, it draws the Qualcomm Adreno family, the GPU a real Windows-on-ARM machine has. The family was measured in Chromium 152 on 2026-09-27 on three Windows 11 ARM64 machines: a Snapdragon X2 Elite laptop with an Adreno X2-90, a Snapdragon X Elite reference design with an Adreno X1-85, and a Snapdragon X Plus reference design with an Adreno X1-45. All three read `Win32`, `arm`, 64-bit, and the same WebGL values, which equal the Intel family's except `MAX_SAMPLES` (8 instead of 16). The X2-90 read the same GPU values in Chrome 154. A seed presents one of the three models, with equal odds.
+
+What a page can still see from 0.4.4:
+
+- The X2-90 machine has 18 cores and the X1-85 machine 12. On a host with fewer cores, a seed that presents one of them reports the host's own core count. Memory follows the same cap, with 32 GiB for the X2-90 and X1-85 and 16 GiB for the X1-45. [Hosts](/concepts/hosts#arm-hosts) has the counts for several host sizes.
+- The Adreno X1-45 reported no WebGPU adapter, so a seed that presents it has none. `navigator.gpu.requestAdapter()` returns `null`, as it did on the real machine.
+- A Linux persona on an ARM host still names a desktop NVIDIA GPU. No Linux GPU family was measured on ARM.
+
+A macOS persona always reports Apple silicon.
+
+**What to do.** For a Windows persona on an ARM host, use a host with at least 18 cores and 32 GiB, so every Adreno model presents its own counts. On a smaller host, pass the Adreno X1-45's renderer string from [GPU models](/reference/gpu-models#windows-qualcomm-direct3d-11) to `--fingerprint-gpu-renderer`. Its 8 cores and 16 GiB fit a host with 8 cores and 16 GiB. Run Linux personas on an x86 host.
+
+### Cores and memory are capped at the host's
+
+A persona never claims more cores or memory than the host has. On a small server most personas report the server's own core count next to a desktop GPU, and a seed can present a different core count or memory size on a smaller host, even one the host could serve.
+
+**What to do.** Use a host with at least as many cores and as much memory as the machines you want to present, or pin both with `--fingerprint-hardware-concurrency` and `--fingerprint-device-memory`. [Seeds and identity](/concepts/seeds-and-identity#the-host-cap) and [Hosts](/concepts/hosts#cores-and-memory) have the numbers.
+
+### Rendering is the host's
+
+Canvas, WebGL and WebGPU pixels, and rendering speed, come from the host's GPU, or from a software renderer when there is none. A page that times rendering or compares images with real hardware can see this. Personas of one platform on one host draw the same canvas image unless their fonts differ. WebGL extensions that add methods, such as `WEBGL_provoking_vertex`, are missing when the host GPU lacks them. A WebGPU compute shader runs at the host GPU's subgroup size, whatever sizes `adapter.info` reports for the persona.
+
+**What to do.** Run a persona on a host whose GPU matches its family where you can. When canvas hashes must differ between personas on one host, add `--fingerprint-noise`; a page can detect it, so leave it off otherwise. [GPU](/guides/gpu) covers both.
+
+### WebGL and WebGPU limits on Apple silicon
+
+On an Apple silicon host, a Windows or Linux persona reports the Apple GPU's own value for a few limits: WebGL `MAX_UNIFORM_BLOCK_SIZE` reads 16384 where the persona claims 65536, and the WebGPU adapter's `maxStorageBuffersPerShaderStage` and its fragment and vertex variants read 10 where it claims 16. A Linux persona's adapter also reads the Apple GPU's `maxComputeWorkgroupStorageSize` (32768 for 49152) and lists `shader-f16`, which its family lacks (2026-09-27, Apostate 0.4.3, [test suite](/testing/results)).
+
+Beyond what a page reads, a Windows or Linux persona claims more than Metal allows. On Apple silicon, 8x multisampling fails (the GPU has 4), a shader with more than 1024 vertex uniform vectors fails to link, points above 511 pixels and viewports above 16384 are clamped, and textures above 16384 pixels fail, although a Linux persona claims 32768. SwiftShader and llvmpipe, the software renderers on a server without a GPU, refused no size in testing.
+
+**What to do.** Run Windows and Linux personas on an x86 Linux server or a Windows machine.
+
+### WebGPU without a GPU
+
+On a host with no GPU, the persona's adapter is served with SwiftShader underneath. Features and limits the software device cannot back fail when a page calls `requestDevice()` with them.
+
+**What to do.** Use a host with a GPU for pages that run WebGPU work.
+
+### WebGPU in headless mode on Linux
+
+On Linux, `navigator.gpu.requestAdapter()` returns `null` in headless mode, for any user, and in headed mode as root, although the persona claims an adapter. A headed launch as a regular user serves the adapter. Measured in arm64 and amd64 containers through the package and through the binary (2026-09-27, Apostate 0.4.3).
+
+**What to do.** On a Linux server, launch headed (`headless=False`, which starts Xvfb) as a regular user when a page uses WebGPU. [Linux servers](/guides/linux-servers#headless-or-headed) compares the two modes.
+
+### Hardware video encoders are the host's
+
+WebRTC's send codecs come from the encoders the host has. Real Windows machines with an Intel or NVIDIA GPU also offer H.264 High and H.265, which a persona on a server without those encoders does not list.
+
+**What to do.** Not fixed. A host without hardware encoders cannot offer them.
+
+### Passkey capabilities are the host's
+
+`PublicKeyCredential.getClientCapabilities()` reports the host's answers. Real Windows Chrome reports `extension:payment` (Secure Payment Confirmation) as true; a Windows persona on Linux reports it false. Hybrid transport and the platform authenticator also follow the host.
+
+**What to do.** Not fixed.
+
+### Cameras and microphones
+
+The persona's device list is a floor, and the host's own devices are kept. On a host with a camera or microphone, `navigator.mediaDevices.enumerateDevices()` lists that kind even when the persona's machine has none, and after a permission grant a page reads the host's real device labels. A Windows persona with seed 42, whose machine has speakers only, listed the Mac's microphones, cameras and speakers by name (2026-09-27, Apostate 0.4.3, Apple silicon MacBook Pro).
+
+**What to do.** Run personas on a host with no capture devices, such as a server, or disable the devices on the host.
+
+### A forced scale factor sets the pixel ratio
+
+With `--force-device-scale-factor=N`, `devicePixelRatio`, the scale the page is drawn at and the `Sec-CH-DPR` header all read `N`, whatever pixel ratio the persona claims. The window is drawn at that scale, and a page drawn at another one is stretched by the operating system and looks blurred. Without the switch the persona's pixel ratio applies, and on a host whose display is scaled the page is drawn at the persona's ratio.
+
+**What to do.** On a scaled Windows display, pass the display's own scale, such as `--force-device-scale-factor=1.5` at 150%. The composed machine is the same with or without the switch: `--fingerprint-explain` prints the same `catalogue` line and the same values.
+
+### A Windows host parses file paths as Windows
+
+Chrome on Windows turns `c:\foo` and `\\server\share` into `file:` URLs, and a page can read that. A Windows persona on Linux or macOS does the same. A macOS or Linux persona on a Windows host does not undo it.
+
+**What to do.** Run macOS and Linux personas on a macOS or Linux host.
+
+### Browser chrome height
+
+The height of the tab strip and toolbar, `outerHeight - innerHeight`, comes from the host's browser layout. Without the bar described [below](#a-bar-on-the-first-tab), a Windows persona reads 87 at 100% scaling, headless and headed, on Mac and Linux hosts. Real Windows machines read more: a maximized Windows 11 machine with an RTX 3070 Ti read 143 at 100% (Chrome 153, captured 2026-09-14), and another machine running Chrome 154, not exactly maximized, read 133 at 100% and 149 at 200% (2026-09-26). Whether the 143 includes a bar of that machine's own, such as the default-browser prompt, was not recorded.
+
+**What to do.** Not fixed. Seeds whose `panel` row in `--fingerprint-explain` ends in `-125` or `-150` claim scaling; choose another seed where this matters.
+
+### A bar on the first tab
+
+Chromium can show a bar on the first tab that Google Chrome never shows. It takes 56 pixels from `innerHeight`: seed 42 as Windows on an x86-64 host reads 889 instead of 945, and `outerHeight - innerHeight` reads 143 instead of 87. Two conditions show it. When both hold, one bar shows.
+
+| Bar | Shown on the first tab of | Removed by |
+| --- | --- | --- |
+| "Google API keys are missing" | A launch without a driver: the binary run directly, `apostate run`, or a browser you attach to over CDP. Apostate is built without Google API keys | Setting `GOOGLE_API_KEY=no`, `GOOGLE_DEFAULT_CLIENT_ID=no` and `GOOGLE_DEFAULT_CLIENT_SECRET=no` in the environment the browser starts from |
+| "You are using an unsupported command-line flag: --no-sandbox" | Any launch with `--no-sandbox`, except a headless launch through the packages. The 0.4.3 packages always pass it, so every headed package launch shows this bar | Leaving out `--no-sandbox`. From 0.4.4 the packages keep the sandbox on where it runs: macOS, Windows, and Linux as a regular user outside a container |
+
+Measured on 2026-09-27: a headless package launch in a Linux container reads 945 on its first tab, with `--no-sandbox`. A headed one under Xvfb reads 889, with or without the three variables. A bare launch with the variables and `--no-sandbox` reads 889, headless and headed.
+
+**What to do.** When you start the binary yourself, set the three variables and leave out `--no-sandbox` where the sandbox runs. In a container or as root the browser needs `--no-sandbox`: run headless through the packages there, or open a second tab and use that one, which shows no bar.
+
+### The window is placed from the persona, not measured
+
+A new window goes on the persona's work area. A Windows persona opens maximized, as Windows Chrome does, and macOS and Linux personas get their platform's default placement. The host display has to be at least that large, or the window manager may shrink the window. With `headless=False` on a server, the package's Xvfb display is 3840x2160 unless you set `--fingerprint-screen-width` and `--fingerprint-screen-height`.
+
+**What to do.** Give the host a display at least as large as the persona's screen, or set the screen switches so the package's Xvfb matches them. `--window-size` and `--window-position` override the placement. [Screen and window](/guides/screen-and-window) has the details.
+
+## DRM
+
+### Widevine shows the host OS
+
+Real Windows Chrome answers a page's first Widevine request with a 2-byte service-certificate request, so no client identity leaves in the clear. Under a Windows persona on Linux, the first message is a license request of about 1,700 bytes that carries the module's own platform, `Linux` and `x86-64`, in the clear. A page can tell the two apart from the message length alone. DRM playback still works.
+
+**What to do.** As for [the Linux module](#the-linux-widevine-module-under-a-windows-persona). On macOS, `--disable-component-update` keeps the module from loading.
+
+### Widevine on Windows hosts is not verified
+
+Widevine works on macOS arm64, Linux x64 and Linux arm64 hosts. If it fails on Windows, the browser starts without DRM and prints a warning.
+
+**What to do.** Check DRM playback on your Windows host before you rely on it.
+
+## Fonts and text
+
+### Fonts that are not installed are absent
+
+A persona shows only the listed fonts the host has, and nothing warns you when one is missing.
+
+**What to do.** For a Windows persona on Linux or macOS, run `apostate fonts install windows`. [Fonts](/guides/fonts) covers macOS personas and checking what is installed.
+
+### Text is drawn by the host's font engine
+
+Even with the real Windows fonts, FreeType on Linux or CoreText on macOS draws the glyphs, so glyph edges and ink bounds can differ slightly from Windows. Line heights and font boxes follow Windows's rules under a Windows persona.
+
+**What to do.** Only a Windows host avoids it.
+
+### A macOS persona off a Mac uses the host's generic fonts
+
+The macOS font packs name no fonts for the generic families `serif`, `sans-serif` and `monospace`, and a macOS persona keeps the build's own `system-ui`. On a Linux host these resolve to the host's defaults instead of the Mac's.
+
+**What to do.** Run macOS personas on a Mac.
+
+## Persona details
+
+### prefers-color-scheme in the 0.4.3 packages
+
+A persona draws a light or dark theme, but Playwright and Patchright emulate a light color scheme unless told not to, and the 0.4.3 packages did not tell them, so `prefers-color-scheme: dark` never matched. Fixed in the packages after 0.4.3: they turn the emulation off unless you name a scheme.
+
+**What to do.** With the 0.4.3 packages, pass `color_scheme="null"` to `launch()` or `launch_persistent_context()` in Python, or call `await page.emulateMedia({ colorScheme: null })` on each page in Node.
+
+### Windows voices are English
+
+A Windows persona lists the local voices of a US or UK English install, so a persona set to another language lacks that language's own voice.
+
+**What to do.** A [profile you write](/guides/custom-profiles) can carry another voice list in `speech.voices`.
+
+### The keyboard layout is US
+
+`navigator.keyboard.getLayoutMap()` returns the US layout of the persona's platform, whatever the language.
+
+**What to do.** A profile you write can carry another layout in `keyboard.layout_map`.
+
+### Cameras and microphones are synthetic
+
+A claimed camera sends a dim synthetic picture and a claimed microphone a quiet noise floor.
+
+**What to do.** Not fixed. Do not use a persona's claimed devices for real calls.
+
+### Web Share on Linux
+
+Linux has no share sheet, so under a Windows or macOS persona `navigator.share()` rejects at once, as if the user closed the sheet.
+
+**What to do.** Run the persona on its own OS where a page depends on sharing.
+
+### Pointer and hover come from the driver or the host
+
+A composed persona carries no `input` section. In headless mode, Playwright and Patchright pass Chromium a switch that reports a mouse (`pointer: fine`, `hover: hover`). Under Puppeteer, `launchProcess()` or the binary itself, the `pointer` and `hover` media queries report the host's input devices. On a Linux server with no mouse, such as a Docker container or a CI runner, a headless launch without the driver's switch reports `(pointer: none)` and `(hover: none)` under every persona. That reads as a device with no mouse. On a Mac with a trackpad the same launch reports `fine` and `hover`. The [test suite](/testing/overview) reports this gap as `host-pointer`.
+
+**What to do.** Use Playwright or Patchright for headless launches, or write a [profile](/guides/custom-profiles) that sets `input.pointer_type` and `input.hover`.
+
+## Identity
+
+### A catalogue change can change the machine
+
+A Chrome update keeps a seed's machine, but a release that corrects the catalogue tables re-draws the choices those tables decide, for seeds and persistent profiles alike. Apostate 0.4.3 uses the same tables as 0.4.2. Recording the composed machine in the profile directory, so that table changes stop moving it, is planned.
+
+**What to do.** Before you upgrade, compare the `catalogue` line of `--fingerprint-explain` between the two builds. The same table digest means the same machines. [Seeds and identity](/concepts/seeds-and-identity#updates-and-catalogue-changes) has the details.
+
+### The core count and memory depend on the host
+
+A host with fewer cores or less memory than a seed's draw leaves those options out, and the draw is taken over the rest. The same seed can then present a different core count or memory size there, even one the host could have served.
+
+**What to do.** Pin cores and memory with `--fingerprint-hardware-concurrency` and `--fingerprint-device-memory` when a machine must match across hosts.
+
+## Sessions and network
+
+### new_context() is incognito
+
+Pages from `launch()`'s `new_page()` open in a normal profile, a temporary one deleted when the browser closes. A context from `new_context()` is off-the-record, as in Playwright, and sites can tell.
+
+**What to do.** Use `new_page()`, or `launch_persistent_context()` to keep a profile.
+
+### WebRTC needs a SOCKS5 proxy with UDP
+
+Behind an HTTP, HTTPS or SOCKS4 proxy, or a SOCKS5 proxy without UDP ASSOCIATE, WebRTC gets no UDP at all. With `--fingerprint-webrtc-ip` the page still sees the given address in a server-reflexive candidate, but calls cannot connect over UDP.
+
+**What to do.** Use a SOCKS5 proxy that relays UDP. [WebRTC](/guides/webrtc) explains the switches.
+
+## Integrations
+
+### Stagehand 4 does not start
+
+Stagehand 4.1 times out in `Stagehand.create()` against Apostate 0.4.3, launched or connected over CDP, while the same script starts on Chrome for Testing (2026-09-28). [Stagehand](/agents/stagehand) lists what to use instead.
+
+## Not done or not measured
+
+- No mobile personas, no Intel Mac build and no 32-bit Windows build.
+- A Windows or macOS GPU family on a Linux host with a real GPU has not been compared with a real machine of that family.
+- The GPU families were measured on Chrome 152, and the Windows NVIDIA family on Chrome 153, not on the 155 the browser is built from. The ANGLE, Dawn and Chromium code that produces WebGL and WebGPU values changed between them in nothing a page reads, but the families were not measured again.
+- The packages' install path on a Windows machine has only been tested against a test archive.

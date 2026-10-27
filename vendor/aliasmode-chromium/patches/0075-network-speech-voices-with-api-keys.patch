@@ -1,0 +1,51 @@
+Subject: [PATCH] speech: Google network voices when the build has API keys
+
+A build with Google API keys lists the nineteen remote "Google
+<language>" voices in speechSynthesis.getVoices(), as Chrome does. These
+voices synthesize through Google's speech API with the build's key, so
+the key is what makes them work. The network speech component extension
+loads whenever HasAPIKeyConfigured() is true, regardless of branding. A
+build without keys lists no network voices, since a listed voice that
+cannot speak fails a page's speak() call.
+
+diff --git a/chrome/browser/extensions/component_loader.cc b/chrome/browser/extensions/component_loader.cc
+index 80927be5ad..30b1173d1f 100644
+--- a/chrome/browser/extensions/component_loader.cc
++++ b/chrome/browser/extensions/component_loader.cc
+@@ -64,6 +64,7 @@
+ #include "extensions/common/extension_l10n_util.h"
+ #include "extensions/common/file_util.h"
+ #include "extensions/common/manifest_constants.h"
++#include "google_apis/google_api_keys.h"
+ #include "pdf/buildflags.h"
+ #include "printing/buildflags/buildflags.h"
+ #include "ui/accessibility/accessibility_features.h"
+@@ -787,10 +788,24 @@ void ComponentLoader::AddDefaultComponentExtensionsWithBackgroundPages(
+   AddGlicExtension();
+   AddContextualTasksExtension();
+ 
+-// http://crbug.com/41070702
+-#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && !BUILDFLAG(IS_CHROMEOS)
+-  AddNetworkSpeechSynthesisExtension();
+-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING) && !BUILDFLAG(IS_CHROMEOS)
++// Apostate: upstream compiles this call out of every non-Chrome-branded build
++// (http://crbug.com/41070702), which is why this binary reports zero
++// localService:false voices where every Chrome capture reports nineteen. The
++// extension's own bytes ship regardless — its manifests are included
++// unconditionally by browser_resources.grd — so only the registration was
++// missing.
++//
++// What decides whether those voices can speak is the API key, not the
++// branding: the extension posts to the Google speech endpoint with the key it
++// fetches through chrome.systemPrivate.getApiKey. Gating on the key keeps a
++// keyless build exactly as honest as it is today — no voices listed, none
++// promised — and lets a build configured with keys present the voices it can
++// really serve. Listing a voice that cannot speak is what patch 0043 forbids.
++#if !BUILDFLAG(IS_CHROMEOS)
++  if (google_apis::HasAPIKeyConfigured()) {
++    AddNetworkSpeechSynthesisExtension();
++  }
++#endif  // !BUILDFLAG(IS_CHROMEOS)
+ }
+ 
+ void ComponentLoader::

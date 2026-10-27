@@ -1,0 +1,589 @@
+Subject: [PATCH] locale: the composed locale sets the app locale on every OS
+
+l10n_util resolves the application locale from the composed locale ahead
+of the platform's own candidates. On macOS and Windows the system
+language or a stored locale pref otherwise decides Intl formatting, the
+calendar and date input width while navigator.languages follows the
+profile, so a page sees two locales at once. A locale this build has no
+data for falls back to en-US, never to the host. --fingerprint=host and
+launches without a composed profile keep the platform's normal choice.
+
+diff --git a/base/apostate/compose.cc b/base/apostate/compose.cc
+index eb403a7031..053af21966 100644
+--- a/base/apostate/compose.cc
++++ b/base/apostate/compose.cc
+@@ -476,13 +476,18 @@ std::string AcceptLanguagesDefaultNote(const std::string& tag) {
+ // can read five different ways.
+ std::string ApplicationLocaleNote(bool named) {
+   std::string note =
+-      "the application locale this launch presents. LANGUAGE, LC_ALL, "
+-      "LC_MESSAGES and LANG are written to it in the browser process before "
+-      "the locale is resolved and before the first child is forked, so the "
+-      "host's own four are never consulted and every process agrees. It "
+-      "decides Intl.DateTimeFormat, NumberFormat and Collator, the calendar "
+-      "and hour cycle they report, the default Accept-Language list, and "
+-      "Blink's locale-dependent font fallback";
++      "the application locale this launch presents, on every platform. "
++      "l10n_util resolves it ahead of every platform candidate -- ahead of "
++      "glib's LANGUAGE/LC_*/LANG on linux, of NSBundle's "
++      "preferredLocalizations on macOS, and of both --lang and the Windows "
++      "preferred-UI-language list on windows -- and LANGUAGE, LC_ALL, "
++      "LC_MESSAGES and LANG are written to it in the browser before the first "
++      "child is forked, so the C library agrees with ICU and every process "
++      "agrees with the browser. It decides Intl.DateTimeFormat, NumberFormat "
++      "and Collator, the calendar and hour cycle they report, the default "
++      "Accept-Language list, collation order, and Blink's locale-dependent "
++      "font fallback -- and the rendered width of a <input type=date>, which "
++      "is how a page reads it with no Intl call at all";
+   note += named ? "; named by --fingerprint-locale"
+                 : "; no launch layer named a locale, so the composed default "
+                   "is presented rather than the operator's shell";
+@@ -1337,6 +1342,33 @@ std::optional<Composition> Compose(const ComposeRequest& request,
+           .limitation = TimezoneInheritanceNote(),
+       });
+     }
++
++    // --lang, named and inert. `request.accept_languages` is the switch's
++    // value and nothing read it: patch 0111 recorded it as dead and filed the
++    // silence as its own defect, and this is that defect. It is inert because
++    // the composed application locale resolves ahead of every platform
++    // candidate, --lang's included, which is a change on windows only -- there
++    // it was the first candidate, while on linux and macOS it never moved the
++    // locale at all, measured on both shipped targets.
++    //
++    // Reported rather than honoured, and rather than refused. Honouring it
++    // would let a UI language contradict the persona, which is the pair of
++    // producers this whole surface exists to keep together. Refusing would
++    // fail launches that pass --lang for a reason that has nothing to do with
++    // the fingerprint. Saying so is the third option and the only one that
++    // leaves the operator informed: a switch that had no effect and said
++    // nothing is the defect class every other path in this file closes.
++    if (!request.accept_languages.empty() &&
++        ComposedLocaleTag(request.accept_languages) != application_locale) {
++      composition.limitations.push_back(
++          "--lang named '" + std::string(request.accept_languages) +
++          "' and had no effect: the composed application locale " +
++          application_locale +
++          " resolves ahead of it, because a UI language that disagrees with "
++          "the persona's locale is a contradiction a page reads in one "
++          "toLocaleString call. Pass --fingerprint-locale to move both "
++          "together");
++    }
+   };
+ 
+   // ---- the dispersion axes, in the §5 resolution order ----
+@@ -1940,6 +1972,12 @@ std::string PosixLocaleForTag(std::string_view tag) {
+ }
+ 
+ void InstallComposedLocaleEnvironment(std::string_view tag) {
++  // Empty means inherit, and the guard lives here rather than at each caller
++  // so that "host mode is untouched" is one statement in one place instead of
++  // a condition every future caller has to remember.
++  if (tag.empty()) {
++    return;
++  }
+   const std::string language(tag);
+   const std::string posix = PosixLocaleForTag(tag);
+ 
+@@ -1984,6 +2022,42 @@ void InstallComposedLocaleEnvironment(std::string_view tag) {
+ #endif
+ }
+ 
++std::string ComposedApplicationLocale() {
++  if (!CommandLine::InitializedForCurrentProcess()) {
++    return std::string();
++  }
++  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
++
++  // A composed launch is one carrying a device profile, and that is the whole
++  // of the condition. --fingerprint=host installs none because the host is
++  // what it presents; a launch the catalogue cannot serve installs none
++  // because it inherits the host on every axis; and a process of some other
++  // browser has no such switch at all. All three inherit, which is what each
++  // of them asks for.
++  //
++  // Reading the switch rather than Profile::Get() is the point: Get() caches
++  // on first call and this is called from locale resolution, which is not a
++  // place that can make ordering promises.
++  const std::string payload =
++      command_line.GetSwitchValueASCII(::switches::kApostateProfile);
++  if (payload.empty() || !Profile::PayloadDescribesDevice(payload)) {
++    return std::string();
++  }
++
++  // --fingerprint-locale first, then the profile's own list. For a composed
++  // launch those are the same answer, because patch 0111 left the switch as
++  // the only thing that writes locale.accept_languages into a composed
++  // profile. For an authored --apostate-profile they are not: the switch is
++  // inert there (ReportAuthoredProfileBypass says so) and the payload's list
++  // is what the operator wrote, so the payload has to be read.
++  std::string named =
++      command_line.GetSwitchValueASCII(switches::kFingerprintLocale);
++  if (named.empty()) {
++    named = Profile::AcceptLanguagesInPayload(payload);
++  }
++  return ComposedLocaleTag(named);
++}
++
+ void InstallComposedProfile(const FilePath& user_data_dir) {
+   if (!CommandLine::InitializedForCurrentProcess()) {
+     return;
+@@ -2000,13 +2074,9 @@ void InstallComposedProfile(const FilePath& user_data_dir) {
+   // launch, so there is nothing to do -- except the locale environment, which
+   // this branch is the one path that would otherwise leave at the operator's
+   // shell. An authored payload bypasses composition but it still presents a
+-  // persona, and --fingerprint-locale is *inert* on this path
+-  // (ReportAuthoredProfileBypass says so), so the payload's own list is the
+-  // only thing that can name the locale. Its absence means the composed
+-  // default, exactly as it does for a composed launch.
++  // persona, so its locale is pinned exactly as a composed one is.
+   if (carried && Profile::PayloadDescribesDevice(supplied)) {
+-    InstallComposedLocaleEnvironment(
+-        ComposedLocaleTag(Profile::AcceptLanguagesInPayload(supplied)));
++    InstallComposedLocaleEnvironment(ComposedApplicationLocale());
+     return;
+   }
+ 
+@@ -2050,19 +2120,12 @@ void InstallComposedProfile(const FilePath& user_data_dir) {
+   // header from the same session.
+   command_line->AppendSwitchASCII(::switches::kApostateProfile, payload);
+ 
+-  // And the locale environment, from the same source the report named: the
+-  // switch, because patch 0111 left --fingerprint-locale as the only thing
+-  // that writes locale.accept_languages into a composed profile, so reading
+-  // the switch and reading the composed profile are the same answer. Reading
+-  // the switch is the one of the two that cannot be raced -- Profile::Get()
+-  // caches on first call and that call can precede this hook, which is the
+-  // bug patch 0110 was bitten by.
+-  //
+-  // Placed after the append because nothing requires either order and this one
+-  // reads as the sequence it is: the profile is installed, then the launch's
+-  // locale is pinned to what that profile resolved.
+-  InstallComposedLocaleEnvironment(ComposedLocaleTag(
+-      command_line->GetSwitchValueASCII(switches::kFingerprintLocale)));
++  // And the locale environment, from the accessor rather than from a second
++  // reading of the same inputs: ComposedApplicationLocale() is what
++  // l10n_util::GetApplicationLocale also resolves against, and one function
++  // with three readers cannot disagree with itself. It is called after the
++  // append because the switch it reads is the one just installed.
++  InstallComposedLocaleEnvironment(ComposedApplicationLocale());
+ }
+ 
+ }  // namespace base::apostate
+diff --git a/base/apostate/compose.h b/base/apostate/compose.h
+index a8500958d1..059d54fcfd 100644
+--- a/base/apostate/compose.h
++++ b/base/apostate/compose.h
+@@ -383,8 +383,13 @@ BASE_EXPORT std::optional<std::string> ComposeProfileForCurrentProcess(
+ BASE_EXPORT void InstallComposedProfile(const FilePath& user_data_dir);
+ 
+ // ---------------------------------------------------------------------------
+-// The locale environment
++// The application locale
+ // ---------------------------------------------------------------------------
++//
++// One decision, three readers. `InstallComposedProfile` writes the locale
++// environment from it, and `l10n_util::GetApplicationLocale` resolves against
++// it ahead of every platform candidate. Two mechanisms that disagreed would be
++// worse than either, so neither computes its own answer.
+ 
+ // What a composed launch that resolved no locale presents.
+ //
+@@ -437,6 +442,36 @@ BASE_EXPORT std::string PosixLocaleForTag(std::string_view tag);
+ // its own copy of the decision.
+ BASE_EXPORT void InstallComposedLocaleEnvironment(std::string_view tag);
+ 
++// The application locale this launch presents, or empty when the host's own is
++// to be inherited.
++//
++// Precedence, and it is the launch contract's rather than a new one:
++//
++//   `--fingerprint-locale`, which is where an operator's own choice and the
++//   launchers' prelaunch GeoIP answer both arrive;
++//
++//   the installed profile's own `locale.accept_languages`, which is what an
++//   authored `--apostate-profile` carries and what composition writes;
++//
++//   kComposedDefaultLocale, because absence of a resolved locale has to mean a
++//   defined value or the served locale becomes a property of the operator's
++//   shell.
++//
++// Empty means inherit, and exactly three launches get it: `--fingerprint=host`
++// and its off spellings, which install no profile because the host is the
++// thing being presented; a launch the compiled catalogue cannot serve, which
++// inherits the host on every axis, so pinning the locale alone would leave one
++// composed surface on an otherwise host-owned launch; and any process of a
++// browser that is not ours, where `--apostate-profile` is simply absent.
++//
++// Read off the command line, never through `Profile::Get()`, and the
++// difference is load-bearing: `Get()` caches its answer on first call and that
++// call can precede the hook that installs the profile, which is the defect
++// patch 0110 was bitten by. The command line is final from
++// `InstallComposedProfile` onwards and is the one channel a child also has, so
++// browser and child answer identically without either consulting the other.
++BASE_EXPORT std::string ComposedApplicationLocale();
++
+ }  // namespace apostate
+ }  // namespace base
+ 
+diff --git a/base/apostate/compose_unittest.cc b/base/apostate/compose_unittest.cc
+index afdd0f0f1a..bd80331476 100644
+--- a/base/apostate/compose_unittest.cc
++++ b/base/apostate/compose_unittest.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "base/apostate/compose.h"
+ 
++#include <algorithm>
+ #include <array>
+ #include <clocale>
+ #include <cstdint>
+@@ -19,6 +20,7 @@
+ #include "base/apostate/profile.h"
+ #include "base/apostate/seed.h"
+ #include "base/base64.h"
++#include "base/base_switches.h"
+ #include "base/command_line.h"
+ #include "base/containers/span.h"
+ #include "base/environment.h"
+@@ -27,6 +29,7 @@
+ #include "base/files/scoped_temp_dir.h"
+ #include "base/json/json_writer.h"
+ #include "base/strings/string_number_conversions.h"
++#include "base/test/scoped_command_line.h"
+ #include "base/values.h"
+ #include "build/build_config.h"
+ #include "testing/gtest/include/gtest/gtest.h"
+@@ -1497,5 +1500,115 @@ TEST(ApostateComposeTest, TheLocaleEnvironmentIsWrittenToAllFourVariables) {
+ #endif
+ }
+ 
++// The accessor l10n_util resolves against and InstallComposedProfile writes the
++// environment from. One function, so the resolution-side pin and the
++// environment-side pin cannot disagree -- which is the whole reason it exists
++// rather than each site reading the command line for itself.
++//
++// Driven through the process command line because that is its only input, and
++// deliberately not through Profile::Get(): Get() caches on first call and this
++// is called from locale resolution, which makes no ordering promises.
++TEST(ApostateComposeTest, TheApplicationLocaleFollowsTheLaunchPrecedence) {
++  const auto payload = [](std::string_view json) {
++    return Base64Encode(as_byte_span(json));
++  };
++
++  // No profile: inherit. This is --fingerprint=host, a catalogue that cannot
++  // serve the launch, and every process of a browser that is not ours -- all
++  // three install no profile, and an empty answer is what leaves l10n_util's
++  // platform candidates untouched.
++  {
++    test::ScopedCommandLine scoped;
++    CommandLine* command_line = scoped.GetProcessCommandLine();
++    command_line->RemoveSwitch(::switches::kApostateProfile);
++    command_line->RemoveSwitch(switches::kFingerprintLocale);
++    EXPECT_EQ("", ComposedApplicationLocale());
++  }
++
++  // A payload that claims no device is not a composed launch either: an
++  // envelope carrying only proxy credentials has always meant "authored
++  // nothing", and pinning a locale off it would give an otherwise entirely
++  // host-inherited launch one composed surface.
++  {
++    test::ScopedCommandLine scoped;
++    CommandLine* command_line = scoped.GetProcessCommandLine();
++    command_line->RemoveSwitch(switches::kFingerprintLocale);
++    command_line->AppendSwitchASCII(
++        ::switches::kApostateProfile,
++        payload(R"({"device_profile":{},"proxy_credentials":)"
++                R"({"username":"u","password":"p"}})"));
++    EXPECT_EQ("", ComposedApplicationLocale());
++  }
++
++  // A composed profile naming no locale: the composed default, never the
++  // host's.
++  {
++    test::ScopedCommandLine scoped;
++    CommandLine* command_line = scoped.GetProcessCommandLine();
++    command_line->RemoveSwitch(switches::kFingerprintLocale);
++    command_line->AppendSwitchASCII(::switches::kApostateProfile,
++                                    payload(R"({"cpu":{"logical_cores":8}})"));
++    EXPECT_EQ(kComposedDefaultLocale, ComposedApplicationLocale());
++  }
++
++  // The profile's own list, which is what an authored --apostate-profile
++  // carries. Read from the payload rather than from the switch, because the
++  // switch is inert on that path and this is the only thing that can name it.
++  {
++    test::ScopedCommandLine scoped;
++    CommandLine* command_line = scoped.GetProcessCommandLine();
++    command_line->RemoveSwitch(switches::kFingerprintLocale);
++    command_line->AppendSwitchASCII(
++        ::switches::kApostateProfile,
++        payload(R"({"locale":{"accept_languages":"ja-JP,ja"}})"));
++    EXPECT_EQ("ja-JP", ComposedApplicationLocale());
++  }
++
++  // --fingerprint-locale outranks the payload. Both are present here and they
++  // disagree, which is the only arrangement that tells them apart.
++  {
++    test::ScopedCommandLine scoped;
++    CommandLine* command_line = scoped.GetProcessCommandLine();
++    command_line->AppendSwitchASCII(
++        ::switches::kApostateProfile,
++        payload(R"({"locale":{"accept_languages":"ja-JP,ja"}})"));
++    command_line->AppendSwitchASCII(switches::kFingerprintLocale,
++                                    "de-DE,de,en-US,en");
++    EXPECT_EQ("de-DE", ComposedApplicationLocale());
++  }
++}
++
++// --lang is inert under a composed profile on every platform, and the report
++// has to say so. It was inert on linux and macOS before this and said nothing;
++// on windows it was the first candidate l10n_util consulted, so this is a real
++// behaviour change there and the limitation is how an operator finds out.
++TEST(ApostateComposeTest, AnIneffectiveLangSwitchIsNamedInTheReport) {
++  constexpr DispersionAxis kAxes[] = {kOsReleaseAxis};
++
++  ComposeRequest disagrees = RequestFor("lang-seed", kAxes, CapableHost());
++  disagrees.accept_languages = "de-DE";
++  const std::optional<Composition> reported = Compose(disagrees);
++  ASSERT_TRUE(reported.has_value());
++  EXPECT_EQ("en-US", ChosenId(*reported, "locale.application"));
++  EXPECT_TRUE(std::ranges::any_of(
++      reported->limitations, [](const std::string& limitation) {
++        return limitation.find("--lang named 'de-DE' and had no effect") !=
++               std::string::npos;
++      }))
++      << "the report does not name the switch that did nothing";
++
++  // A --lang that agrees with the resolved locale is not a limitation: there
++  // is nothing for the operator to discover, and reporting it would train
++  // them to skip the section that matters.
++  ComposeRequest agrees = RequestFor("lang-seed", kAxes, CapableHost());
++  agrees.accept_languages = "en-US";
++  const std::optional<Composition> quiet = Compose(agrees);
++  ASSERT_TRUE(quiet.has_value());
++  EXPECT_FALSE(std::ranges::any_of(
++      quiet->limitations, [](const std::string& limitation) {
++        return limitation.find("--lang") != std::string::npos;
++      }));
++}
++
+ }  // namespace
+ }  // namespace base::apostate
+diff --git a/ui/base/l10n/l10n_util.cc b/ui/base/l10n/l10n_util.cc
+index 5ce078e14b..36b6bcc579 100644
+--- a/ui/base/l10n/l10n_util.cc
++++ b/ui/base/l10n/l10n_util.cc
+@@ -12,6 +12,7 @@
+ #include <string>
+ #include <string_view>
+ 
++#include "base/apostate/compose.h"
+ #include "base/check_op.h"
+ #include "base/command_line.h"
+ #include "base/compiler_specific.h"
+@@ -273,7 +274,70 @@ std::string GetApplicationLocaleInternalNonMac(std::string_view pref_locale) {
+ }
+ #endif  // !BUILDFLAG(IS_APPLE)
+ 
++// Apostate: the composed application locale, ahead of every platform
++// candidate.
++//
++// This is the one point all three desktop platforms share, and it has to be
++// this one because each of them leaks the host from a different place. On
++// Linux the candidates come from glib's LANGUAGE/LC_*/LANG reading, which the
++// browser's own environment already pins (patch 0114). On macOS
++// GetApplicationLocaleInternalMac consults GetLocaleOverride() first, filled
++// from NSBundle's preferredLocalizations, so the host's *system language*
++// decides -- and does so on the artifact as shipped, because the bundle has
++// always carried 55 .lproj directories. On Windows the candidates are
++// pref_locale, then GetLocaleOverrides(), which content fills from
++// GetThreadPreferredUILanguageList(); the ICU fallback below them is only
++// reached in a process where neither ran. Three levers, one resolution: so the
++// composed value is resolved here, above all of them, rather than pushed into
++// three platform slots that would each need their own ordering argument.
++//
++// Measured on the shipped macos-arm64 bundle, on a host whose system language
++// was varied per launch: a composed Windows persona reported Intl locale th
++// with calendar "buddhist" while navigator.languages said en-SG, and fr gave
++// French month names and 1 234 567,89 beside en-GB. Two producers, one
++// contradiction a page reads in a single call -- and --fingerprint-locale=de-DE
++// moved navigator.languages to de-DE and left Intl on the host's Thai, so the
++// launch contract's strongest locale layer was being honoured on one half of
++// the surface and ignored on the other.
++//
++// Nothing here reaches a launch that is not ours: ComposedApplicationLocale()
++// is empty unless this process carries an --apostate-profile that claims a
++// device, which --fingerprint=host, an unservable catalogue and every other
++// browser all fail.
++std::string ApostateApplicationLocale() {
++  const std::string composed = base::apostate::ComposedApplicationLocale();
++  if (composed.empty()) {
++    return std::string();
++  }
++  if (std::optional<std::string> resolved = CheckAndResolveLocale(composed)) {
++    return *resolved;
++  }
++
++  // The composed locale has no bundle in this build. Falling through to the
++  // platform candidates would serve the host's locale under a composed
++  // persona, which is the whole defect, so the composed *default* is tried
++  // instead -- it is the locale every shipped target is guaranteed to carry,
++  // and it is what a launch naming no locale would have presented anyway.
++  LOG(ERROR) << "apostate: no localization data for the composed locale '"
++             << composed << "'; presenting "
++             << base::apostate::kComposedDefaultLocale
++             << " rather than the host's";
++  if (std::optional<std::string> fallback =
++          CheckAndResolveLocale(base::apostate::kComposedDefaultLocale)) {
++    return *fallback;
++  }
++
++  // Not even en-US. This build ships no usable localization at all and the
++  // callers below CHECK on the empty string a moment later; returning empty
++  // here reaches that check with the platform candidates untried, which is
++  // wrong, so fall through and let Chromium's own fallback chain report it.
++  return std::string();
++}
++
+ std::string GetApplicationLocaleInternal(std::string_view pref_locale) {
++  if (std::string composed = ApostateApplicationLocale(); !composed.empty()) {
++    return composed;
++  }
+ #if BUILDFLAG(IS_APPLE)
+   return GetApplicationLocaleInternalMac(pref_locale);
+ #else
+diff --git a/ui/base/l10n/l10n_util_unittest.cc b/ui/base/l10n/l10n_util_unittest.cc
+index 6ac7351f9f..3d19fd83a0 100644
+--- a/ui/base/l10n/l10n_util_unittest.cc
++++ b/ui/base/l10n/l10n_util_unittest.cc
+@@ -13,6 +13,10 @@
+ #include <string_view>
+ #include <thread>
+ 
++#include "base/apostate/compose.h"
++#include "base/base64.h"
++#include "base/base_switches.h"
++#include "base/command_line.h"
+ #include "base/containers/flat_set.h"
+ #include "base/containers/span.h"
+ #include "base/environment.h"
+@@ -31,6 +35,7 @@
+ #include "base/strings/string_util.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/test/icu_test_util.h"
++#include "base/test/scoped_command_line.h"
+ #include "base/test/scoped_path_override.h"
+ #include "build/build_config.h"
+ #include "testing/gmock/include/gmock/gmock.h"
+@@ -504,6 +509,110 @@ TEST_F(L10nUtilTest, GetAppLocaleWin) {
+ using L10nUtilTest = PlatformTest;
+ #endif  // !BUILDFLAG(IS_APPLE)
+ 
++#if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_ANDROID)
++// Apostate: the composed application locale outranks every platform candidate.
++//
++// Excluded on Apple and Android for the reason the test above is: the locale
++// data those platforms look for cannot be faked through ui::DIR_LOCALES -- on
++// Apple GetLocaleFilePath resolves against the framework bundle's
++// <locale>.lproj, and this binary is not a bundle. The precedence itself is
++// structural there rather than untested: GetApplicationLocaleInternal returns
++// the composed locale before GetApplicationLocaleInternalMac is called at all,
++// so nothing in the Cocoa branch can be reached to override it, and the
++// decision that feeds it is covered by
++// ApostateComposeTest.TheApplicationLocaleFollowsTheLaunchPrecedence.
++//
++// What this covers is the half that is a behaviour change: on Windows
++// pref_locale -- the --lang switch and the kApplicationLocale pref -- was the
++// FIRST candidate, ahead of the preferred-UI-language list, so a stored UI
++// language in an existing Local State could outrank a composed persona's
++// locale. It cannot now, and this is the test that says so.
++TEST_F(L10nUtilTest, ApostateComposedLocaleOutranksThePlatformCandidates) {
++  base::ScopedPathOverride locale_dir_override(ui::DIR_LOCALES);
++  base::FilePath locale_dir;
++  ASSERT_TRUE(base::PathService::Get(ui::DIR_LOCALES, &locale_dir));
++  for (const char* tag : {"en-US", "de-DE", "fr"}) {
++    base::WriteFile(locale_dir.AppendASCII(std::string(tag) + ".pak"), "");
++  }
++
++  const std::string original_locale = base::i18n::GetConfiguredLocale();
++  std::unique_ptr<base::Environment> env = base::Environment::Create();
++  const std::optional<std::string> original_language = env->GetVar("LANGUAGE");
++
++  const auto payload = [](std::string_view json) {
++    return base::Base64Encode(base::as_byte_span(json));
++  };
++
++  {
++    // No profile: every candidate is Chromium's own, which is what a launch
++    // that is not ours has to keep. `fr` arrives as pref_locale on Windows and
++    // through the environment on Linux, so one of the two answers on each.
++    base::test::ScopedCommandLine scoped;
++    scoped.GetProcessCommandLine()->RemoveSwitch(switches::kApostateProfile);
++    env->SetVar("LANGUAGE", "fr");
++    base::i18n::SetICUDefaultLocale("fr");
++    EXPECT_EQ("fr", l10n_util::GetApplicationLocale("fr"));
++  }
++
++  {
++    // A composed profile naming no locale. `fr` is still the platform's
++    // answer and is still servable -- the fake pak for it exists -- so this
++    // fails if the injection is absent or ordered after the candidates.
++    base::test::ScopedCommandLine scoped;
++    scoped.GetProcessCommandLine()->AppendSwitchASCII(
++        switches::kApostateProfile, payload(R"({"cpu":{"logical_cores":8}})"));
++    env->SetVar("LANGUAGE", "fr");
++    base::i18n::SetICUDefaultLocale("fr");
++    EXPECT_EQ("en-US", l10n_util::GetApplicationLocale("fr"));
++  }
++
++  {
++    // And an explicit --fingerprint-locale, which outranks the profile's own
++    // list as well as the platform's. The exact tag survives because the fake
++    // set above carries `de-DE`; a real build shipping only `de` narrows it to
++    // `de` through CheckAndResolveLocale, which is Chromium's behaviour and
++    // measured on both shipped targets.
++    base::test::ScopedCommandLine scoped;
++    base::CommandLine* command_line = scoped.GetProcessCommandLine();
++    command_line->AppendSwitchASCII(
++        switches::kApostateProfile,
++        payload(R"({"locale":{"accept_languages":"fr,en"}})"));
++    command_line->AppendSwitchASCII(base::apostate::switches::kFingerprintLocale,
++                                    "de-DE,de");
++    env->SetVar("LANGUAGE", "fr");
++    base::i18n::SetICUDefaultLocale("fr");
++    EXPECT_EQ("de-DE", l10n_util::GetApplicationLocale("fr"));
++  }
++
++  {
++    // A composed locale with no data falls back to the composed default and
++    // NOT to the platform's answer. Falling through to `fr` here would serve
++    // the host's locale under a composed persona, which is the entire defect.
++    //
++    // `tlh` rather than a plausible language, because the fallback has to be
++    // unreachable for the right reason: CheckAndResolveLocale strips the region
++    // and retries, so a real tag like `sw-KE` resolves to `sw` on any build
++    // that ships Swahili -- measured, it does -- and would test nothing here.
++    base::test::ScopedCommandLine scoped;
++    base::CommandLine* command_line = scoped.GetProcessCommandLine();
++    command_line->AppendSwitchASCII(switches::kApostateProfile,
++                                    payload(R"({"cpu":{"logical_cores":8}})"));
++    command_line->AppendSwitchASCII(base::apostate::switches::kFingerprintLocale,
++                                    "tlh-AA,tlh");
++    env->SetVar("LANGUAGE", "fr");
++    base::i18n::SetICUDefaultLocale("fr");
++    EXPECT_EQ("en-US", l10n_util::GetApplicationLocale("fr"));
++  }
++
++  if (original_language) {
++    env->SetVar("LANGUAGE", *original_language);
++  } else {
++    env->UnSetVar("LANGUAGE");
++  }
++  base::i18n::SetICUDefaultLocale(original_locale);
++}
++#endif  // !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_ANDROID)
++
+ TEST_F(L10nUtilTest, SortStringsUsingFunction) {
+   std::vector<std::unique_ptr<StringWrapper>> strings;
+   strings.push_back(std::make_unique<StringWrapper>(u"C"));

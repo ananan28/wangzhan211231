@@ -1,0 +1,3842 @@
+{
+  "suite": "apostate",
+  "date": "2026-09-27T18:36:09+00:00",
+  "versions": {
+    "package": "0.4.3",
+    "chromium": "152.0.7977.83"
+  },
+  "binary": "installed",
+  "host": {
+    "os": "Linux",
+    "release": "7.0.14-orbstack-00380-ga7e0a2dc9535",
+    "machine": "aarch64",
+    "cores": 14,
+    "python": "3.14.7",
+    "memory_bytes": 16818978816,
+    "os_version": "Debian GNU/Linux 13 (trixie)"
+  },
+  "network": "Docker container on a Mac, residential broadband, no proxy",
+  "options": {
+    "personas": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "seeds": [
+      "42",
+      "1337"
+    ],
+    "modes": [
+      "bare",
+      "package"
+    ],
+    "headed": false,
+    "live": false
+  },
+  "summary": {
+    "passed": 269,
+    "failed": 0,
+    "xfailed": 30,
+    "skipped": 44
+  },
+  "results": [
+    {
+      "test": "live/test_live.py::test_detector[sannysoft-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[deviceandbrowserinfo-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[rebrowser-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[creepjs-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[browserscan-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[fingerprint-scan-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[iphey-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[recaptcha-v3-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[turnstile-seleniumbase-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[turnstile-managed-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[turnstile-non-interactive-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[fingerprintjs-apostate-windows]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[sannysoft-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[deviceandbrowserinfo-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[rebrowser-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[creepjs-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[browserscan-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[fingerprint-scan-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[iphey-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[recaptcha-v3-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[turnstile-seleniumbase-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[turnstile-managed-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[turnstile-non-interactive-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[fingerprintjs-apostate-macos]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[sannysoft-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[deviceandbrowserinfo-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[rebrowser-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[creepjs-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[browserscan-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[fingerprint-scan-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[iphey-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[recaptcha-v3-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[turnstile-seleniumbase-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[turnstile-managed-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[turnstile-non-interactive-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "live/test_live.py::test_detector[fingerprintjs-apostate-linux]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {},
+      "message": "Skipped: live tier: pass --live"
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_webdriver_is_false_in_every_context[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "webdriver": {
+          "window": false,
+          "sameOriginFrame": false,
+          "crossOriginFrame": false,
+          "worker": null,
+          "sharedWorker": null,
+          "serviceWorker": null
+        }
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_automation_globals[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "globals": [],
+        "window_keys": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_no_headless_marks[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "marks": []
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_chrome_object_plugins_and_pdf[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "chrome": {
+          "type": "object",
+          "runtime": "undefined"
+        },
+        "plugins": 5,
+        "mime_types": 2,
+        "pdf_viewer": true
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_console_arguments_are_not_serialized[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "stack_read": false
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_automation.py::test_notification_permission_agrees_with_permissions_api[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "permission": "default",
+        "query": "prompt"
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_contexts_agree[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "compared": 75,
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_frames_see_the_same_screen[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "differences": []
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_contexts.py::test_request_headers_match_javascript[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 15,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e",
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e",
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e",
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e",
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "3410ef88772b0b780fa06d65171129c7b1997404b52de8c43714ecfc10a7a1f7",
+          "3410ef88772b0b780fa06d65171129c7b1997404b52de8c43714ecfc10a7a1f7"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "3410ef88772b0b780fa06d65171129c7b1997404b52de8c43714ecfc10a7a1f7",
+          "3410ef88772b0b780fa06d65171129c7b1997404b52de8c43714ecfc10a7a1f7"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "3410ef88772b0b780fa06d65171129c7b1997404b52de8c43714ecfc10a7a1f7",
+          "3410ef88772b0b780fa06d65171129c7b1997404b52de8c43714ecfc10a7a1f7"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "3410ef88772b0b780fa06d65171129c7b1997404b52de8c43714ecfc10a7a1f7",
+          "3410ef88772b0b780fa06d65171129c7b1997404b52de8c43714ecfc10a7a1f7"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e",
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e",
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e",
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_reads_repeat_within_a_session[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "canvas": [
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e",
+          "4891b4715360b3755bbbb331be484c7e584bb45e5c100cd6375ad512fd4dc05e"
+        ],
+        "audio": [
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae",
+          "98e8293126b10d2a13fd3cd497c27e1f3bee7fb0453e7edb35a833d27798d1ae"
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_same_seed_same_machine[windows-42]",
+      "outcome": "passed",
+      "seconds": 0.84,
+      "details": {
+        "profile_differences": [],
+        "page_differences": []
+      }
+    },
+    {
+      "test": "test_determinism.py::test_same_seed_same_machine[windows-1337]",
+      "outcome": "passed",
+      "seconds": 0.85,
+      "details": {
+        "profile_differences": [],
+        "page_differences": []
+      }
+    },
+    {
+      "test": "test_determinism.py::test_same_seed_same_machine[macos-42]",
+      "outcome": "passed",
+      "seconds": 0.67,
+      "details": {
+        "profile_differences": [],
+        "page_differences": []
+      }
+    },
+    {
+      "test": "test_determinism.py::test_same_seed_same_machine[macos-1337]",
+      "outcome": "passed",
+      "seconds": 0.69,
+      "details": {
+        "profile_differences": [],
+        "page_differences": []
+      }
+    },
+    {
+      "test": "test_determinism.py::test_same_seed_same_machine[linux-42]",
+      "outcome": "passed",
+      "seconds": 0.66,
+      "details": {
+        "profile_differences": [],
+        "page_differences": []
+      }
+    },
+    {
+      "test": "test_determinism.py::test_same_seed_same_machine[linux-1337]",
+      "outcome": "passed",
+      "seconds": 0.64,
+      "details": {
+        "profile_differences": [],
+        "page_differences": []
+      }
+    },
+    {
+      "test": "test_determinism.py::test_the_package_serves_the_same_machine[windows-42]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "profile_differences": [],
+        "page_differences": [
+          "page.media.hover: false != true",
+          "page.media.pointerFine: false != true",
+          "page.screen.innerHeight: 889 != 945"
+        ],
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_determinism.py::test_the_package_serves_the_same_machine[windows-1337]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "profile_differences": [],
+        "page_differences": [
+          "page.media.hover: false != true",
+          "page.media.pointerFine: false != true",
+          "page.screen.innerHeight: 889 != 945"
+        ],
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_determinism.py::test_the_package_serves_the_same_machine[macos-42]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "profile_differences": [],
+        "page_differences": [
+          "page.media.hover: false != true",
+          "page.media.pointerFine: false != true",
+          "page.screen.innerHeight: 1220 != 1276"
+        ],
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_determinism.py::test_the_package_serves_the_same_machine[macos-1337]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "profile_differences": [],
+        "page_differences": [
+          "page.media.hover: false != true",
+          "page.media.pointerFine: false != true",
+          "page.screen.innerHeight: 650 != 706"
+        ],
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_determinism.py::test_the_package_serves_the_same_machine[linux-42]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "profile_differences": [],
+        "page_differences": [
+          "page.media.hover: false != true",
+          "page.media.pointerFine: false != true",
+          "page.screen.innerHeight: 1965 != 2021"
+        ],
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_determinism.py::test_the_package_serves_the_same_machine[linux-1337]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "profile_differences": [],
+        "page_differences": [
+          "page.media.hover: false != true",
+          "page.media.pointerFine: false != true",
+          "page.screen.innerHeight: 1233 != 1289"
+        ],
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_determinism.py::test_different_seeds_give_different_machines[windows]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "seeds": [
+          "42",
+          "1337"
+        ],
+        "first_id": "fp-1f609a08ef7734f203ced27b",
+        "second_id": "fp-7c1895a03eba4584aa93e9e5"
+      }
+    },
+    {
+      "test": "test_determinism.py::test_different_seeds_give_different_machines[macos]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "seeds": [
+          "42",
+          "1337"
+        ],
+        "first_id": "fp-60abd5347209e2c0b5b3c052",
+        "second_id": "fp-d0d404a5177c63a85b1b68a8"
+      }
+    },
+    {
+      "test": "test_determinism.py::test_different_seeds_give_different_machines[linux]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "seeds": [
+          "42",
+          "1337"
+        ],
+        "first_id": "fp-1459d01b704a144bb30585f2",
+        "second_id": "fp-e080a36a4a1630f3483948d3"
+      }
+    },
+    {
+      "test": "test_determinism.py::test_persistent_profile_keeps_its_machine[windows]",
+      "outcome": "passed",
+      "seconds": 3.16,
+      "details": {
+        "identity": "26822cd1b9a1...",
+        "differences": [
+          [],
+          []
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_persistent_profile_keeps_its_machine[macos]",
+      "outcome": "passed",
+      "seconds": 2.67,
+      "details": {
+        "identity": "710dbba767a0...",
+        "differences": [
+          [],
+          []
+        ]
+      }
+    },
+    {
+      "test": "test_determinism.py::test_persistent_profile_keeps_its_machine[linux]",
+      "outcome": "passed",
+      "seconds": 2.44,
+      "details": {
+        "identity": "70ef6d797c65...",
+        "differences": [
+          [],
+          []
+        ]
+      }
+    },
+    {
+      "test": "test_host_mode.py::test_host_mode_composes_nothing",
+      "outcome": "passed",
+      "seconds": 0.88,
+      "details": {
+        "platform": "Linux x86_64",
+        "cores": 14
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "Windows",
+        "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 770 (0x00004680) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "Windows",
+        "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 770 (0x00004680) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "Windows",
+        "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 630 (0x00003E98) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "Windows",
+        "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 630 (0x00003E98) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "macOS",
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Max, Unspecified Version)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "macOS",
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Max, Unspecified Version)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "macOS",
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "macOS",
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "Linux",
+        "renderer": "ANGLE (NVIDIA, Vulkan 1.4.312 (NVIDIA NVIDIA GeForce RTX 4070 Ti SUPER (0x00002705)), NVIDIA)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "Linux",
+        "renderer": "ANGLE (NVIDIA, Vulkan 1.4.312 (NVIDIA NVIDIA GeForce RTX 4070 Ti SUPER (0x00002705)), NVIDIA)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "Linux",
+        "renderer": "ANGLE (NVIDIA, Vulkan 1.4.312 (NVIDIA NVIDIA GeForce RTX 4060 Ti (0x00002803)), NVIDIA)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_persona_is_the_one_asked_for[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "platform": "Linux",
+        "renderer": "ANGLE (NVIDIA, Vulkan 1.4.312 (NVIDIA NVIDIA GeForce RTX 4060 Ti (0x00002803)), NVIDIA)",
+        "anchors": 5
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_user_agent_and_client_hints[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 10,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[macos-42-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {},
+        "known_gap": {
+          "id": "host-cap",
+          "reason": "The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU.",
+          "link": "https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+        }
+      },
+      "message": "known gap host-cap: The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU. https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[macos-42-package]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {},
+        "known_gap": {
+          "id": "host-cap",
+          "reason": "The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU.",
+          "link": "https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+        }
+      },
+      "message": "known gap host-cap: The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU. https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[linux-42-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {},
+        "known_gap": {
+          "id": "host-cap",
+          "reason": "The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU.",
+          "link": "https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+        }
+      },
+      "message": "known gap host-cap: The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU. https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[linux-42-package]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {},
+        "known_gap": {
+          "id": "host-cap",
+          "reason": "The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU.",
+          "link": "https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+        }
+      },
+      "message": "known gap host-cap: The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU. https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[linux-1337-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {},
+        "known_gap": {
+          "id": "host-cap",
+          "reason": "The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU.",
+          "link": "https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+        }
+      },
+      "message": "known gap host-cap: The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU. https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+    },
+    {
+      "test": "test_profile.py::test_cpu_and_memory[linux-1337-package]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {},
+        "known_gap": {
+          "id": "host-cap",
+          "reason": "The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU.",
+          "link": "https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+        }
+      },
+      "message": "known gap host-cap: The host has less memory than every option the persona's machine offers, so the page reads the host's own navigator.deviceMemory next to the persona's GPU. https://docs.apostate.dev/known-gaps#cores-and-memory-are-capped-at-the-hosts"
+    },
+    {
+      "test": "test_profile.py::test_screen[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 8,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 1920,
+        "height": 1080,
+        "availWidth": 1920,
+        "availHeight": 1032,
+        "availLeft": 0,
+        "availTop": 0,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 1,
+        "outerWidth": 1920,
+        "outerHeight": 1032,
+        "innerWidth": 1920,
+        "innerHeight": 889,
+        "screenX": 0,
+        "screenY": 0
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 1920,
+        "height": 1080,
+        "availWidth": 1920,
+        "availHeight": 1032,
+        "availLeft": 0,
+        "availTop": 0,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 1,
+        "outerWidth": 1920,
+        "outerHeight": 1032,
+        "innerWidth": 1920,
+        "innerHeight": 945,
+        "screenX": 0,
+        "screenY": 0
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 1920,
+        "height": 1080,
+        "availWidth": 1920,
+        "availHeight": 1032,
+        "availLeft": 0,
+        "availTop": 0,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 1,
+        "outerWidth": 1920,
+        "outerHeight": 1032,
+        "innerWidth": 1920,
+        "innerHeight": 889,
+        "screenX": 0,
+        "screenY": 0
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 1920,
+        "height": 1080,
+        "availWidth": 1920,
+        "availHeight": 1032,
+        "availLeft": 0,
+        "availTop": 0,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 1,
+        "outerWidth": 1920,
+        "outerHeight": 1032,
+        "innerWidth": 1920,
+        "innerHeight": 945,
+        "screenX": 0,
+        "screenY": 0
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 2560,
+        "height": 1440,
+        "availWidth": 2560,
+        "availHeight": 1407,
+        "availLeft": 0,
+        "availTop": 33,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 2,
+        "outerWidth": 1200,
+        "outerHeight": 1363,
+        "innerWidth": 1200,
+        "innerHeight": 1220,
+        "screenX": 22,
+        "screenY": 55
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 2560,
+        "height": 1440,
+        "availWidth": 2560,
+        "availHeight": 1407,
+        "availLeft": 0,
+        "availTop": 33,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 2,
+        "outerWidth": 1200,
+        "outerHeight": 1363,
+        "innerWidth": 1200,
+        "innerHeight": 1276,
+        "screenX": 22,
+        "screenY": 55
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 1470,
+        "height": 956,
+        "availWidth": 1470,
+        "availHeight": 837,
+        "availLeft": 0,
+        "availTop": 33,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 2,
+        "outerWidth": 1200,
+        "outerHeight": 793,
+        "innerWidth": 1200,
+        "innerHeight": 650,
+        "screenX": 22,
+        "screenY": 55
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 1470,
+        "height": 956,
+        "availWidth": 1470,
+        "availHeight": 837,
+        "availLeft": 0,
+        "availTop": 33,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 2,
+        "outerWidth": 1200,
+        "outerHeight": 793,
+        "innerWidth": 1200,
+        "innerHeight": 706,
+        "screenX": 22,
+        "screenY": 55
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 3840,
+        "height": 2160,
+        "availWidth": 3840,
+        "availHeight": 2128,
+        "availLeft": 0,
+        "availTop": 32,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 1,
+        "outerWidth": 1905,
+        "outerHeight": 2108,
+        "innerWidth": 1905,
+        "innerHeight": 1965,
+        "screenX": 10,
+        "screenY": 42
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 3840,
+        "height": 2160,
+        "availWidth": 3840,
+        "availHeight": 2128,
+        "availLeft": 0,
+        "availTop": 32,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 1,
+        "outerWidth": 1905,
+        "outerHeight": 2108,
+        "innerWidth": 1905,
+        "innerHeight": 2021,
+        "screenX": 10,
+        "screenY": 42
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 2560,
+        "height": 1440,
+        "availWidth": 2560,
+        "availHeight": 1396,
+        "availLeft": 0,
+        "availTop": 0,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 1,
+        "outerWidth": 1265,
+        "outerHeight": 1376,
+        "innerWidth": 1265,
+        "innerHeight": 1233,
+        "screenX": 10,
+        "screenY": 10
+      }
+    },
+    {
+      "test": "test_profile.py::test_screen_has_a_taskbar_or_menu_bar[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "width": 2560,
+        "height": 1440,
+        "availWidth": 2560,
+        "availHeight": 1396,
+        "availLeft": 0,
+        "availTop": 0,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "devicePixelRatio": 1,
+        "outerWidth": 1265,
+        "outerHeight": 1376,
+        "innerWidth": 1265,
+        "innerHeight": 1289,
+        "screenX": 10,
+        "screenY": 10
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2",
+          "WEBGL_provoking_vertex"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2",
+          "WEBGL_provoking_vertex"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2",
+          "WEBGL_provoking_vertex"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2",
+          "WEBGL_provoking_vertex"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2",
+          "WEBGL_provoking_vertex"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2",
+          "WEBGL_provoking_vertex"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2",
+          "WEBGL_provoking_vertex"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2",
+          "WEBGL_provoking_vertex"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgl[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "extensions_not_in_profile": [],
+        "profile_extensions_missing": [
+          "EXT_disjoint_timer_query",
+          "EXT_disjoint_timer_query_webgl2"
+        ],
+        "checked": 27,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_webgpu[windows-42-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_webgpu[windows-42-package]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_webgpu[windows-1337-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_webgpu[windows-1337-package]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_webgpu[macos-42-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_webgpu[macos-42-package]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_webgpu[macos-1337-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_webgpu[macos-1337-package]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_webgpu[linux-42-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_webgpu[linux-42-package]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_webgpu[linux-1337-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_webgpu[linux-1337-package]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "webgpu": {
+          "available": true,
+          "adapter": null
+        },
+        "known_gap": {
+          "id": "linux-headless-webgpu",
+          "reason": "On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it.",
+          "link": "https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+        }
+      },
+      "message": "known gap linux-headless-webgpu: On Linux, navigator.gpu.requestAdapter() returns null in headless mode, although the persona claims a WebGPU adapter. Headed launches as a regular user serve it. https://docs.apostate.dev/known-gaps#webgpu-in-headless-mode-on-linux"
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 93,
+        "allowlisted": 90,
+        "visible_of_allowlist": 86,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 93,
+        "allowlisted": 90,
+        "visible_of_allowlist": 86,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 93,
+        "allowlisted": 90,
+        "visible_of_allowlist": 86,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 93,
+        "allowlisted": 90,
+        "visible_of_allowlist": 86,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 15,
+        "allowlisted": 184,
+        "visible_of_allowlist": 15,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 15,
+        "allowlisted": 184,
+        "visible_of_allowlist": 15,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 15,
+        "allowlisted": 184,
+        "visible_of_allowlist": 15,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 15,
+        "allowlisted": 184,
+        "visible_of_allowlist": 15,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 8,
+        "allowlisted": 13,
+        "visible_of_allowlist": 8,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 8,
+        "allowlisted": 13,
+        "visible_of_allowlist": 8,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 8,
+        "allowlisted": 13,
+        "visible_of_allowlist": 8,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_fonts_are_the_personas[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "visible": 8,
+        "allowlisted": 13,
+        "visible_of_allowlist": 8,
+        "leaked": []
+      }
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {
+          "cursive": "Comic Sans MS",
+          "fantasy": "Impact",
+          "monospace": "Consolas",
+          "sans-serif": "Arial",
+          "serif": "Times New Roman"
+        },
+        "checked": 5,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {
+          "cursive": "Comic Sans MS",
+          "fantasy": "Impact",
+          "monospace": "Consolas",
+          "sans-serif": "Arial",
+          "serif": "Times New Roman"
+        },
+        "checked": 5,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {
+          "cursive": "Comic Sans MS",
+          "fantasy": "Impact",
+          "monospace": "Consolas",
+          "sans-serif": "Arial",
+          "serif": "Times New Roman"
+        },
+        "checked": 5,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {
+          "cursive": "Comic Sans MS",
+          "fantasy": "Impact",
+          "monospace": "Consolas",
+          "sans-serif": "Arial",
+          "serif": "Times New Roman"
+        },
+        "checked": 5,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[macos-42-bare]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {}
+      },
+      "message": "Skipped: no mapped font is installed on this host"
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[macos-42-package]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {}
+      },
+      "message": "Skipped: no mapped font is installed on this host"
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[macos-1337-bare]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {}
+      },
+      "message": "Skipped: no mapped font is installed on this host"
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[macos-1337-package]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {}
+      },
+      "message": "Skipped: no mapped font is installed on this host"
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[linux-42-bare]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {}
+      },
+      "message": "Skipped: no mapped font is installed on this host"
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[linux-42-package]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {}
+      },
+      "message": "Skipped: no mapped font is installed on this host"
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[linux-1337-bare]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {}
+      },
+      "message": "Skipped: no mapped font is installed on this host"
+    },
+    {
+      "test": "test_profile.py::test_generic_families_resolve_to_the_personas_fonts[linux-1337-package]",
+      "outcome": "skipped",
+      "seconds": 0.0,
+      "details": {
+        "mapping": {}
+      },
+      "message": "Skipped: no mapped font is installed on this host"
+    },
+    {
+      "test": "test_profile.py::test_voices[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 22,
+        "page_voices": 22
+      }
+    },
+    {
+      "test": "test_profile.py::test_voices[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 22,
+        "page_voices": 22
+      }
+    },
+    {
+      "test": "test_profile.py::test_voices[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 22,
+        "page_voices": 22
+      }
+    },
+    {
+      "test": "test_profile.py::test_voices[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 22,
+        "page_voices": 22
+      }
+    },
+    {
+      "test": "test_profile.py::test_voices[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 199,
+        "page_voices": 199
+      }
+    },
+    {
+      "test": "test_profile.py::test_voices[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 199,
+        "page_voices": 199
+      }
+    },
+    {
+      "test": "test_profile.py::test_voices[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 199,
+        "page_voices": 199
+      }
+    },
+    {
+      "test": "test_profile.py::test_voices[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 199,
+        "page_voices": 199
+      }
+    },
+    {
+      "test": "test_profile.py::test_voices[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 19,
+        "page_voices": 19
+      }
+    },
+    {
+      "test": "test_profile.py::test_voices[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 19,
+        "page_voices": 19
+      }
+    },
+    {
+      "test": "test_profile.py::test_voices[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 19,
+        "page_voices": 19
+      }
+    },
+    {
+      "test": "test_profile.py::test_voices[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "profile_voices": 19,
+        "page_voices": 19
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.01,
+        "maxChannelCount": 2,
+        "frames": 480
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.01,
+        "maxChannelCount": 2,
+        "frames": 480
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.01,
+        "maxChannelCount": 2,
+        "frames": 480
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.01,
+        "maxChannelCount": 2,
+        "frames": 480
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.005333333333333333,
+        "maxChannelCount": 2,
+        "frames": 256
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.005333333333333333,
+        "maxChannelCount": 2,
+        "frames": 256
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.005333333333333333,
+        "maxChannelCount": 2,
+        "frames": 256
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.005333333333333333,
+        "maxChannelCount": 2,
+        "frames": 256
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.010666666666666666,
+        "maxChannelCount": 2,
+        "frames": 512
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.010666666666666666,
+        "maxChannelCount": 2,
+        "frames": 512
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.010666666666666666,
+        "maxChannelCount": 2,
+        "frames": 512
+      }
+    },
+    {
+      "test": "test_profile.py::test_audio_buffer[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "sampleRate": 48000,
+        "baseLatency": 0.010666666666666666,
+        "maxChannelCount": 2,
+        "frames": 512
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_media_devices[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 3,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[windows-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 7,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 7,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[windows-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 7,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 7,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[macos-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 6,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 6,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[macos-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 6,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 6,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[linux-42-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 7,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 7,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[linux-1337-bare]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 7,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_network_battery_theme_and_keyboard[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 7,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[windows-42-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {
+          "(pointer: fine)": {
+            "page": false,
+            "profile": true
+          },
+          "(hover: hover)": {
+            "page": false,
+            "profile": true
+          }
+        },
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[windows-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[windows-1337-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {
+          "(pointer: fine)": {
+            "page": false,
+            "profile": true
+          },
+          "(hover: hover)": {
+            "page": false,
+            "profile": true
+          }
+        },
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[windows-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[macos-42-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {
+          "(pointer: fine)": {
+            "page": false,
+            "profile": true
+          },
+          "(hover: hover)": {
+            "page": false,
+            "profile": true
+          }
+        },
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[macos-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[macos-1337-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {
+          "(pointer: fine)": {
+            "page": false,
+            "profile": true
+          },
+          "(hover: hover)": {
+            "page": false,
+            "profile": true
+          }
+        },
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[macos-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[linux-42-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {
+          "(pointer: fine)": {
+            "page": false,
+            "profile": true
+          },
+          "(hover: hover)": {
+            "page": false,
+            "profile": true
+          }
+        },
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[linux-42-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[linux-1337-bare]",
+      "outcome": "xfailed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {
+          "(pointer: fine)": {
+            "page": false,
+            "profile": true
+          },
+          "(hover: hover)": {
+            "page": false,
+            "profile": true
+          }
+        },
+        "known_gap": {
+          "id": "host-pointer",
+          "reason": "A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona.",
+          "link": "https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+        }
+      },
+      "message": "known gap host-pointer: A launch without Playwright or Patchright reports the host's pointer and hover media features. A server with no mouse reports (pointer: none) and (hover: none) under a desktop persona. https://docs.apostate.dev/known-gaps#pointer-and-hover-come-from-the-driver-or-the-host"
+    },
+    {
+      "test": "test_profile.py::test_desktop_pointer_and_hover[linux-1337-package]",
+      "outcome": "passed",
+      "seconds": 0.0,
+      "details": {
+        "checked": 2,
+        "mismatched": {}
+      }
+    }
+  ]
+}

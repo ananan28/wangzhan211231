@@ -1,0 +1,128 @@
+Subject: [PATCH] webgl: serve claimed extensions that need no driver support
+
+getSupportedExtensions() and getExtension() include five extensions when
+the profile claims them, whatever the driver supports: EXT_render_snorm,
+EXT_texture_norm16, WEBGL_blend_func_extended,
+WEBGL_compressed_texture_pvrtc and WEBGL_render_shared_exponent. Each
+exposes only constants, so getExtension() returns a real object and a
+page that lists and hashes extensions sees the claimed GPU's set.
+Extensions with methods stay off unless the driver supports them, since
+calling one would fail. Extensions the profile does not claim are
+removed.
+
+diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+index 13b994417a..766e916ac5 100644
+--- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
++++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+@@ -25,7 +25,9 @@
+ 
+ #include "third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h"
+ 
++#include <array>
+ #include <set>
++#include <string_view>
+ 
+ #include "base/apostate/profile.h"
+ 
+@@ -3854,8 +3856,74 @@ bool WebGLRenderingContextBase::ExtensionSupportedAndAllowed(
+   if (tracker->Developer() &&
+       !RuntimeEnabledFeatures::WebGLDeveloperExtensionsEnabled())
+     return false;
+-  if (!tracker->Supported(this))
+-    return false;
++
++  // WebGL extension names a profile may claim on a host whose GL stack does
++  // not provide them.
++  //
++  // Short and by name on purpose. Every entry exposes constants, internal
++  // formats or blend factors and NO methods, so the object getExtension()
++  // returns is a complete object: a page enumerates it, reads its constants
++  // and hashes the list, and all of that succeeds. What does not succeed is a
++  // page that renders THROUGH one -- an R16 texture on a stack without
++  // GL_EXT_texture_norm16 raises GL_INVALID_ENUM -- and that residual is
++  // narrower than the name being absent, which every detector reads.
++  //
++  // Deliberately absent, each for its own reason:
++  //
++  //   OVR_multiview2                   framebufferTextureMultiviewOVR() is a
++  //                                    method; a page told the extension
++  //                                    exists and then calling it gets an
++  //                                    error out of a call that was promised.
++  //   WEBGL_provoking_vertex           the same, provokingVertexWEBGL().
++  //   EXT_disjoint_timer_query_webgl2  methods, and worse than useless here: a
++  //                                    working GPU timer on a software
++  //                                    rasteriser hands a page the throughput
++  //                                    ratio directly, which is the one GPU
++  //                                    contradiction no string can cover.
++  //   KHR_parallel_shader_compile      no methods, but COMPLETION_STATUS_KHR
++  //                                    is read through getProgramParameter and
++  //                                    a page that polls it would never see a
++  //                                    program finish. Unnecessary anyway on
++  //                                    the deployment target: patch 0052
++  //                                    enables it natively on Linux
++  //                                    SwiftShader.
++  static constexpr std::array<std::string_view, 5> kServableWithoutDriver = {
++      "EXT_render_snorm", "EXT_texture_norm16", "WEBGL_blend_func_extended",
++      "WEBGL_compressed_texture_pvrtc", "WEBGL_render_shared_exponent"};
++
++  // The profile's extension list, spelled as getSupportedExtensions() spells
++  // the names. An empty list means the profile does not describe its
++  // extensions, so neither half of this applies.
++  const base::apostate::Profile* profile = base::apostate::Profile::Get();
++  const std::set<std::string>* claimed =
++      profile && !profile->gl_extensions().empty() ? &profile->gl_extensions()
++                                                   : nullptr;
++  const std::string_view name(tracker->ExtensionName());
++  const bool profile_claims_it =
++      claimed && claimed->find(std::string(name)) != claimed->end();
++
++  if (!tracker->Supported(this)) {
++    // The addition direction, which patch 0028 left closed because it judged
++    // every addition unsafe. That was too strong. Blink carries a complete
++    // implementation class for each name above and the only thing refusing is
++    // the driver-support lookup in Supported(), so serving one yields a real
++    // object rather than a promise nothing backs -- measured on this host,
++    // where ANGLE/Metal returns an object for all of them and
++    // ANGLE/SwiftShader returns null for five.
++    //
++    // Open only for the names above, and only when the profile asks. The
++    // failure mode to avoid is not over-claiming, it is self-contradiction: a
++    // name in getSupportedExtensions() whose getExtension() returns null is a
++    // stronger tell than the name being absent, because no device does that.
++    // Both paths reach this function, so the two cannot disagree.
++    bool servable_without_driver = false;
++    for (const std::string_view servable : kServableWithoutDriver) {
++      servable_without_driver = servable_without_driver || servable == name;
++    }
++    if (!profile_claims_it || !servable_without_driver) {
++      return false;
++    }
++  }
+   if (disabled_extensions_.Contains(String(tracker->ExtensionName())))
+     return false;
+ 
+@@ -3866,18 +3934,12 @@ bool WebGLRenderingContextBase::ExtensionSupportedAndAllowed(
+   // D3D11 machine never exposes. The extension list is hashed by fingerprinting
+   // scripts, so three extra entries make the hash match no real Windows Chrome.
+   //
+-  // This is the removal direction only, and that is the whole point. Adding an
+-  // extension is unsafe because a page calls getExtension() and then calls
+-  // methods on the object; removal cannot fail, because the page is told no
+-  // exactly as the real device would tell it. Serving here rather than at
+-  // getSupportedExtensions() covers both, since getExtension() reaches the same
+-  // check — a list and an object that disagreed would be worse than either.
+-  if (const base::apostate::Profile* profile = base::apostate::Profile::Get()) {
+-    const std::set<std::string>& allowed = profile->gl_extensions();
+-    if (!allowed.empty() &&
+-        allowed.find(std::string(tracker->ExtensionName())) == allowed.end()) {
+-      return false;
+-    }
++  // Removal has no failure mode at all: the page is told no exactly as the real
++  // device would tell it. Serving here rather than at getSupportedExtensions()
++  // covers both, since getExtension() reaches the same check — a list and an
++  // object that disagreed would be worse than either.
++  if (claimed && !profile_claims_it) {
++    return false;
+   }
+   return true;
+ }

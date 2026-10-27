@@ -1,0 +1,83 @@
+name: nightly builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "Comma-separated targets to build; overrides the APOSTATE_BUILD_TARGETS variable"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# Not host contention any more -- every leg gets its own ephemeral hosted VM.
+# This is cost control: a full Chromium build per target is expensive, so two
+# overlapping nightly runs must never be in flight at once.
+concurrency:
+  group: apostate-build
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: resolve available build targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      targets: ${{ steps.resolve.outputs.targets }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Resolve target matrix
+        id: resolve
+        env:
+          REQUESTED_TARGETS: ${{ inputs.targets }}
+          CONFIGURED_TARGETS: ${{ vars.APOSTATE_BUILD_TARGETS }}
+        shell: bash
+        run: bash scripts/resolve-build-targets.sh >> "$GITHUB_OUTPUT"
+      - name: Report resolved targets
+        env:
+          RESOLVED_TARGETS: ${{ steps.resolve.outputs.targets }}
+        shell: bash
+        run: printf 'building %s\n' "$RESOLVED_TARGETS"
+
+  build:
+    name: nightly
+    needs: setup
+    # The reusable workflow declares id-token/attestations because the release
+    # path attests. A caller grants at most its own ceiling, so a nightly that
+    # withheld them would fail permission validation before running, even
+    # though attest is false here and the step is skipped.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    # All targets concurrently: each leg is its own ephemeral VM and WarpBuild
+    # imposes no concurrency limit. fail-fast stays off here because a nightly
+    # exists to report the state of every target, so one failing platform must
+    # not hide the others.
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    uses: ./.github/workflows/build-target.yml
+    with:
+      target: ${{ matrix.target }}
+      runner_labels: ${{ matrix.runner_labels }}
+      attest: false
+      artifact_prefix: nightly
+      retention_days: 14
+    # Same six as the release caller, so a nightly macOS archive is signed
+    # too and the signing path is exercised before a tag depends on it. Unset
+    # secrets arrive empty and the bundle stays unsigned.
+    secrets:
+      APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}

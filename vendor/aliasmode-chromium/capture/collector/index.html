@@ -1,0 +1,172 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Apostate — device capture</title>
+<style>
+  :root { color-scheme: light dark; --fg:#111; --bg:#fafafa; --mut:#666; --ok:#0a7; --bad:#c33; --line:#ddd; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e8e8e8; --bg:#141414; --mut:#999; --line:#333; } }
+  body { margin:0; padding:24px; font:15px/1.55 system-ui,-apple-system,sans-serif; color:var(--fg); background:var(--bg); }
+  main { max-width:640px; margin:0 auto; }
+  h1 { font-size:19px; margin:0 0 4px; }
+  p.sub { color:var(--mut); margin:0 0 24px; }
+  label { display:block; font-weight:600; margin:16px 0 6px; }
+  input { width:100%; box-sizing:border-box; padding:10px; font:inherit; border:1px solid var(--line); border-radius:7px; background:transparent; color:inherit; }
+  button { margin-top:18px; width:100%; padding:13px; font:600 15px system-ui; border:0; border-radius:7px; background:var(--fg); color:var(--bg); cursor:pointer; }
+  button[disabled] { opacity:.5; cursor:default; }
+  #bar { height:5px; background:var(--line); border-radius:3px; overflow:hidden; margin-top:18px; display:none; }
+  #bar i { display:block; height:100%; width:0; background:var(--ok); transition:width .15s; }
+  #log { margin-top:14px; font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--mut); max-height:240px; overflow:auto; }
+  .fail { color:var(--bad); }
+  .ok { color:var(--ok); }
+  .warn { border:1px solid var(--bad); border-radius:7px; padding:12px; margin-top:18px; color:var(--bad); font-size:13px; display:none; }
+</style>
+
+<main>
+  <h1>Device capture</h1>
+  <p class="sub">Records what this device's browser emits. Nothing is uploaded until you press the button, and the data goes only to the machine serving this page.</p>
+  <p class="sub"><strong>Please click Allow</strong> if the browser asks to manage screens — one probe depends on it. The run takes about a minute; leave the tab in the foreground.</p>
+
+  <div class="warn" id="autowarn"></div>
+
+  <label for="label">Device name</label>
+  <input id="label" placeholder="e.g. apple-m4-max, thinkpad-t14-win11" autocomplete="off">
+
+  <button id="go">Run capture</button>
+
+  <div id="bar"><i></i></div>
+  <div id="log"></div>
+</main>
+
+<script src="collector.js"></script>
+<script>
+(async function () {
+  var log = document.getElementById("log");
+  var bar = document.getElementById("bar");
+  var fill = bar.querySelector("i");
+  var go = document.getElementById("go");
+  var labelEl = document.getElementById("label");
+
+  function line(msg, cls) {
+    var d = document.createElement("div");
+    if (cls) d.className = cls;
+    d.textContent = msg;
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  // Hash the collector source into every capture. Two captures from different
+  // collector versions measured different things and are not comparable.
+  try {
+    var src = await (await fetch("collector.js")).text();
+    var buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(src));
+    window.__APOSTATE_COLLECTOR_SHA256 = Array.from(new Uint8Array(buf))
+      .map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  } catch (e) {
+    window.__APOSTATE_COLLECTOR_SHA256 = "unknown";
+  }
+
+  if (navigator.webdriver || /Headless/i.test(navigator.userAgent)) {
+    var w = document.getElementById("autowarn");
+    w.style.display = "block";
+    w.textContent = "This browser reports as automated or headless. A capture taken here is not ground truth — open this page in a normal browser window instead.";
+  }
+
+  // ?auto=1&label=name runs without interaction. capture/take-capture.sh and
+  // capture/collect-unattended.py use it on hosts with no display, and it is
+  // how an Apostate build is pointed at this page to compare it with a
+  // reference capture. It is the same code path a person's click takes.
+  var params = new URLSearchParams(location.search);
+  if (params.get("label")) labelEl.value = params.get("label");
+
+  function hasScreenDetails() { return typeof window.getScreenDetails === "function"; }
+
+  go.onclick = async function () {
+    go.disabled = true;
+    bar.style.display = "block";
+    log.textContent = "";
+
+    // Refuse outright outside a secure context. Eleven probes depend on
+    // secure-context-gated APIs, and over plain HTTP to a non-localhost origin
+    // every one of them reports "unsupported" — producing a capture that looks
+    // like a device missing half its APIs rather than like a capture taken
+    // through the wrong URL. This has already cost one round trip.
+    if (!window.isSecureContext) {
+      line("REFUSED: this page is not a secure context.", "fail");
+      line("Origin: " + location.origin, "fail");
+      line("", "");
+      line("Reach it over https://, or as http://localhost or http://127.0.0.1.", "");
+      line("For a remote receiver, forward the port instead of browsing to the IP:", "");
+      line("    ssh -N -L " + (location.port || "80") + ":127.0.0.1:" + (location.port || "80") + " <host>", "");
+      line("then open http://localhost:" + (location.port || "80") + "/ here.", "");
+      go.disabled = false;
+      return;
+    }
+
+    // Ask for window-management before any probe runs. screen.details is the
+    // only source of the OS display label, HDR headroom and colour primaries,
+    // and the probe refuses to prompt itself because a permission dialog in the
+    // middle of a capture changes what is being measured. Asking here, before
+    // the first probe, gets the value without that problem. Declining is fine —
+    // the probe then reports the gap as it did before.
+    try {
+      if (navigator.permissions && hasScreenDetails()) {
+        var st = (await navigator.permissions.query({ name: "window-management" })).state;
+        if (st === "prompt") {
+          line("PLEASE CLICK ALLOW on the screen-permission prompt \u2014 it is the");
+          line("only source of the display label, HDR headroom and colour");
+          line("primaries, and declining loses that probe for this capture.");
+          try { await window.getScreenDetails(); } catch (e) { /* declined */ }
+        }
+      }
+    } catch (e) { /* permission name unsupported on this build */ }
+
+    var result;
+    try {
+      result = await ApostateCollector.collect(labelEl.value.trim() || null, function (done, total, id) {
+        fill.style.width = (done / total * 100) + "%";
+      });
+    } catch (e) {
+      line("collector failed: " + (e.message || e), "fail");
+      go.disabled = false;
+      return;
+    }
+
+    var failed = Object.keys(result.probes).filter(function (k) { return !result.probes[k].ok; });
+    var okCount = Object.keys(result.probes).length - failed.length;
+    line(okCount + " probes measured", "ok");
+    failed.forEach(function (k) { line("FAILED  " + k + ": " + result.probes[k].error, "fail"); });
+
+    // Report which deterministic fields disagreed between the two reads. On real
+    // hardware these should be identical; anything listed here is a field whose
+    // natural variance we need to know before treating a difference as a defect.
+    var drift = Object.keys(result.repeat).filter(function (k) {
+      var a = result.probes[k], b = result.repeat[k];
+      return a.ok && b.ok && JSON.stringify(a.value) !== JSON.stringify(b.value);
+    });
+    if (drift.length) {
+      line("unstable across repeat read: " + drift.join(", "), "fail");
+    } else {
+      line("all deterministic probes stable across repeat read", "ok");
+    }
+
+    try {
+      var res = await fetch("/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(result)
+      });
+      var body = await res.json();
+      if (!res.ok) throw new Error(body.error || res.status);
+      line("saved: " + body.path, "ok");
+    } catch (e) {
+      line("upload failed: " + (e.message || e), "fail");
+      line("capture kept in window.__lastCapture", "");
+      window.__lastCapture = result;
+    }
+    go.disabled = false;
+    document.documentElement.dataset.captureDone = "1";
+  };
+
+  if (params.get("auto") === "1") go.onclick();
+})();
+</script>

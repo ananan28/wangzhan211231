@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/apostate/apostate/release/manifest.schema.json",
+  "title": "Apostate immutable release manifest",
+  "description": "Machine-readable identity and integrity metadata for one immutable Apostate release artifact. The SHA-256 fields provide integrity: a consumer must hash the complete archive and require an exact match with sha256 before extracting it. Build provenance is attested separately and keylessly by GitHub artifact attestations, verified with `gh attestation verify <artifact> --repo <owner>/<repo>`; there is no detached signature and no long-lived signing key. This manifest contains no credentials or private signing material.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "package_version",
+    "chromium_version",
+    "catalogue_version",
+    "platform",
+    "artifact",
+    "sha256",
+    "source_revision",
+    "patch_series_sha256",
+    "build_manifest_sha256"
+  ],
+  "properties": {
+    "package_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Apostate package release version, the identity shared by the binary release and both launcher packages. The contract pins the shape, not the number: the number lives once, in .github/release/artifact-policy.json manifest_contract.package_version, and scripts/verify-release-inputs.sh requires every manifest to state it. A constant here was a second copy of that pin, and it failed the v0.2.0 publish job after every other version site had been bumped."
+    },
+    "chromium_version": {
+      "const": "155.0.8059.85",
+      "description": "Chromium version embedded in the artifact."
+    },
+    "catalogue_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Version of the Apostate-owned profile catalogue the signed source revision actually shipped. The contract pins the rule, not the number: the manifest must state the catalogue present in resources/profiles/catalogue.json at the tagged revision."
+    },
+    "platform": {
+      "enum": [
+        "linux-x64",
+        "linux-arm64",
+        "macos-arm64",
+        "windows-x64"
+      ],
+      "description": "The exact binary target represented by artifact."
+    },
+    "artifact": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^apostate-155\\.0\\.8059\\.85-(?:linux-x64|linux-arm64|macos-arm64|windows-x64)\\.(?:tar\\.zst|zip)$",
+      "description": "Immutable artifact filename. It is deliberately restricted to the release naming contract and cannot contain a path or credential-bearing URI."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Lowercase SHA-256 digest of the complete artifact bytes."
+    },
+    "source_revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Exact 40-character lowercase Git revision used for the source checkout."
+    },
+    "patch_series_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Lowercase SHA-256 digest of patches/series."
+    },
+    "build_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Lowercase SHA-256 digest of the build manifest that produced this artifact."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "platform": {
+            "enum": [
+              "macos-arm64",
+              "windows-x64"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "artifact": {
+            "pattern": "^apostate-155\\.0\\.8059\\.85-(?:macos-arm64|windows-x64)\\.zip$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "platform": {
+            "enum": [
+              "linux-x64",
+              "linux-arm64"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "artifact": {
+            "pattern": "^apostate-155\\.0\\.8059\\.85-(?:linux-x64|linux-arm64)\\.tar\\.zst$"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,620 @@
+Subject: [PATCH] compose: per-field overrides on the command line
+
+Eight switches set single fields of the composed profile:
+--fingerprint-gpu-vendor, --fingerprint-gpu-renderer,
+--fingerprint-hardware-concurrency, --fingerprint-device-memory,
+--fingerprint-screen-width, --fingerprint-screen-height,
+--fingerprint-timezone and --fingerprint-locale. The seed fills
+everything else. A GPU override narrows the draw to a matching GPU
+option, so WebGL limits and extensions still match the named renderer,
+and a locale override applies before the speech voices are chosen. An
+override the host cannot back, a screen smaller than --window-size, or
+any override combined with --fingerprint=host refuses the launch with an
+error. --fingerprint-explain reports each overridden field and the drawn
+value it displaced.
+
+diff --git a/base/apostate/compose.cc b/base/apostate/compose.cc
+index 42768d77e4..e32d9a7fa2 100644
+--- a/base/apostate/compose.cc
++++ b/base/apostate/compose.cc
+@@ -246,6 +246,364 @@ FilterOutcome FilterServable(const DispersionAxis& axis,
+   return outcome;
+ }
+ 
++constexpr std::string_view kLayerOverride = "command-line";
++
++// The identity one gpu_identity option carries, read back out of its
++// fragment. The fragment is the only place the pair lives as a unit; the
++// anchor's member list is what it must agree with, and that agreement is
++// checked after the draw as it always was.
++ClaimedIdentity IdentityOfOption(std::string_view axis,
++                                 const DispersionOption& option) {
++  return IdentityFromProfile(ParseFragment(axis, option.value_json));
++}
++
++// Narrows a gpu_identity option set to the identity the launch named.
++//
++// An override is a restriction on the draw rather than a value written over
++// the finished profile, and that is the whole of why it stays coherent: the
++// chosen option is still a catalogue option, still a measured member of the
++// resolved anchor, and still the thing the WebGPU adapter and the GL
++// capability cluster are read from. Writing a renderer string over the
++// composed profile instead would leave GL limits, extensions and precisions
++// measured on different silicon underneath it -- a contradiction a page can
++// see in one getParameter call, and a stronger signal than the real renderer
++// would have been.
++//
++// Returns false with `rejection` filled when nothing servable matches.
++bool NarrowToNamedIdentity(std::vector<const DispersionOption*>& options,
++                           std::string_view axis,
++                           const FieldOverrides& overrides,
++                           const Anchor& anchor,
++                           std::string* rejection) {
++  if (overrides.gpu_vendor.empty() && overrides.gpu_renderer.empty()) {
++    return true;
++  }
++
++  std::vector<const DispersionOption*> kept;
++  std::vector<std::string> servable_renderers;
++  for (const DispersionOption* option : options) {
++    const ClaimedIdentity identity = IdentityOfOption(axis, *option);
++    if (!identity.declared) {
++      continue;
++    }
++    servable_renderers.push_back(identity.vendor + " / " + identity.renderer);
++    if (!overrides.gpu_vendor.empty() &&
++        identity.vendor != overrides.gpu_vendor) {
++      continue;
++    }
++    if (!overrides.gpu_renderer.empty() &&
++        identity.renderer != overrides.gpu_renderer) {
++      continue;
++    }
++    kept.push_back(option);
++  }
++
++  if (!kept.empty()) {
++    options = std::move(kept);
++    return true;
++  }
++
++  std::string named;
++  if (!overrides.gpu_vendor.empty()) {
++    named += "--fingerprint-gpu-vendor='" + overrides.gpu_vendor + "'";
++  }
++  if (!overrides.gpu_renderer.empty()) {
++    if (!named.empty()) {
++      named += " with ";
++    }
++    named += "--fingerprint-gpu-renderer='" + overrides.gpu_renderer + "'";
++  }
++
++  std::string offer;
++  for (const std::string& renderer : servable_renderers) {
++    offer += "\n  " + renderer;
++  }
++  if (offer.empty()) {
++    offer = "\n  (none)";
++  }
++
++  if (rejection) {
++    *rejection =
++        named +
++        " names a GPU identity that was not measured on the capability cluster "
++        "this host can serve. The GL limits, extensions, shader precisions and "
++        "WebGPU adapter all come from anchor '" +
++        std::string(anchor.id) +
++        "', so a renderer from outside it would be contradicted by its own "
++        "capability table. Servable on this host:" +
++        offer +
++        "\nPass --fingerprint-anchor to choose a different cluster, or "
++        "--fingerprint-explain to see what this host can serve.";
++  }
++  return false;
++}
++
++// Records one overridden surface so --fingerprint-explain says who decided the
++// value and what it displaced.
++void RecordOverride(Composition& composition,
++                    std::string_view surface,
++                    const std::string& value,
++                    const std::string& note) {
++  composition.surfaces.push_back({
++      .surface = std::string(surface),
++      .value = value,
++      .layer = std::string(kLayerOverride),
++      .evidence = "operator",
++      .limitation = note,
++  });
++  composition.limitations.push_back(std::string(surface) + ": " + note);
++}
++
++// The note every scalar override carries. An override is honoured, but it is
++// not backed by the prevalence data the catalogue's buckets are, and saying so
++// is the difference between a tool and a trap: an operator who pins seven
++// cores has a more distinctive machine than any seed would have produced, and
++// only they can know whether that is what they wanted.
++std::string OverrideNote(std::string_view field, const std::string& displaced) {
++  std::string note = std::string(field) +
++                     " was set from the command line rather than drawn from "
++                     "the catalogue, so its real-world prevalence is unknown "
++                     "and it may be more distinctive than a drawn value";
++  if (!displaced.empty()) {
++    note += "; the seed had chosen " + displaced;
++  }
++  return note;
++}
++
++// Applies the scalar overrides onto the composed profile.
++//
++// Called after the axis loop and before DeriveWorkArea, so that a screen
++// override has its available rectangle derived from the same furniture insets
++// the seed drew rather than from the panel it replaced. Returns false with
++// `rejection` filled when an override cannot be served.
++bool ApplyScalarOverrides(Composition& composition,
++                          const ComposeRequest& request,
++                          bool panel_resolved,
++                          std::string* rejection) {
++  const FieldOverrides& overrides = request.overrides;
++  const HostCapability& host = request.host;
++
++  if (overrides.logical_cores) {
++    const int claimed = *overrides.logical_cores;
++    if (ClampLogicalCores(claimed, host.logical_cores) != claimed) {
++      if (rejection) {
++        *rejection = "--fingerprint-hardware-concurrency=" +
++                     NumberToString(claimed) + " is above this host's " +
++                     NumberToString(host.logical_cores) +
++                     " logical cores. A page can measure parallel throughput, "
++                     "so a count the machine cannot deliver is falsifiable in "
++                     "a way a lower count is not. Pass a value of " +
++                     NumberToString(host.logical_cores) + " or less.";
++      }
++      return false;
++    }
++    DictValue* cpu = composition.profile.EnsureDict("cpu");
++    const std::optional<int> displaced = cpu->FindInt("logical_cores");
++    cpu->Set("logical_cores", claimed);
++    RecordOverride(composition, "cpu", NumberToString(claimed),
++                   OverrideNote("cpu.logical_cores",
++                                displaced ? NumberToString(*displaced)
++                                          : std::string()));
++  }
++
++  if (overrides.memory_bytes) {
++    const uint64_t claimed = *overrides.memory_bytes;
++    if (ClampMemoryBytes(claimed, host.total_memory_bytes) != claimed) {
++      if (rejection) {
++        *rejection = "--fingerprint-device-memory names " +
++                     NumberToString(claimed) +
++                     " bytes, which is above this host's " +
++                     NumberToString(host.total_memory_bytes) +
++                     ". A page can allocate until it fails, so claiming more "
++                     "memory than the machine has is falsifiable in a way "
++                     "claiming less is not.";
++      }
++      return false;
++    }
++    DictValue* memory = composition.profile.EnsureDict("memory");
++    const std::optional<double> displaced = memory->FindDouble("total_bytes");
++    memory->Set("total_bytes", static_cast<double>(claimed));
++    RecordOverride(
++        composition, "memory", NumberToString(claimed) + " bytes",
++        OverrideNote("memory.total_bytes",
++                     displaced ? NumberToString(static_cast<uint64_t>(
++                                     *displaced)) + " bytes"
++                               : std::string()));
++  }
++
++  if (!overrides.screen_width && !overrides.screen_height) {
++    return true;
++  }
++
++  DictValue* screen = composition.profile.EnsureDict("screen");
++  const int width =
++      overrides.screen_width.value_or(screen->FindInt("width").value_or(0));
++  const int height =
++      overrides.screen_height.value_or(screen->FindInt("height").value_or(0));
++
++  if ((host.window_width > 0 && width < host.window_width) ||
++      (host.window_height > 0 && height < host.window_height)) {
++    if (rejection) {
++      *rejection = "the overridden screen is " + NumberToString(width) + "x" +
++                   NumberToString(height) +
++                   ", smaller than the --window-size this launch asked for (" +
++                   NumberToString(host.window_width) + "x" +
++                   NumberToString(host.window_height) +
++                   "). A window larger than the screen it claims to be on is "
++                   "visible from JavaScript in one comparison.";
++    }
++    return false;
++  }
++
++  const int inset_left = screen->FindInt("avail_inset_left").value_or(0);
++  const int inset_right = screen->FindInt("avail_inset_right").value_or(0);
++  const int inset_top = screen->FindInt("avail_inset_top").value_or(0);
++  const int inset_bottom = screen->FindInt("avail_inset_bottom").value_or(0);
++  if (inset_left + inset_right >= width ||
++      inset_top + inset_bottom >= height) {
++    if (rejection) {
++      *rejection = "the overridden screen is " + NumberToString(width) + "x" +
++                   NumberToString(height) +
++                   ", which the desktop furniture this seed drew does not fit "
++                   "inside (" + NumberToString(inset_left) + "+" +
++                   NumberToString(inset_right) + " horizontal, " +
++                   NumberToString(inset_top) + "+" +
++                   NumberToString(inset_bottom) +
++                   " vertical). Choose a larger screen or a different seed.";
++    }
++    return false;
++  }
++
++  if (overrides.screen_width) {
++    const std::optional<int> displaced = screen->FindInt("width");
++    screen->Set("width", width);
++    RecordOverride(composition, "screen.width", NumberToString(width),
++                   OverrideNote("screen.width",
++                                displaced ? NumberToString(*displaced)
++                                          : std::string()));
++  }
++  if (overrides.screen_height) {
++    const std::optional<int> displaced = screen->FindInt("height");
++    screen->Set("height", height);
++    RecordOverride(composition, "screen.height", NumberToString(height),
++                   OverrideNote("screen.height",
++                                displaced ? NumberToString(*displaced)
++                                          : std::string()));
++  }
++
++  if (!panel_resolved) {
++    composition.limitations.push_back(
++        "screen: the panel axis was left inherited and the screen size came "
++        "from the command line, so colour depth, pixel ratio, gamut and HDR "
++        "are still the host's and the available rectangle is not derived");
++  }
++  return true;
++}
++
++// Bounds for the numeric overrides. Generous, because they exist only to stop
++// an overflow and a typo from becoming a profile, not to second-guess an
++// operator who knows their target.
++constexpr int kMaxOverrideCores = 4096;
++constexpr int kMaxOverridePixels = 65535;
++constexpr int kMaxOverrideMemoryGib = 4096;
++
++// The switches that only mean something when a profile is composed at all.
++constexpr std::string_view kShapingSwitches[] = {
++    switches::kFingerprintPlatform,
++    switches::kFingerprintAnchor,
++    switches::kFingerprintGpuVendor,
++    switches::kFingerprintGpuRenderer,
++    switches::kFingerprintHardwareConcurrency,
++    switches::kFingerprintDeviceMemory,
++    switches::kFingerprintScreenWidth,
++    switches::kFingerprintScreenHeight,
++    switches::kFingerprintTimezone,
++    switches::kFingerprintLocale,
++};
++
++bool ParseIntOverride(const CommandLine& command_line,
++                      std::string_view name,
++                      int maximum,
++                      std::optional<int>* out,
++                      std::string* rejection) {
++  if (!command_line.HasSwitch(name)) {
++    return true;
++  }
++  const std::string raw = command_line.GetSwitchValueASCII(name);
++  int value = 0;
++  if (!StringToInt(raw, &value) || value <= 0 || value > maximum) {
++    *rejection = "--" + std::string(name) + "='" + raw +
++                 "' is not a whole number between 1 and " +
++                 NumberToString(maximum) + ".";
++    return false;
++  }
++  *out = value;
++  return true;
++}
++
++bool ParseTextOverride(const CommandLine& command_line,
++                       std::string_view name,
++                       std::string* out,
++                       std::string* rejection) {
++  if (!command_line.HasSwitch(name)) {
++    return true;
++  }
++  std::string value = command_line.GetSwitchValueASCII(name);
++  if (value.empty() || value.size() > 256) {
++    *rejection = "--" + std::string(name) +
++                 " was given an empty or over-long value.";
++    return false;
++  }
++  *out = std::move(value);
++  return true;
++}
++
++// Reads the per-field overrides off the command line and range-checks them.
++//
++// A malformed value stops the launch rather than being dropped. An operator
++// who mistypes --fingerprint-hardware-concurrency=eigth and is not told will
++// run a whole session believing the field was pinned, which is the failure
++// this whole codebase exists to avoid.
++bool CollectOverrides(const CommandLine& command_line,
++                      FieldOverrides* overrides,
++                      std::string* rejection) {
++  return ParseTextOverride(command_line, switches::kFingerprintGpuVendor,
++                           &overrides->gpu_vendor, rejection) &&
++         ParseTextOverride(command_line, switches::kFingerprintGpuRenderer,
++                           &overrides->gpu_renderer, rejection) &&
++         ParseTextOverride(command_line, switches::kFingerprintTimezone,
++                           &overrides->timezone, rejection) &&
++         ParseTextOverride(command_line, switches::kFingerprintLocale,
++                           &overrides->accept_languages, rejection) &&
++         ParseIntOverride(command_line,
++                          switches::kFingerprintHardwareConcurrency,
++                          kMaxOverrideCores, &overrides->logical_cores,
++                          rejection) &&
++         ParseIntOverride(command_line, switches::kFingerprintScreenWidth,
++                          kMaxOverridePixels, &overrides->screen_width,
++                          rejection) &&
++         ParseIntOverride(command_line, switches::kFingerprintScreenHeight,
++                          kMaxOverridePixels, &overrides->screen_height,
++                          rejection) &&
++         [&] {
++           std::optional<int> gib;
++           if (!ParseIntOverride(command_line,
++                                 switches::kFingerprintDeviceMemory,
++                                 kMaxOverrideMemoryGib, &gib, rejection)) {
++             return false;
++           }
++           if (gib) {
++             // The switch is in GiB because that is the unit
++             // navigator.deviceMemory reports in; the profile field is real
++             // installed bytes, which Chromium then rounds to the nearer power
++             // of two itself.
++             overrides->memory_bytes =
++                 static_cast<uint64_t>(*gib) * 1024u * 1024u * 1024u;
++           }
++           return true;
++         }();
++}
++
+ }  // namespace
+ 
+ void MergeFragment(DictValue& target,
+@@ -420,7 +778,11 @@ bool FamiliesProvisioned(const FilePath& fonts_directory,
+ // Composition
+ // ---------------------------------------------------------------------------
+ 
+-std::optional<Composition> Compose(const ComposeRequest& request) {
++std::optional<Composition> Compose(const ComposeRequest& request,
++                                   std::string* rejection) {
++  if (rejection) {
++    rejection->clear();
++  }
+   if (request.seed.empty()) {
+     return std::nullopt;
+   }
+@@ -649,6 +1011,31 @@ std::optional<Composition> Compose(const ComposeRequest& request) {
+         .limitation = std::string(),
+     });
+     resolved[std::string(kind)] = std::string(chosen->id);
++
++    // The locale overrides land here rather than over the finished profile,
++    // because the voices table is keyed on the resolved Accept-Language list:
++    // applying them later would leave a launch claiming en-GB while offering
++    // the voice set measured for whatever the seed had drawn.
++    if (kind != "locale") {
++      return;
++    }
++    DictValue* locale = composition.profile.EnsureDict("locale");
++    if (!request.overrides.accept_languages.empty()) {
++      const std::string* displaced = locale->FindString("accept_languages");
++      const std::string previous = displaced ? *displaced : std::string();
++      locale->Set("accept_languages", request.overrides.accept_languages);
++      RecordOverride(composition, "locale.accept_languages",
++                     request.overrides.accept_languages,
++                     OverrideNote("locale.accept_languages", previous));
++    }
++    if (!request.overrides.timezone.empty()) {
++      const std::string* displaced = locale->FindString("timezone");
++      const std::string previous = displaced ? *displaced : std::string();
++      locale->Set("timezone", request.overrides.timezone);
++      RecordOverride(composition, "locale.timezone",
++                     request.overrides.timezone,
++                     OverrideNote("locale.timezone", previous));
++    }
+   };
+ 
+   // ---- the dispersion axes, in the §5 resolution order ----
+@@ -776,6 +1163,16 @@ std::optional<Composition> Compose(const ComposeRequest& request) {
+       continue;
+     }
+ 
++    // An identity named on the command line restricts the draw instead of
++    // being written over the result, so whatever is chosen is still a measured
++    // member of this anchor and still the member WebGPU and the GL cluster
++    // come from.
++    if (axis.axis == "gpu_identity" &&
++        !NarrowToNamedIdentity(outcome.options, axis.axis, request.overrides,
++                               *anchor, rejection)) {
++      return std::nullopt;
++    }
++
+     if (axis.selection == Selection::kSingle) {
+       std::vector<uint32_t> weights;
+       weights.reserve(outcome.options.size());
+@@ -899,6 +1296,10 @@ std::optional<Composition> Compose(const ComposeRequest& request) {
+   }
+   resolve_policy("theme", request.theme_policies);
+ 
++  if (!ApplyScalarOverrides(composition, request, panel_resolved, rejection)) {
++    return std::nullopt;
++  }
++
+   DeriveWorkArea(composition.profile, panel_resolved,
+                  &composition.limitations);
+ 
+@@ -1065,11 +1466,35 @@ std::optional<std::string> ComposeProfileForCurrentProcess(
+   const SeedResolution seed = ResolveSeed(command_line);
+   const bool explain = command_line.HasSwitch(switches::kFingerprintExplain);
+ 
++  std::string rejection;
++  FieldOverrides overrides;
++
+   if (seed.rejected) {
+     RefuseLaunch(seed.limitation);
+   }
+ 
++  if (!CollectOverrides(command_line, &overrides, &rejection)) {
++    RefuseLaunch(rejection);
++  }
++
+   if (!seed.should_compose()) {
++    // Host pass-through composes nothing, so there is no profile for a
++    // persona, a pinned anchor or a per-field override to land on. Applying
++    // one anyway is impossible and ignoring it is dishonest: the operator
++    // asked for a Windows desktop or a named GPU and would be shown their own
++    // machine while believing otherwise. Refusing names the contradiction
++    // while it is still one command away from being fixed.
++    for (const std::string_view name : kShapingSwitches) {
++      if (command_line.HasSwitch(name)) {
++        RefuseLaunch(
++            "--fingerprint names an off value, so no profile is composed and "
++            "--" +
++            std::string(name) +
++            " cannot take effect. Drop one of the two: --fingerprint=off for "
++            "this machine's real fingerprint, or a seed for a composed one. "
++            "--fingerprint-explain still works with either.");
++      }
++    }
+     if (explain) {
+       WriteHostInheritanceReport(seed);
+       Process::TerminateCurrentProcessImmediately(0);
+@@ -1102,6 +1527,7 @@ std::optional<std::string> ComposeProfileForCurrentProcess(
+   request.pinned_anchor =
+       command_line.GetSwitchValueASCII(switches::kFingerprintAnchor);
+   request.accept_languages = command_line.GetSwitchValueASCII(kLangSwitch);
++  request.overrides = std::move(overrides);
+ 
+   std::string persona_limitation;
+   if (command_line.HasSwitch(switches::kFingerprintPlatform)) {
+@@ -1118,7 +1544,10 @@ std::optional<std::string> ComposeProfileForCurrentProcess(
+     }
+   }
+ 
+-  std::optional<Composition> composition = Compose(request);
++  std::optional<Composition> composition = Compose(request, &rejection);
++  if (!rejection.empty()) {
++    RefuseLaunch(rejection);
++  }
+   if (!composition) {
+     LOG(ERROR) << "apostate: the compiled catalogue cannot serve this launch; "
+                   "inheriting the host";
+diff --git a/base/apostate/compose.h b/base/apostate/compose.h
+index 0e3fd59f2f..9a96eff7ec 100644
+--- a/base/apostate/compose.h
++++ b/base/apostate/compose.h
+@@ -74,6 +74,31 @@ inline constexpr char kFingerprintAnchor[] = "fingerprint-anchor";
+ // Write the composition report to stdout and exit.
+ inline constexpr char kFingerprintExplain[] = "fingerprint-explain";
+ 
++// Per-field overrides. Each replaces exactly the field it names and leaves
++// every other surface to the seed, so an override is a correction to one
++// coherent device rather than a second, partial source of identity.
++//
++// None of these is page-visible. A page cannot read a command line, and every
++// one of them writes a value the catalogue could already have drawn into a
++// field the profile already carried -- the set of things a page can read is
++// exactly what it was, and with no override switch present nothing about a
++// launch changes at all.
++//
++// An override the host cannot serve, or that contradicts the capability
++// cluster it would have to sit on, is refused on stderr with the servable
++// alternatives named. Silently ignoring it is the one behaviour that must not
++// happen: the operator would then run a whole session believing a field was
++// spoofed when it was their own hardware.
++inline constexpr char kFingerprintGpuVendor[] = "fingerprint-gpu-vendor";
++inline constexpr char kFingerprintGpuRenderer[] = "fingerprint-gpu-renderer";
++inline constexpr char kFingerprintHardwareConcurrency[] =
++    "fingerprint-hardware-concurrency";
++inline constexpr char kFingerprintDeviceMemory[] = "fingerprint-device-memory";
++inline constexpr char kFingerprintScreenWidth[] = "fingerprint-screen-width";
++inline constexpr char kFingerprintScreenHeight[] = "fingerprint-screen-height";
++inline constexpr char kFingerprintTimezone[] = "fingerprint-timezone";
++inline constexpr char kFingerprintLocale[] = "fingerprint-locale";
++
+ }  // namespace switches
+ 
+ // ---------------------------------------------------------------------------
+@@ -174,6 +199,32 @@ struct BASE_EXPORT Composition {
+   DictValue profile;
+ };
+ 
++// The per-field overrides a launch asked for, already parsed and range
++// checked. An empty string or an absent optional means "the seed decides".
++//
++// These are not a second identity layer. Each one lands on a profile the seed
++// composed in full, which is why an override cannot leave a device
++// half-specified: everything it does not name is still drawn from the same
++// root.
++struct BASE_EXPORT FieldOverrides {
++  // Restrict the gpu_identity draw to a measured member of the resolved
++  // anchor. Either alone is enough; the vendor on its own narrows a
++  // multi-vendor anchor and leaves the choice among what is left to the seed.
++  std::string gpu_vendor;
++  std::string gpu_renderer;
++
++  std::optional<int> logical_cores;
++  std::optional<uint64_t> memory_bytes;
++  std::optional<int> screen_width;
++  std::optional<int> screen_height;
++
++  std::string timezone;
++  // The Accept-Language list, e.g. "en-US,en". Re-keys the voices table too,
++  // which is why it is applied before that axis resolves rather than merged
++  // over the finished profile.
++  std::string accept_languages;
++};
++
+ struct BASE_EXPORT ComposeRequest {
+   // Never empty: --fingerprint=host is handled before composition starts.
+   std::string seed;
+@@ -214,6 +265,8 @@ struct BASE_EXPORT ComposeRequest {
+ 
+   // Used when `accept_languages` is empty.
+   std::string_view default_accept_languages;
++
++  FieldOverrides overrides;
+ };
+ 
+ // Resolves every axis in the §5 dependency order and deep-merges the result.
+@@ -222,13 +275,21 @@ struct BASE_EXPORT ComposeRequest {
+ // parents' resolved values, so there is no rejection sampling and no re-draw:
+ // every profile is coherent by construction rather than by validation.
+ //
+-// Returns nullopt only when the request itself is unusable (no seed, no
+-// platform persona the tables know). A coherence violation after resolution is
+-// a defect in the compiled option tables and is fatal, because the generator
+-// rejects all of them at build time -- reaching one at runtime means the
+-// binary shipped with a broken catalogue, and a half-composed fingerprint is
+-// more detectable than none.
+-BASE_EXPORT std::optional<Composition> Compose(const ComposeRequest& request);
++// Returns nullopt when the request itself is unusable (no seed, no platform
++// persona the tables know) and when a per-field override cannot be honoured.
++// The two are not the same answer and must not be confused: an unusable
++// request means inherit the host, while a refused override means the launch
++// asked for something specific and did not get it. `rejection`, when
++// non-null, is filled with the operator-facing reason in the second case and
++// left empty in the first, and a caller that passes one must stop the launch
++// rather than fall back.
++//
++// A coherence violation after resolution is a defect in the compiled option
++// tables and is fatal, because the generator rejects all of them at build time
++// -- reaching one at runtime means the binary shipped with a broken
++// catalogue, and a half-composed fingerprint is more detectable than none.
++BASE_EXPORT std::optional<Composition> Compose(const ComposeRequest& request,
++                                               std::string* rejection = nullptr);
+ 
+ // Deep-merges `overlay` into `target`.
+ //

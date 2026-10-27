@@ -1,0 +1,228 @@
+name: checks
+
+# Every job here reads this repository only and finishes in seconds, so there
+# is no `paths:` filter and no `if:` guard on any step. Both were removed
+# deliberately.
+#
+# This workflow triggered on `pull_request` alone. Every commit in this
+# repository's history landed by direct push -- the history is linear with no
+# merge commits -- so no pull request ever existed and the workflow had never
+# run once, on any commit. `scripts/validate-release-baseline.py` had been
+# failing at HEAD and `scripts/test_profile_resolver.py` with it, and nothing
+# reported either, because a check that never runs renders exactly like a
+# check that passed. A `paths:` filter is the same failure in miniature: it
+# is a promise that a job's inputs are all under those paths, and the
+# `baseline` job reads build/ while `catalogue` reads corpus/, neither of
+# which was listed. Skipping a two-second job buys nothing worth that.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: release baseline validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate pinned baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/validate-release-baseline.py
+          test -f build/CHROMIUM_VERSION
+          test -f build/MANIFEST.lock
+          test -f patches/series
+          python3 scripts/validate-release-baseline.py --root . --series-only
+          python3 scripts/validate-release-baseline.py --root .
+
+  patches:
+    name: patch header validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate unified-diff hunk headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/validate-patch-headers.py
+          test -f patches/series
+          # Read-only, deliberately. A hunk header that overstates its body
+          # makes git apply drop the surplus lines silently: the patch reports
+          # that it applied cleanly and writes a truncated file. That is how
+          # base/apostate/profile.cc lost its closing brace, the series died at
+          # patch 7 against drifted context, and a build directory kept a
+          # binary from a partial tree. Five corrupt hunks across three patches
+          # were found this way. --fix is for a human repairing a patch; a CI
+          # run that repaired its own inputs would prove nothing.
+          python3 scripts/validate-patch-headers.py
+
+  schema:
+    name: schema validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Parse and validate schema documents
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/validate-release-contract.py
+          for schema in \
+            config/launch.schema.json \
+            config/profile.schema.json \
+            python/apostate/assets/profile.schema.json \
+            release/manifest.schema.json; do
+            test -f "$schema"
+          done
+          python3 scripts/validate-release-contract.py --check-schemas
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          paths = [
+              Path("config/launch.schema.json"),
+              Path("config/profile.schema.json"),
+              Path("python/apostate/assets/profile.schema.json"),
+              Path("release/manifest.schema.json"),
+          ]
+          for path in paths:
+              json.loads(path.read_text(encoding="utf-8"))
+              print(f"valid JSON: {path}")
+          PY
+          # The pip and npm packages ship copies of config/profile.schema.json
+          # and resources/profiles/catalogue.json so an installed package works
+          # with no checkout. Nothing kept those copies in step, and they were
+          # hand-copied, which went stale twice in one afternoon: the catalogue
+          # went from nine axes to twelve and both packaged copies stayed at
+          # nine, so an installed package validated the new axes against the old
+          # bundled catalogue and CI stayed green. This writes nothing, names
+          # the stale paths, and costs under a second.
+          python3 scripts/sync-packages.py --check
+
+  catalogue:
+    name: catalogue and resolver validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate catalogue index
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/profile_resolver.py
+          test -f resources/profiles/catalogue.json
+          test -d resources/profiles/dispersion
+          python3 scripts/profile_resolver.py --catalogue
+      - name: Run deterministic resolver checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/test_profile_resolver.py
+          test -f resources/profiles/catalogue.json
+          test -d resources/profiles/dispersion
+          # The resolver loads the anchor records the catalogue names, so
+          # corpus/ is an input to this job even though nothing in the job
+          # path mentions it.
+          test -d corpus/anchors
+          python3 scripts/test_profile_resolver.py
+
+  geoip:
+    name: GeoIP validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run network-free GeoIP checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/geoip.py
+          test -f scripts/test_geoip.py
+          python3 scripts/test_geoip.py
+
+  tooling:
+    name: operational script tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run every scripts/test_*.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Two of the sixteen were wired: test_profile_resolver.py and
+          # test_geoip.py. The other fourteen tested the scripts that gate a
+          # release and had never run in CI, which is how the baseline
+          # validator kept a test asserting "out of numeric apply order"
+          # against a series that is deliberately dependency-ordered: the
+          # test was green and the rule it encoded was wrong. Discovering the
+          # set rather than listing it means a new one is wired by existing.
+          # The whole set takes under twenty seconds.
+          shopt -s nullglob
+          files=(scripts/test_*.py)
+          if [ "${#files[@]}" -lt 10 ]; then
+            echo "expected the scripts/ test suite, found ${#files[@]} files" >&2
+            exit 1
+          fi
+          status=0
+          for file in "${files[@]}"; do
+            echo "::group::$file"
+            # Every file is run even after one fails. A suite that stops at
+            # the first failure reports one finding per run, and these had
+            # fourteen runs' worth of drift to report at once.
+            python3 "$file" || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+  python:
+    name: Python package tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run Python package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d python/apostate
+          test -d python/tests
+          python3 -m unittest discover python/tests
+
+  node:
+    name: Node package tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run Node package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f npm/package.json
+          test -f npm/package-lock.json
+          test -d npm/test
+          # The package has real runtime dependencies -- socks-proxy-agent and
+          # the two proxy agents -- and npm/node_modules is gitignored, so the
+          # test run resolved nothing and died on ERR_MODULE_NOT_FOUND the
+          # first time this workflow ever executed. It passed on every
+          # developer machine because node_modules was already there. `npm ci`
+          # installs the committed lockfile exactly and nothing else.
+          npm ci --prefix npm
+          npm --prefix npm test

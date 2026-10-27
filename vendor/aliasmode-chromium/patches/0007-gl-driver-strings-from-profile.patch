@@ -1,0 +1,115 @@
+Subject: [PATCH] gl: GL_RENDERER and GL_VENDOR from the profile
+
+The GL renderer and vendor strings come from the profile, at the one
+function both the GPU process and WebGL read them through. A page using
+WEBGL_debug_renderer_info sees the claimed GPU, and the GPU process
+makes its driver-bug blocklist decisions for that same GPU. The masked
+renderer string stays "WebKit WebGL", as in stock Chrome.
+
+diff --git a/base/apostate/profile.cc b/base/apostate/profile.cc
+index 19f681ee00..ada6cd1340 100644
+--- a/base/apostate/profile.cc
++++ b/base/apostate/profile.cc
+@@ -107,6 +107,15 @@ Profile* Profile::ParseOrNull(const std::string& encoded) {
+     }
+   }
+ 
++  if (const DictValue* gpu = dict->FindDict("gpu")) {
++    if (const std::string* renderer = gpu->FindString("unmasked_renderer")) {
++      profile->gpu_renderer_ = *renderer;
++    }
++    if (const std::string* vendor = gpu->FindString("unmasked_vendor")) {
++      profile->gpu_vendor_ = *vendor;
++    }
++  }
++
+   return profile.release();
+ }
+ 
+diff --git a/base/apostate/profile.h b/base/apostate/profile.h
+index ff33d3da54..0776033183 100644
+--- a/base/apostate/profile.h
++++ b/base/apostate/profile.h
+@@ -70,6 +70,22 @@ class BASE_EXPORT Profile {
+     return memory_total_bytes_;
+   }
+ 
++  // GL_RENDERER and GL_VENDOR as the claimed device's driver reports them.
++  //
++  // These are consumed at the GL binding layer rather than in Blink, because
++  // two independent consumers read them — GPUInfo in the GPU process, which
++  // drives chrome://gpu and the blocklist, and WebGL's
++  // UNMASKED_RENDERER_WEBGL, which is what a page actually sees. Overriding
++  // either one alone leaves the other describing the host's real hardware.
++  //
++  // Note this does not touch WebGL's *masked* GL_RENDERER, which Blink answers
++  // with the constant "WebKit WebGL" regardless of hardware. Conflating the two
++  // would introduce a difference from stock Chrome rather than remove one.
++  const std::optional<std::string>& gpu_renderer() const {
++    return gpu_renderer_;
++  }
++  const std::optional<std::string>& gpu_vendor() const { return gpu_vendor_; }
++
+   // Identifier of the capture this profile was derived from, for diagnostics.
+   const std::string& source_id() const { return source_id_; }
+ 
+@@ -78,6 +94,8 @@ class BASE_EXPORT Profile {
+ 
+   std::optional<int> cpu_logical_cores_;
+   std::optional<uint64_t> memory_total_bytes_;
++  std::optional<std::string> gpu_renderer_;
++  std::optional<std::string> gpu_vendor_;
+   std::string source_id_;
+ };
+ 
+diff --git a/ui/gl/gl_gl_api_implementation.cc b/ui/gl/gl_gl_api_implementation.cc
+index 6e785fafa2..3ebdfb1937 100644
+--- a/ui/gl/gl_gl_api_implementation.cc
++++ b/ui/gl/gl_gl_api_implementation.cc
+@@ -4,6 +4,9 @@
+ 
+ #include "ui/gl/gl_gl_api_implementation.h"
+ 
++#include "base/apostate/profile.h"
++#include "base/no_destructor.h"
++
+ #include <array>
+ #include <vector>
+ 
+@@ -247,6 +250,36 @@ const GLubyte* RealGLApi::glGetStringFn(GLenum name) {
+     InitializeFilteredExtensionsIfNeeded();
+     return reinterpret_cast<const GLubyte*>(filtered_exts_str_.c_str());
+   }
++
++  // Apostate: substitute the profile's driver strings here, at the binding
++  // layer, because this is the one point both consumers pass through.
++  //
++  // GPUInfo reads them via glGetString directly in the GPU process, driving
++  // chrome://gpu and the blocklist; WebGL reads them through the command
++  // buffer decoder, which is what UNMASKED_RENDERER_WEBGL returns to a page.
++  // Patching either site alone leaves the other describing the host's real
++  // hardware, and a claimed GPU whose blocklist decisions were made for a
++  // different one is its own contradiction.
++  //
++  // The strings are held in function-local statics because this returns a
++  // borrowed pointer that must outlive the call, and the profile is immutable
++  // for process lifetime.
++  if (name == GL_RENDERER || name == GL_VENDOR) {
++    if (const base::apostate::Profile* profile =
++            base::apostate::Profile::Get()) {
++      if (name == GL_RENDERER && profile->gpu_renderer().has_value()) {
++        static const base::NoDestructor<std::string> renderer(
++            *profile->gpu_renderer());
++        return reinterpret_cast<const GLubyte*>(renderer->c_str());
++      }
++      if (name == GL_VENDOR && profile->gpu_vendor().has_value()) {
++        static const base::NoDestructor<std::string> vendor(
++            *profile->gpu_vendor());
++        return reinterpret_cast<const GLubyte*>(vendor->c_str());
++      }
++    }
++  }
++
+   return GLApiBase::glGetStringFn(name);
+ }
+ 

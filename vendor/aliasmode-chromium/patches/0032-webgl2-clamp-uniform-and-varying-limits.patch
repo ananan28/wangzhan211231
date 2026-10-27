@@ -1,0 +1,41 @@
+Subject: [PATCH] webgl: clamp WebGL2 uniform and varying limits
+
+Eleven more WebGL2 limits go through the profile's gl_limits clamp,
+including the uniform block counts, MAX_VARYING_COMPONENTS and the
+vertex output and fragment input component counts. SwiftShader reports
+higher values than desktop GPUs for all of them, for example 60 combined
+uniform blocks where an Intel UHD 630 reports 24. The served value is
+the smaller of the profile and the driver, so a claim above what the GPU
+supports stays at the driver's value.
+
+diff --git a/ui/gl/gl_gl_api_implementation.cc b/ui/gl/gl_gl_api_implementation.cc
+index 136e3ea2c4..9b07c93979 100644
+--- a/ui/gl/gl_gl_api_implementation.cc
++++ b/ui/gl/gl_gl_api_implementation.cc
+@@ -267,6 +267,26 @@ constexpr ApostateGlLimit kApostateGlLimits[] = {
+     {GL_MAX_SAMPLES, "MAX_SAMPLES"},
+     {GL_MAX_ELEMENTS_INDICES, "MAX_ELEMENTS_INDICES"},
+     {GL_MAX_ELEMENTS_VERTICES, "MAX_ELEMENTS_VERTICES"},
++    // WebGL2's uniform-block, varying and shader-interface limits. Added after
++    // measurement rather than by reading the spec: with the list above served
++    // and the shader precision block corrected, these were what the reference
++    // Windows machine still disagreed with, and every one of them reports a
++    // number SwiftShader happens to set higher than the real GPU does. The
++    // clamp handles that on its own — nothing here can over-claim.
++    {GL_MAX_COMBINED_UNIFORM_BLOCKS, "MAX_COMBINED_UNIFORM_BLOCKS"},
++    {GL_MAX_COMBINED_VERTEX_UNIFORM_COMPONENTS,
++     "MAX_COMBINED_VERTEX_UNIFORM_COMPONENTS"},
++    {GL_MAX_COMBINED_FRAGMENT_UNIFORM_COMPONENTS,
++     "MAX_COMBINED_FRAGMENT_UNIFORM_COMPONENTS"},
++    {GL_MAX_UNIFORM_BUFFER_BINDINGS, "MAX_UNIFORM_BUFFER_BINDINGS"},
++    {GL_MAX_VERTEX_UNIFORM_BLOCKS, "MAX_VERTEX_UNIFORM_BLOCKS"},
++    {GL_MAX_FRAGMENT_UNIFORM_BLOCKS, "MAX_FRAGMENT_UNIFORM_BLOCKS"},
++    {GL_MAX_FRAGMENT_UNIFORM_COMPONENTS, "MAX_FRAGMENT_UNIFORM_COMPONENTS"},
++    {GL_MAX_VERTEX_OUTPUT_COMPONENTS, "MAX_VERTEX_OUTPUT_COMPONENTS"},
++    {GL_MAX_FRAGMENT_INPUT_COMPONENTS, "MAX_FRAGMENT_INPUT_COMPONENTS"},
++    {GL_MAX_VARYING_COMPONENTS, "MAX_VARYING_COMPONENTS"},
++    {GL_MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS,
++     "MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS"},
+ };
+ 
+ }  // namespace

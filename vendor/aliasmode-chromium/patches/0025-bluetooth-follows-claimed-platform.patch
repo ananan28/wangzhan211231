@@ -1,0 +1,67 @@
+Subject: [PATCH] bluetooth: WebBluetooth follows the claimed platform
+
+navigator.bluetooth is present when the profile claims macOS, Windows,
+Android or ChromeOS, and absent when it claims Linux, as in stock Chrome
+on each. With no profile, a Linux build hides it, matching stock Linux
+Chrome. The build-time change that makes WebBluetooth available on Linux
+stays, and this decides at startup whether a page sees it.
+
+diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
+index 2247f15f1a..783556a1ad 100644
+--- a/content/child/runtime_features.cc
++++ b/content/child/runtime_features.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "content/child/runtime_features.h"
+ 
++#include "base/apostate/profile.h"
++
+ #include <string>
+ #include <vector>
+ 
+@@ -402,6 +404,45 @@ void SetCustomizedRuntimeFeaturesFromCombinedArgs(
+   // CAUTION: Only add custom enabling logic here if it cannot
+   // be covered by the other functions.
+ 
++  // WebBluetooth follows the platform the profile claims, not the platform we
++  // built for.
++  //
++  // runtime_enabled_features.json5 marks it stable everywhere except the
++  // "default" bucket, which is what Linux takes, so the Bluetooth interface is
++  // absent on a Linux build and present on macOS, Windows, Android and
++  // ChromeOS. Our build flips Linux to stable so a profile claiming macOS or
++  // Windows is not missing an interface the claimed device has.
++  //
++  // That flip alone is wrong in the other direction: a profile claiming Linux
++  // would then expose an interface stock Linux Chrome does not, which a diff
++  // against stock Chrome on the same machine caught. So the compile-time flip
++  // makes the feature reachable and this decides it, from the claimed platform.
++  //
++  // With no profile loaded nothing is touched, and the build behaves as the
++  // json5 says.
++  // The effective platform is the one the profile claims, or the one we were
++  // built for when there is no profile. Deciding it for both cases keeps an
++  // unprofiled build byte-identical to stock Chrome, which is the invariant the
++  // stock-versus-ours capture diff checks: any difference there should be a
++  // patch we meant, never a leftover default.
++  {
++    std::string effective_platform;
++    if (const base::apostate::Profile* profile = base::apostate::Profile::Get()) {
++      if (const std::optional<std::string>& claimed = profile->ua_platform()) {
++        effective_platform = *claimed;
++      }
++    }
++    if (effective_platform.empty()) {
++#if BUILDFLAG(IS_LINUX)
++      effective_platform = "Linux";
++#endif
++    }
++    if (!effective_platform.empty()) {
++      blink::WebRuntimeFeatures::EnableFeatureFromString(
++          "WebBluetooth", effective_platform != "Linux");
++    }
++  }
++
+ #if BUILDFLAG(IS_ANDROID)
+   if (base::android::android_info::sdk_int() <
+       base::android::android_info::SDK_VERSION_P) {

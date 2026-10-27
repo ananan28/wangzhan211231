@@ -1,0 +1,75 @@
+Subject: [PATCH] display: available screen origin from the profile
+
+The profile sets where the available screen area starts as well as its
+size, so screen.availTop and screen.availLeft match the claimed machine.
+The origin cannot be worked out from the sizes, since the macOS menu bar
+and dock, or a Windows taskbar docked top or left, split the inset in
+different ways.
+
+diff --git a/base/apostate/profile.cc b/base/apostate/profile.cc
+index 17ceb16232..dc3aaa086d 100644
+--- a/base/apostate/profile.cc
++++ b/base/apostate/profile.cc
+@@ -147,6 +147,12 @@ Profile* Profile::ParseOrNull(const std::string& encoded) {
+     if (std::optional<int> v = screen->FindInt("height")) {
+       profile->screen_height_ = *v;
+     }
++    if (std::optional<int> v = screen->FindInt("avail_left")) {
++      profile->screen_avail_left_ = *v;
++    }
++    if (std::optional<int> v = screen->FindInt("avail_top")) {
++      profile->screen_avail_top_ = *v;
++    }
+     if (std::optional<int> v = screen->FindInt("avail_width")) {
+       profile->screen_avail_width_ = *v;
+     }
+diff --git a/base/apostate/profile.h b/base/apostate/profile.h
+index 0fad4c3c4b..2141d8ce60 100644
+--- a/base/apostate/profile.h
++++ b/base/apostate/profile.h
+@@ -126,6 +126,14 @@ class BASE_EXPORT Profile {
+   // rather than derived, but it must stay plausible for the claimed OS.
+   std::optional<int> screen_width() const { return screen_width_; }
+   std::optional<int> screen_height() const { return screen_height_; }
++  // Origin of the work area within the screen. On macOS availTop is the menu
++  // bar and availLeft is zero; on Windows a taskbar docked left or top moves
++  // the other. Carried explicitly because the origin cannot be derived from the
++  // sizes — a 114px total inset says nothing about how it splits between a
++  // menu bar above and a dock below.
++  std::optional<int> screen_avail_left() const { return screen_avail_left_; }
++  std::optional<int> screen_avail_top() const { return screen_avail_top_; }
++
+   std::optional<int> screen_avail_width() const { return screen_avail_width_; }
+   std::optional<int> screen_avail_height() const {
+     return screen_avail_height_;
+@@ -208,6 +216,8 @@ class BASE_EXPORT Profile {
+   std::optional<std::string> user_agent_;
+   std::optional<int> screen_width_;
+   std::optional<int> screen_height_;
++  std::optional<int> screen_avail_left_;
++  std::optional<int> screen_avail_top_;
+   std::optional<int> screen_avail_width_;
+   std::optional<int> screen_avail_height_;
+   std::optional<float> device_scale_factor_;
+diff --git a/ui/display/display_util.cc b/ui/display/display_util.cc
+index a2cc440543..2e2d9c48dd 100644
+--- a/ui/display/display_util.cc
++++ b/ui/display/display_util.cc
+@@ -73,9 +73,14 @@ void DisplayUtil::DisplayToScreenInfo(ScreenInfo* screen_info,
+     }
+     if (profile->screen_avail_width().has_value() &&
+         profile->screen_avail_height().has_value()) {
+-      available =
+-          gfx::Rect(available.x(), available.y(), *profile->screen_avail_width(),
+-                    *profile->screen_avail_height());
++      // The origin matters as much as the size: screen.availTop is the height
++      // of the menu bar on macOS and of a top-docked taskbar on Windows, and it
++      // cannot be derived from the sizes — a 114px total inset says nothing
++      // about how it divides between space above and below.
++      const int left = profile->screen_avail_left().value_or(available.x());
++      const int top = profile->screen_avail_top().value_or(available.y());
++      available = gfx::Rect(left, top, *profile->screen_avail_width(),
++                            *profile->screen_avail_height());
+       screen_info->available_rect = available;
+     }
+     if (profile->device_scale_factor().has_value()) {

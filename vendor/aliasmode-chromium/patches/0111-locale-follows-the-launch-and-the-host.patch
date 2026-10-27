@@ -1,0 +1,380 @@
+Subject: [PATCH] locale: timezone and languages come from the launch or host
+
+The timezone and Accept-Language list are not drawn by seed. They come
+from --fingerprint-timezone and --fingerprint-locale, which the Python
+and Node packages fill from a GeoIP lookup of the exit IP, and otherwise
+stay the host's own. A drawn zone guarantees a mismatch with the
+connection's country, and a drawn language list disagrees with Intl
+formatting a page can read in one call. The speech voice list follows
+the named locale, so a launch without one keeps the host's voices.
+
+diff --git a/base/apostate/compose.cc b/base/apostate/compose.cc
+index 68fb7d1dfc..d4cee9aa67 100644
+--- a/base/apostate/compose.cc
++++ b/base/apostate/compose.cc
+@@ -396,6 +396,40 @@ std::string OverrideNote(std::string_view field, const std::string& displaced) {
+   return note;
+ }
+ 
++// The note a named locale field carries.
++//
++// Deliberately not OverrideNote's: that one warns that a hand-picked value has
++// no prevalence data behind it and may be more distinctive than a drawn one,
++// which is true of a core count and false here twice over. There is no drawn
++// locale to be more distinctive than, and naming a zone that matches the
++// egress is the correct operation on this surface rather than a risk taken.
++// What the report does need to say is which of the two things that write this
++// switch wrote it, because a launcher's GeoIP answer and an operator's own
++// choice arrive identically and only one of them tracks the exit IP.
++std::string LocaleNote(std::string_view field) {
++  return "locale." + std::string(field) +
++         " was set from the command line: either named by the operator or "
++         "resolved by the launcher's prelaunch GeoIP lookup of the effective "
++         "egress. Neither the seed nor the catalogue reaches this surface";
++}
++
++// The note an inherited locale field carries.
++//
++// Says which switch would pin it, because the operator reading this report is
++// usually reading it to find out why a served value does not match an exit IP,
++// and "the host decided" plus "here is how to decide instead" is the whole
++// answer to that question.
++std::string LocaleInheritanceNote(std::string_view field,
++                                  std::string_view switch_name) {
++  return "no launch layer named locale." + std::string(field) +
++         ", so the host's own is served unchanged and nothing is composed for "
++         "it. On a direct egress that matches; behind a proxy it is the host's "
++         "and not the exit's. Pass " + std::string(switch_name) +
++         " to pin it, or launch through the Python or Node package, which "
++         "resolves it from GeoIP of the effective egress and passes that same "
++         "switch";
++}
++
+ // Applies the scalar overrides onto the composed profile.
+ //
+ // Called after the axis loop and before DeriveWorkArea, so that a screen
+@@ -1076,9 +1110,12 @@ std::optional<Composition> Compose(const ComposeRequest& request,
+     });
+   }
+ 
+-  // ---- the catalogue policies ----
+-  auto resolve_policy = [&](std::string_view kind,
+-                            span<const PolicyOption> policies) {
++  // ---- the theme policy ----
++  //
++  // `theme` is the only catalogue policy the seed draws. `locale` is resolved
++  // below from launch precedence and the host instead, for the reason stated
++  // there.
++  auto resolve_theme = [&](span<const PolicyOption> policies) {
+     std::vector<const PolicyOption*> candidates;
+     for (const PolicyOption& policy : policies) {
+       if (policy.AppliesTo(composition.platform)) {
+@@ -1086,53 +1123,104 @@ std::optional<Composition> Compose(const ComposeRequest& request,
+       }
+     }
+     if (candidates.empty()) {
+-      LOG(FATAL) << "apostate: no " << kind << " policy supports the persona '"
++      LOG(FATAL) << "apostate: no theme policy supports the persona '"
+                  << composition.platform
+                  << "'; the compiled catalogue is incomplete";
+     }
+     // Every policy weighs the same: the catalogue states no prevalence for
+     // them, and inventing one would be synthesis dressed as data.
+     const std::vector<uint32_t> weights(candidates.size(), 1u);
+-    const std::string label = "policy." + std::string(kind);
+-    const PolicyOption* chosen =
+-        candidates[WeightedPick(High64(Draw(composition.root, label, 0)),
+-                                weights)];
++    const PolicyOption* chosen = candidates[WeightedPick(
++        High64(Draw(composition.root, "policy.theme", 0)), weights)];
+ 
+     MergeFragment(composition.profile,
+-                  ParseFragment(kind, chosen->value_json),
++                  ParseFragment("theme", chosen->value_json),
+                   request.union_array_paths);
+     composition.surfaces.push_back({
+-        .surface = std::string(kind),
++        .surface = "theme",
+         .value = std::string(chosen->id),
+         .layer = std::string(kLayerDispersion),
+         .evidence = std::string(chosen->evidence),
+         .limitation = std::string(),
+     });
+-    resolved[std::string(kind)] = std::string(chosen->id);
+-
+-    // The locale overrides land here rather than over the finished profile,
+-    // because the voices table is keyed on the resolved Accept-Language list:
+-    // applying them later would leave a launch claiming en-GB while offering
+-    // the voice set measured for whatever the seed had drawn.
+-    if (kind != "locale") {
+-      return;
+-    }
+-    DictValue* locale = composition.profile.EnsureDict("locale");
+-    if (!request.overrides.accept_languages.empty()) {
+-      const std::string* displaced = locale->FindString("accept_languages");
+-      const std::string previous = displaced ? *displaced : std::string();
+-      locale->Set("accept_languages", request.overrides.accept_languages);
++    resolved["theme"] = std::string(chosen->id);
++  };
++
++  // ---- the locale surface: launch precedence, then the host ----
++  //
++  // Never drawn. FINGERPRINTS.md §6 conditions this surface on "launch
++  // precedence, GeoIP" and gives it no option table, and a seeded draw
++  // satisfies neither. It is worse than that: a drawn timezone does not merely
++  // fail to match the egress, it *guarantees* a mismatch, because the draw
++  // cannot see where the connection comes out. An IP that geolocates to one
++  // country beside an Intl.DateTimeFormat().resolvedOptions().timeZone naming
++  // another is a first-line correlation check at every fraud vendor, so the
++  // host's own zone is strictly better than a drawn one: on a direct egress it
++  // matches, and behind a proxy it is at worst wrong the way a real
++  // traveller's is.
++  //
++  // This withdraws the reasoning in 0081, which compiled the catalogue's four
++  // locale policies in beside the axes and drew one from the same root "so the
++  // compositor needs them compiled in exactly like the axes". The generator's
++  // own comment said in the same breath that locale is not a dispersion axis;
++  // the code did not follow. `--fingerprint-explain` then labelled the surface
++  // `dispersion`, which is how a seeded timezone shipped without anyone
++  // reading the label as wrong.
++  //
++  // Two sources remain here:
++  //
++  //   the command line, where an operator's --fingerprint-timezone or
++  //   --fingerprint-locale arrives, and also where the Python and Node
++  //   launchers put the answer from their prelaunch GeoIP lookup of the
++  //   effective egress -- the proxy exit when --proxy-server is set, the
++  //   direct IP otherwise. From this side the operator and GeoIP are one
++  //   layer, because they arrive as the same switch;
++  //
++  //   the host, expressed as *absence*. A field nobody named is not written,
++  //   so `locale` carries only what a launch layer supplied and may be absent
++  //   altogether. That is what leaves the host's real zone in ICU (patch 0011)
++  //   and the host's real list in the Accept-Language pref (patch 0013).
++  //
++  // Absence is the whole mechanism, and it is why the two fields cannot drift
++  // apart: neither is ever filled in from a source that cannot also answer for
++  // the other. A host zone beside a drawn language list would be this same
++  // defect in a smaller form.
++  //
++  // Applied before the voices axis resolves rather than merged over the
++  // finished profile, because the voices table is keyed on the resolved
++  // Accept-Language list: applying it later would leave a launch claiming
++  // en-GB while offering the voice set measured for another list. That is
++  // patch 0085's reason and it is unchanged.
++  auto resolve_locale = [&]() {
++    const FieldOverrides& named = request.overrides;
++    if (!named.accept_languages.empty()) {
++      composition.profile.EnsureDict("locale")->Set("accept_languages",
++                                                    named.accept_languages);
+       RecordOverride(composition, "locale.accept_languages",
+-                     request.overrides.accept_languages,
+-                     OverrideNote("locale.accept_languages", previous));
++                     named.accept_languages, LocaleNote("accept_languages"));
++    } else {
++      composition.surfaces.push_back({
++          .surface = "locale.accept_languages",
++          .value = "(inherited)",
++          .layer = std::string(kLayerHostInherited),
++          .evidence = "host-inherited",
++          .limitation = LocaleInheritanceNote("accept_languages",
++                                              "--fingerprint-locale"),
++      });
+     }
+-    if (!request.overrides.timezone.empty()) {
+-      const std::string* displaced = locale->FindString("timezone");
+-      const std::string previous = displaced ? *displaced : std::string();
+-      locale->Set("timezone", request.overrides.timezone);
+-      RecordOverride(composition, "locale.timezone",
+-                     request.overrides.timezone,
+-                     OverrideNote("locale.timezone", previous));
++    if (!named.timezone.empty()) {
++      composition.profile.EnsureDict("locale")->Set("timezone", named.timezone);
++      RecordOverride(composition, "locale.timezone", named.timezone,
++                     LocaleNote("timezone"));
++    } else {
++      composition.surfaces.push_back({
++          .surface = "locale.timezone",
++          .value = "(inherited)",
++          .layer = std::string(kLayerHostInherited),
++          .evidence = "host-inherited",
++          .limitation = LocaleInheritanceNote("timezone",
++                                              "--fingerprint-timezone"),
++      });
+     }
+   };
+ 
+@@ -1142,14 +1230,20 @@ std::optional<Composition> Compose(const ComposeRequest& request,
+ 
+   for (const DispersionAxis& axis : request.axes) {
+     // The voices table is keyed on the resolved accept-languages list, so the
+-    // locale policy has to be picked before it. It is picked as late as
++    // locale surface has to be settled before it. It is settled as late as
+     // possible otherwise, because the §5 order puts locale last.
+     if (axis.axis == "voices" && !locale_resolved) {
+-      resolve_policy("locale", request.locale_policies);
++      resolve_locale();
+       locale_resolved = true;
+     }
+     if (axis.axis == "voices") {
+-      std::string accept_languages(request.default_accept_languages);
++      // The composed list or nothing. There is no catalogue default to fall
++      // back to any more: with the locale surface inherited, the honest key is
++      // the empty one, whose option set carries no `speech` section and so
++      // leaves the host's real providers in effect. Substituting a default
++      // list here would claim the voice set measured for a language the launch
++      // never asked for, under a locale the host owns.
++      std::string accept_languages;
+       if (const DictValue* locale = composition.profile.FindDict("locale")) {
+         if (const std::string* declared =
+                 locale->FindString("accept_languages")) {
+@@ -1376,9 +1470,9 @@ std::optional<Composition> Compose(const ComposeRequest& request,
+   }
+ 
+   if (!locale_resolved) {
+-    resolve_policy("locale", request.locale_policies);
++    resolve_locale();
+   }
+-  resolve_policy("theme", request.theme_policies);
++  resolve_theme(request.theme_policies);
+ 
+   if (!ApplyScalarOverrides(composition, request, panel_resolved, rejection)) {
+     return std::nullopt;
+@@ -1612,14 +1706,12 @@ std::optional<std::string> ComposeProfileForCurrentProcess(
+   request.host = ProbeHostCapability(command_line);
+   request.axes = DispersionAxes();
+   request.anchors = Anchors();
+-  request.locale_policies = LocalePolicies();
+   request.theme_policies = ThemePolicies();
+   request.union_array_paths = UnionArrayPaths();
+   request.profile_schema_version = kProfileSchemaVersion;
+   request.catalogue_version = kCatalogueVersion;
+   request.chromium_version = kChromiumVersion;
+   request.catalogue_digest = kCatalogueDigest;
+-  request.default_accept_languages = kDefaultAcceptLanguages;
+   // Chrome's resolved directory when the caller knows it, the explicit switch
+   // otherwise. Only font provisioning reads it; nothing is written.
+   const FilePath state_root =
+diff --git a/base/apostate/compose.h b/base/apostate/compose.h
+index acf03d2b47..39f812d5da 100644
+--- a/base/apostate/compose.h
++++ b/base/apostate/compose.h
+@@ -264,7 +264,6 @@ struct BASE_EXPORT ComposeRequest {
+   // shipped catalogue happens to say today.
+   span<const DispersionAxis> axes;
+   span<const Anchor> anchors;
+-  span<const PolicyOption> locale_policies;
+   span<const PolicyOption> theme_policies;
+   span<const std::string_view> union_array_paths;
+ 
+@@ -275,9 +274,6 @@ struct BASE_EXPORT ComposeRequest {
+   // Reported, not hashed. See Composition::catalogue_digest.
+   std::string_view catalogue_digest;
+ 
+-  // Used when `accept_languages` is empty.
+-  std::string_view default_accept_languages;
+-
+   FieldOverrides overrides;
+ };
+ 
+diff --git a/base/apostate/compose_unittest.cc b/base/apostate/compose_unittest.cc
+index 58500f09d8..081f8dc6e0 100644
+--- a/base/apostate/compose_unittest.cc
++++ b/base/apostate/compose_unittest.cc
+@@ -246,10 +246,6 @@ constexpr DispersionAxis kGpuIdentityNoAdapterAxis = {
+     span<const DispersionOptionSet>(kIdentityNoAdapterSets),
+ };
+ 
+-constexpr PolicyOption kLocalePolicies[] = {
+-    {"en-us", "all", "catalogue-value",
+-     R"({"locale":{"accept_languages":"en-US,en","timezone":"America/New_York"}})"},
+-};
+ constexpr PolicyOption kThemePolicies[] = {
+     {"light", "all", "catalogue-value", R"({"theme":{"prefers_dark":false}})"},
+ };
+@@ -277,14 +273,12 @@ ComposeRequest RequestFor(std::string seed,
+   request.host = host;
+   request.axes = axes;
+   request.anchors = span<const Anchor>(kAnchors);
+-  request.locale_policies = span<const PolicyOption>(kLocalePolicies);
+   request.theme_policies = span<const PolicyOption>(kThemePolicies);
+   request.union_array_paths = span<const std::string_view>(kUnionPaths);
+   request.profile_schema_version = "3";
+   request.catalogue_version = "2";
+   request.chromium_version = "152.0.7977.83";
+   request.catalogue_digest = "test-digest";
+-  request.default_accept_languages = "en-US,en";
+   return request;
+ }
+ 
+@@ -510,8 +504,14 @@ TEST(ApostateComposeTest, AddingAnAxisDoesNotShiftAnotherAxisChoice) {
+   EXPECT_EQ(ChosenId(*before, "os_release"), ChosenId(*after, "os_release"));
+   EXPECT_EQ(ChosenId(*before, "cpu"), ChosenId(*after, "cpu"));
+   EXPECT_EQ(ChosenId(*before, "anchor"), ChosenId(*after, "anchor"));
+-  EXPECT_EQ(ChosenId(*before, "locale"), ChosenId(*after, "locale"));
+   EXPECT_EQ(ChosenId(*before, "theme"), ChosenId(*after, "theme"));
++  // The locale surface cannot shift because nothing draws it: with no launch
++  // layer naming a zone or a language list, both fields are the host's and the
++  // report says so. Asserted here rather than dropped, because this test's
++  // subject is "a new axis moves nothing", and "moves nothing because there is
++  // nothing to move" is the strongest form of that.
++  EXPECT_EQ("(inherited)", ChosenId(*after, "locale.timezone"));
++  EXPECT_EQ("(inherited)", ChosenId(*after, "locale.accept_languages"));
+   // And the new axis did resolve, so this is not passing by doing nothing.
+   EXPECT_NE("(absent)", ChosenId(*after, "extra"));
+   // Nor is the anchor comparison above two absences. It was exactly that
+@@ -848,27 +848,40 @@ TEST(ApostateComposeTest, OptionSetMatchingIsExactAndTotal) {
+ TEST(ApostateComposeTest, AnUnmeasuredLanguageListProjectsOntoTheEmptyKey) {
+   constexpr DispersionAxis kAxes[] = {kVoicesAxis};
+ 
+-  // The locale policy sets en-US,en, which the table has measured.
+-  const std::optional<Composition> measured =
+-      Compose(RequestFor("lang-seed", kAxes, CapableHost()));
++  // --fingerprint-locale names en-US,en, which the table has measured. That
++  // switch is the only way a language list enters composition now that the
++  // locale surface is not drawn, which is also why it has to re-key this axis
++  // rather than land on the finished profile.
++  ComposeRequest measured_request =
++      RequestFor("lang-seed", kAxes, CapableHost());
++  measured_request.overrides.accept_languages = "en-US,en";
++  const std::optional<Composition> measured = Compose(measured_request);
+   ASSERT_TRUE(measured.has_value());
+   EXPECT_EQ("en-us", ChosenId(*measured, "voices"));
+   EXPECT_TRUE(measured->profile.contains("speech"));
+ 
+-  // A locale policy naming a list nobody measured projects onto "", whose
+-  // value carries no speech section, so the host's real providers stay in
+-  // effect. A listed voice that cannot speak is the alternative.
+-  constexpr PolicyOption kSwahili[] = {
+-      {"sw-ke", "all", "catalogue-value",
+-       R"({"locale":{"accept_languages":"sw-KE,sw","timezone":"Africa/Nairobi"}})"},
+-  };
+-  ComposeRequest request = RequestFor("lang-seed", kAxes, CapableHost());
+-  request.locale_policies = span<const PolicyOption>(kSwahili);
+-
+-  const std::optional<Composition> unmeasured = Compose(request);
++  // A list nobody measured projects onto "", whose value carries no speech
++  // section, so the host's real providers stay in effect. A listed voice that
++  // cannot speak is the alternative.
++  ComposeRequest unmeasured_request =
++      RequestFor("lang-seed", kAxes, CapableHost());
++  unmeasured_request.overrides.accept_languages = "sw-KE,sw";
++  const std::optional<Composition> unmeasured = Compose(unmeasured_request);
+   ASSERT_TRUE(unmeasured.has_value());
+   EXPECT_EQ("unmeasured", ChosenId(*unmeasured, "voices"));
+   EXPECT_FALSE(unmeasured->profile.contains("speech"));
++
++  // And the shape a bare launch actually has: no locale named at all. The key
++  // is the empty one here too, because the alternative -- substituting a
++  // catalogue default -- would claim a measured voice set for a language the
++  // launch never asked for, under a locale the host owns. This is the case
++  // that used to be unreachable, because a policy was always drawn.
++  const std::optional<Composition> inherited =
++      Compose(RequestFor("lang-seed", kAxes, CapableHost()));
++  ASSERT_TRUE(inherited.has_value());
++  EXPECT_EQ("unmeasured", ChosenId(*inherited, "voices"));
++  EXPECT_FALSE(inherited->profile.contains("speech"));
++  EXPECT_FALSE(inherited->profile.contains("locale"));
+ }
+ 
+ // ---------------------------------------------------------------------------

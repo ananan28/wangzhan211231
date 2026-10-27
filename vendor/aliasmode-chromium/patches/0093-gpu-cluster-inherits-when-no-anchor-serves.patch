@@ -1,0 +1,196 @@
+Subject: [PATCH] compose: keep the profile when no GPU cluster fits the host
+
+When no GPU cluster matches the host's graphics backend, the GPU values
+come from the host and every other part of the profile is still
+composed: timezone, locale, fonts, screen, cores, memory, media devices
+and voices. The explain report records the gap. A GPU cluster pinned
+with --fingerprint-anchor on a different backend is honored, and the
+report notes that its extension list shrinks to what the host supports.
+
+diff --git a/base/apostate/compose.cc b/base/apostate/compose.cc
+index 428b4f7c5b..42768d77e4 100644
+--- a/base/apostate/compose.cc
++++ b/base/apostate/compose.cc
+@@ -500,28 +500,59 @@ std::optional<Composition> Compose(const ComposeRequest& request) {
+     }
+ 
+     if (servable.empty()) {
+-      // Presenting another backend's cluster is the retired catalogue's
+-      // failure, so there is nothing to fall back to.
+-      LOG(ERROR) << "apostate: no compiled anchor was captured through this "
+-                    "host's graphics backend ("
+-                 << request.host.graphics_backend
+-                 << "); a coherent capability cluster cannot be composed";
+-      return std::nullopt;
+-    }
+-
+-    std::vector<uint32_t> weights;
+-    weights.reserve(servable.size());
+-    for (const Anchor* candidate : servable) {
+-      weights.push_back(candidate->weight);
++      // No measured cluster fits this host. On a software rasteriser that is
++      // the normal case and always will be: a capability cluster is a property
++      // of a real driver, so nothing in the corpus was captured through
++      // SwiftShader and nothing ever can be. Patch 0091 made that condition
++      // detectable instead of guessed, which is what brings launches here.
++      //
++      // The GPU surfaces are therefore left inherited, which is what every
++      // other axis with no servable option already does a few dozen lines
++      // below. Returning nullopt here instead discarded the entire profile --
++      // timezone, locale, accept-languages, fonts, screen geometry, core
++      // count, memory, media device topology, voices -- because one surface
++      // out of a dozen could not be served. A page reads all of them and only
++      // some of them are GPU, so that trade was the wrong way round, and a
++      // GPU-less Linux container is precisely the host this is built for.
++      //
++      // Inheriting is coherent and not merely safe. Real Chrome reports
++      // SwiftShader whenever it runs in a VM, a container or an RDP session
++      // over a perfectly real Windows or macOS install, so a persona above a
++      // software rasteriser is a configuration that exists in the world by
++      // the million. The alternative -- a discrete-GPU renderer string above
++      // SwiftShader's own limits and extension list -- is a combination that
++      // exists nowhere, and it is the one a WebGL hash catches first.
++      composition.limitations.push_back(
++          "anchor: no compiled anchor was captured through this host's "
++          "graphics backend (" +
++          request.host.graphics_backend +
++          "), so the GPU capability cluster is the host's own and every other "
++          "surface is composed as usual");
++      composition.surfaces.push_back({
++          .surface = "anchor",
++          .value = "(inherited)",
++          .layer = std::string(kLayerHostInherited),
++          .evidence = "host-inherited",
++          .limitation = "no compiled anchor was captured through this host's "
++                        "graphics backend",
++      });
++    } else {
++      std::vector<uint32_t> weights;
++      weights.reserve(servable.size());
++      for (const Anchor* candidate : servable) {
++        weights.push_back(candidate->weight);
++      }
++      anchor = servable[WeightedPick(
++          High64(Draw(composition.root, "anchor", 0)), weights)];
+     }
+-    anchor = servable[WeightedPick(High64(Draw(composition.root, "anchor", 0)),
+-                                   weights)];
+   }
+ 
+-  resolved["anchor"] = std::string(anchor->id);
++  if (anchor) {
++    resolved["anchor"] = std::string(anchor->id);
++  }
+ 
+   std::string anchor_limitation;
+-  if (anchor->platform != composition.platform) {
++  if (anchor && anchor->platform != composition.platform) {
+     // The §4 case, stated rather than hidden: on a macOS host a Windows
+     // persona keeps an Apple GPU cluster. A coherent Windows fingerprint wants
+     // a Windows or Linux host with the corresponding silicon, which is a
+@@ -536,7 +567,28 @@ std::optional<Composition> Compose(const ComposeRequest& request) {
+                         "hidden";
+     composition.limitations.push_back(anchor_limitation);
+   }
+-  if (anchor->members.size() == 1) {
++  if (anchor && !request.host.graphics_backend.empty() &&
++      anchor->backend != request.host.graphics_backend) {
++    // Only --fingerprint-anchor reaches this: the drawn path filters on the
++    // backend and the pinned path deliberately does not, because a pin is an
++    // explicit request and refusing to honour it would be worse than
++    // honouring it.
++    //
++    // It still has to be said out loud, because the backend is what decides
++    // which extensions exist and an extension the host lacks cannot be added.
++    // A page calls getExtension() and then calls methods on the object it gets
++    // back, so one claimed but unimplemented fails at first use; only removal
++    // is safe. A pinned cross-backend anchor therefore advertises a shorter
++    // list than the card it names, and detectors hash that list.
++    composition.limitations.push_back(
++        "anchor " + std::string(anchor->id) +
++        " was pinned across backends: it is a " +
++        std::string(anchor->backend) + " cluster on a " +
++        request.host.graphics_backend +
++        " host, so its extension list is served only as far as this host's GL "
++        "stack reaches and any name the host lacks is quietly absent");
++  }
++  if (anchor && anchor->members.size() == 1) {
+     composition.limitations.push_back(
+         "anchor " + std::string(anchor->id) +
+         " has one measured member, so no identity rotation is offered on its "
+@@ -551,16 +603,18 @@ std::optional<Composition> Compose(const ComposeRequest& request) {
+         "pass --use-angle to state it");
+   }
+ 
+-  MergeFragment(composition.profile,
+-                ParseFragment("anchor", anchor->value_json),
+-                request.union_array_paths);
+-  composition.surfaces.push_back({
+-      .surface = "anchor",
+-      .value = std::string(anchor->id),
+-      .layer = std::string(kLayerAnchor),
+-      .evidence = std::string(anchor->evidence),
+-      .limitation = anchor_limitation,
+-  });
++  if (anchor) {
++    MergeFragment(composition.profile,
++                  ParseFragment("anchor", anchor->value_json),
++                  request.union_array_paths);
++    composition.surfaces.push_back({
++        .surface = "anchor",
++        .value = std::string(anchor->id),
++        .layer = std::string(kLayerAnchor),
++        .evidence = std::string(anchor->evidence),
++        .limitation = anchor_limitation,
++    });
++  }
+ 
+   // ---- the catalogue policies ----
+   auto resolve_policy = [&](std::string_view kind,
+@@ -620,6 +674,46 @@ std::optional<Composition> Compose(const ComposeRequest& request) {
+       resolved["languages"] = ProjectLanguages(axis, accept_languages);
+     }
+ 
++    // An axis that hangs off the anchor has nothing to hang off when the GPU
++    // cluster is the host's own. Its surface is inherited too, for the reason
++    // the empty-option-set branch below already gives: the host's own value is
++    // servable by definition.
++    //
++    // Checked here rather than left to the lookup below, because that lookup
++    // treats a missing parent as a catalogue defect and aborts. It is a defect
++    // when the resolution order is wrong. It is not one when the parent was
++    // legitimately never resolved.
++    //
++    // gpu_identity is the only axis this catches, and it is caught by either
++    // test on its own: it is the only anchor-member axis and the only axis
++    // conditioned on "anchor". Every other axis keys on platform, os_release
++    // or languages, none of which comes from the anchor, so the surviving set
++    // and the skipped set are disjoint and together are all of them. Both
++    // tests are kept so that a future anchor-conditioned axis is caught
++    // whichever way the catalogue spells its dependency.
++    if (!anchor) {
++      bool needs_anchor = axis.servability == Servability::kAnchorMember;
++      for (const std::string_view name : axis.conditioned_on) {
++        needs_anchor = needs_anchor || name == "anchor";
++      }
++      if (needs_anchor) {
++        const std::string limitation =
++            "the GPU capability cluster is the host's own on this host, so "
++            "this axis has no anchor to be conditioned on and its surface is "
++            "inherited as well";
++        composition.surfaces.push_back({
++            .surface = std::string(axis.axis),
++            .value = "(inherited)",
++            .layer = std::string(kLayerHostInherited),
++            .evidence = "host-inherited",
++            .limitation = limitation,
++        });
++        composition.limitations.push_back(std::string(axis.axis) + ": " +
++                                          limitation);
++        continue;
++      }
++    }
++
+     std::vector<ConditionKey> key;
+     key.reserve(axis.conditioned_on.size());
+     for (const std::string_view name : axis.conditioned_on) {

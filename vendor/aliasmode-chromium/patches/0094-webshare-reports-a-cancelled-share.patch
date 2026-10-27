@@ -1,0 +1,73 @@
+Subject: [PATCH] webshare: a failed share reads as a user cancel
+
+When the profile claims Windows or macOS on a build with no share
+backend, navigator.share() rejects with the AbortError message of a
+share the user dismissed. The upstream message names the Web Share
+interface, which no Windows or macOS Chrome can produce. The text comes
+from the same function as a real cancel, so the two always match. With
+no profile, or another claimed platform, the upstream text stays.
+
+diff --git a/third_party/blink/renderer/modules/webshare/navigator_share.cc b/third_party/blink/renderer/modules/webshare/navigator_share.cc
+index 85331539e5..a61bc83d21 100644
+--- a/third_party/blink/renderer/modules/webshare/navigator_share.cc
++++ b/third_party/blink/renderer/modules/webshare/navigator_share.cc
+@@ -6,8 +6,11 @@
+ 
+ #include <stdint.h>
+ 
++#include <optional>
++#include <string>
+ #include <utility>
+ 
++#include "base/apostate/profile.h"
+ #include "base/files/safe_base_name.h"
+ #include "build/build_config.h"
+ #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
+@@ -173,9 +176,46 @@ void NavigatorShare::ShareClientImpl::Callback(mojom::blink::ShareError error) {
+ }
+ 
+ void NavigatorShare::ShareClientImpl::OnConnectionError() {
++  // Apostate: a device claiming Windows or macOS reports the share the way
++  // that device is able to -- as the one the user dismissed.
++  //
++  // Patch 0065 enables the WebShare runtime feature whenever the profile
++  // claims a platform whose Chrome ships it, so navigator.share exists on a
++  // Linux build under a Windows or macOS persona. share() then asks the
++  // browser for blink::mojom::ShareService, which chrome/browser/webshare/
++  // BUILD.gn builds only for is_win || is_chromeos || is_mac. On Linux there
++  // is no binder for it, the pipe closes, and this runs. So this function is
++  // reached by exactly the launches 0065 created, and the condition below is
++  // deliberately the same test 0065 makes.
++  //
++  // The DOMException name upstream already produces here is the right one:
++  // ShareError::CANCELED maps to kAbortError as well, so a cancelled share on
++  // a real Mac and this are indistinguishable by name. Only the message
++  // differed -- and the message names the Web Share *interface*, a string no
++  // Windows or macOS Chrome can emit, which one .catch(e => e.message) reads.
++  // That string was the entire tell.
++  //
++  // Reporting a cancel is honest in both directions at once. Nothing was
++  // shared, which is what the page is being told, and the cancel branch is the
++  // one every site with a share button already handles, because users dismiss
++  // share sheets constantly. Resolving would have been the lie: the page would
++  // show a success it never got.
++  //
++  // The string comes from ErrorToString rather than a copy of it, so this and
++  // a genuine CANCELED cannot drift apart in a later revision.
++  bool claims_share_platform = false;
++  if (const ::base::apostate::Profile* profile =
++          ::base::apostate::Profile::Get()) {
++    if (const std::optional<std::string>& claimed = profile->ua_platform()) {
++      claims_share_platform = (*claimed == "Windows" || *claimed == "macOS");
++    }
++  }
+   resolver_->Reject(MakeGarbageCollected<DOMException>(
+       DOMExceptionCode::kAbortError,
+-      "Internal error: could not connect to Web Share interface."));
++      claims_share_platform
++          ? ErrorToString(mojom::blink::ShareError::CANCELED)
++          : String("Internal error: could not connect to Web Share "
++                   "interface.")));
+ }
+ 
+ NavigatorShare& NavigatorShare::From(Navigator& navigator) {

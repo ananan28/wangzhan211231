@@ -1,0 +1,45 @@
+Subject: [PATCH] webshare: navigator.share follows the claimed platform
+
+navigator.share and navigator.canShare exist when the profile claims
+Windows or macOS, the platforms whose Chrome ships Web Share. A Linux
+build otherwise lacks an interface the claimed device has. With no
+profile, the build keeps the upstream default. On Linux no share service
+backs the call, so share() rejects, and patch 0094 makes that rejection
+read as a cancelled share.
+
+diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
+index 783556a1ad..5909848bf3 100644
+--- a/content/child/runtime_features.cc
++++ b/content/child/runtime_features.cc
+@@ -443,6 +443,31 @@ void SetCustomizedRuntimeFeaturesFromCombinedArgs(
+     }
+   }
+ 
++  // Web Share follows the platform the profile claims, not the platform we
++  // built for. Same shape as the WebBluetooth block above (patch 0025).
++  //
++  // navigator.share/canShare are compiled in everywhere, but chrome/ enables
++  // the WebShare runtime feature only on Android, ChromeOS, Windows and macOS
++  // (chrome/renderer/chrome_content_renderer_client.cc: "to avoid it being
++  // made available in WebView or Linux"). A profile claiming Windows or macOS
++  // would otherwise be missing an interface the claimed device has.
++  //
++  // No json5 flip is needed: WebShare ships as status "test", reachable via
++  // EnableFeatureFromString, and this decides it from the claimed platform.
++  // With no profile loaded nothing is touched.
++  {
++    bool share = false;
++    if (const base::apostate::Profile* profile =
++            base::apostate::Profile::Get()) {
++      if (const std::optional<std::string>& claimed = profile->ua_platform()) {
++        share = (*claimed == "Windows" || *claimed == "macOS");
++      }
++    }
++    if (share) {
++      blink::WebRuntimeFeatures::EnableFeatureFromString("WebShare", true);
++    }
++  }
++
+ #if BUILDFLAG(IS_ANDROID)
+   if (base::android::android_info::sdk_int() <
+       base::android::android_info::SDK_VERSION_P) {

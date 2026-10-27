@@ -1,0 +1,68 @@
+{
+  "policy_version": 1,
+  "manifest_contract": {
+    "required_fields": [
+      "package_version",
+      "chromium_version",
+      "catalogue_version",
+      "platform",
+      "artifact",
+      "sha256",
+      "source_revision",
+      "patch_series_sha256",
+      "build_manifest_sha256"
+    ],
+    "additional_fields": false,
+    "package_version": "0.5.1",
+    "chromium_version": "155.0.8059.85",
+    "catalogue_version_rule": "Derived, never pinned here. A manifest's catalogue_version must equal the catalogue_version of resources/profiles/catalogue.json at manifest.source_revision. The profile catalogue is versioned independently of this release contract, so a constant in this field would forbid every future catalogue. The publish job reads the catalogue from the tagged revision it is checked out at and requires the manifest to agree.",
+    "platforms_rule": "The platforms this contract recognises, not the set every release must carry. A release publishes exactly the targets it built, resolved by scripts/resolve-build-targets.sh from the APOSTATE_BUILD_TARGETS repository variable, and each of those must appear here. Requiring the full set instead means a repository without a runner for every platform can never publish anything. Every artifact's SHA-256 is verified against its manifest regardless, and every artifact carries a build-provenance attestation, so a subset release is smaller, not weaker.",
+    "platforms": [
+      "linux-x64",
+      "linux-arm64",
+      "macos-arm64",
+      "windows-x64"
+    ],
+    "canonical_json": {
+      "encoding": "UTF-8",
+      "serialization": "json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(\",\", \":\")) + newline",
+      "trailing_newline": true
+    }
+  },
+  "artifacts": {
+    "filenames": [
+      "apostate-155.0.8059.85-linux-x64.tar.zst",
+      "apostate-155.0.8059.85-linux-arm64.tar.zst",
+      "apostate-155.0.8059.85-macos-arm64.zip",
+      "apostate-155.0.8059.85-windows-x64.zip"
+    ],
+    "hash": {
+      "algorithm": "SHA-256",
+      "field": "sha256",
+      "input": "the exact complete archive bytes",
+      "must_match_before_extraction": true
+    }
+  },
+  "integrity_verification": {
+    "artifact_hash": "SHA-256 of the exact complete archive bytes, in manifest.sha256",
+    "verify_hash_before_extraction": true,
+    "reject_hash_mismatch": true,
+    "provenance": "GitHub artifact attestations, created by actions/attest-build-provenance in the build workflow and verified out of band with: gh attestation verify <artifact> --repo <owner>/<repo>",
+    "provenance_rule": "Keyless. The signing key is minted per workflow run by Sigstore and discarded, so there is no long-lived key to hold, rotate, or lose, and the attestation binds the artifact to the repository, commit and workflow that produced it -- which a detached signature made with a repository secret never did, because anyone who can push a workflow can use that secret.",
+    "integrity_is_not_authenticity": true
+  },
+  "verification_order": [
+    "read the manifest before opening or extracting the archive",
+    "require exactly the manifest_contract.required_fields and validate artifact binding",
+    "hash the complete archive bytes and require an exact match with manifest.sha256",
+    "extract only after the hash check succeeds",
+    "for provenance, run gh attestation verify against the repository"
+  ],
+  "extraction_policy": {
+    "reject_absolute_paths": true,
+    "reject_parent_traversal": true,
+    "symbolic_links": "contained",
+    "symbolic_links_rule": "Containment, not prohibition. A relative link target that resolves inside the extraction root is accepted; an absolute target, or one that climbs out of the root, is refused. Outright prohibition was unsatisfiable and shipping macOS at the same time: the macos-arm64 artifact contains five symlinks, all inside Chromium Framework.framework -- Versions/Current pointing at the Chromium version directory, and Chromium Framework, Resources, Libraries and Helpers pointing through Versions/Current -- and that is simply how a macOS framework bundle is laid out. A bundle without them does not launch. Containment preserves the property the prohibition was protecting, which is that extracting an archive can never write outside the directory you pointed it at.",
+    "require_manifest_binding": true
+  }
+}

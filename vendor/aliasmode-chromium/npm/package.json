@@ -1,0 +1,67 @@
+{
+  "name": "@heretic-tech/apostate",
+  "version": "0.5.1",
+  "description": "Native Apostate Chromium launcher for Node.js",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "apostate": "./scripts/cli.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "README.md",
+    "assets",
+    "dist",
+    "package.json",
+    "scripts",
+    "src",
+    "tsconfig.json"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/heretic-tech/apostate.git"
+  },
+  "dependencies": {
+    "http-proxy-agent": "7.0.1",
+    "https-proxy-agent": "7.0.6",
+    "patchright": "^1.63.0",
+    "socks-proxy-agent": "^8.0.5"
+  },
+  "peerDependencies": {
+    "playwright": ">=1.53",
+    "playwright-core": ">=1.53",
+    "puppeteer": "*",
+    "puppeteer-core": "*"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    },
+    "playwright-core": {
+      "optional": true
+    },
+    "puppeteer": {
+      "optional": true
+    },
+    "puppeteer-core": {
+      "optional": true
+    }
+  }
+}

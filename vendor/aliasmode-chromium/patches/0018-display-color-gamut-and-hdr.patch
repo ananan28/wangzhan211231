@@ -1,0 +1,146 @@
+Subject: [PATCH] display: color gamut and HDR from the profile
+
+The profile sets the display's color gamut and whether it supports HDR,
+and the screen's color spaces are derived from the pair. A page testing
+the color-gamut and dynamic-range media features sees the claimed
+display, for example p3 and high on a recent Mac. An HDR claim uses the
+extended sRGB space macOS reports for HDR displays, and an SDR claim
+pins the HDR headroom to 1.0 so the host monitor never shows through.
+
+diff --git a/base/apostate/profile.cc b/base/apostate/profile.cc
+index dc3aaa086d..7dc9803d94 100644
+--- a/base/apostate/profile.cc
++++ b/base/apostate/profile.cc
+@@ -171,6 +171,17 @@ Profile* Profile::ParseOrNull(const std::string& encoded) {
+         LOG(ERROR) << "apostate: screen.color_depth must be 24 or 30; ignoring";
+       }
+     }
++    if (const std::string* v = screen->FindString("color_gamut")) {
++      if (*v == "srgb" || *v == "p3" || *v == "rec2020") {
++        profile->screen_color_gamut_ = *v;
++      } else {
++        LOG(ERROR) << "apostate: screen.color_gamut must be srgb, p3 or "
++                      "rec2020; ignoring";
++      }
++    }
++    if (std::optional<bool> v = screen->FindBool("hdr")) {
++      profile->screen_hdr_ = *v;
++    }
+   }
+ 
+   if (const DictValue* locale = dict->FindDict("locale")) {
+diff --git a/base/apostate/profile.h b/base/apostate/profile.h
+index 2141d8ce60..38a189d1bd 100644
+--- a/base/apostate/profile.h
++++ b/base/apostate/profile.h
+@@ -142,9 +142,24 @@ class BASE_EXPORT Profile {
+     return device_scale_factor_;
+   }
+   // 24 or 30 only. Chromium uses this as an HDR flag rather than a true bit
+-  // depth, and the same fact drives CSS color, dynamic-range and color-gamut.
++  // depth. It drives screen.colorDepth and screen.pixelDepth and nothing else:
++  // an earlier comment here claimed it also drove the dynamic-range and
++  // color-gamut media features, and conformance disproved that — colorDepth
++  // matched the reference Mac while both media features did not. Those two
++  // come from display_color_spaces, below.
+   std::optional<int> screen_color_depth() const { return screen_color_depth_; }
+ 
++  // The display gamut, one of "srgb", "p3" or "rec2020", and whether the
++  // display has HDR headroom. Together these produce ScreenInfo's
++  // display_color_spaces, which is the single source of truth for both the
++  // color-gamut and dynamic-range media features — MediaValues::
++  // CalculateColorGamut and CalculateDeviceSupportsHDR each read it and
++  // nothing else.
++  std::optional<std::string> screen_color_gamut() const {
++    return screen_color_gamut_;
++  }
++  std::optional<bool> screen_hdr() const { return screen_hdr_; }
++
+   // IANA timezone name, e.g. "Europe/Warsaw".
+   //
+   // Only the zone *name* is a host fact. ICU's data is compiled into the binary
+@@ -222,6 +237,8 @@ class BASE_EXPORT Profile {
+   std::optional<int> screen_avail_height_;
+   std::optional<float> device_scale_factor_;
+   std::optional<int> screen_color_depth_;
++  std::optional<std::string> screen_color_gamut_;
++  std::optional<bool> screen_hdr_;
+   std::optional<std::string> timezone_;
+   std::optional<bool> prefers_dark_;
+   std::optional<std::string> accept_languages_;
+diff --git a/ui/display/display_util.cc b/ui/display/display_util.cc
+index 2e2d9c48dd..7afaf10aad 100644
+--- a/ui/display/display_util.cc
++++ b/ui/display/display_util.cc
+@@ -5,6 +5,8 @@
+ #include "ui/display/display_util.h"
+ 
+ #include "base/apostate/profile.h"
++#include "ui/gfx/color_space.h"
++#include "ui/gfx/display_color_spaces.h"
+ 
+ #include "base/notreached.h"
+ #include "build/build_config.h"
+@@ -90,6 +92,62 @@ void DisplayUtil::DisplayToScreenInfo(ScreenInfo* screen_info,
+       screen_info->depth = *profile->screen_color_depth();
+       screen_info->depth_per_component = *profile->screen_color_depth() / 3;
+     }
++
++    // The color-gamut and dynamic-range media features both read
++    // display_color_spaces and nothing else, so setting it here fixes both at
++    // their single emitter rather than at two accessors. GetScreenInfoColorSpace
++    // is defined as GetOutputColorSpace(kHDR, needs_alpha=false), so that is the
++    // usage that has to carry the gamut.
++    //
++    // The HDR case is not a separate value bolted on: an HDR color space
++    // already implies a wide gamut, and GetColorSpaceGamut short-circuits to P3
++    // for any space where IsHDR() is true. CreateExtendedSRGB10Bit is the space
++    // macOS itself reports for an HDR display — P3 primaries, sRGB EOTF
++    // extended past 1.0 — so an Apple profile gets the space Apple hardware
++    // actually produces rather than a synthetic one.
++    if (profile->screen_color_gamut().has_value() ||
++        profile->screen_hdr().has_value()) {
++      const std::string gamut = profile->screen_color_gamut().value_or("srgb");
++      const bool hdr = profile->screen_hdr().value_or(false);
++
++      gfx::ColorSpace space;
++      if (hdr && gamut == "rec2020") {
++        space = gfx::ColorSpace::CreateHDR10();
++      } else if (hdr) {
++        space = gfx::ColorSpace::CreateExtendedSRGB10Bit();
++      } else if (gamut == "rec2020") {
++        space = gfx::ColorSpace(gfx::ColorSpace::PrimaryID::BT2020,
++                                gfx::ColorSpace::TransferID::SRGB,
++                                gfx::ColorSpace::MatrixID::RGB,
++                                gfx::ColorSpace::RangeID::FULL);
++      } else if (gamut == "p3") {
++        space = gfx::ColorSpace(gfx::ColorSpace::PrimaryID::P3,
++                                gfx::ColorSpace::TransferID::SRGB,
++                                gfx::ColorSpace::MatrixID::RGB,
++                                gfx::ColorSpace::RangeID::FULL);
++      } else {
++        space = gfx::ColorSpace::CreateSRGB();
++      }
++
++      gfx::DisplayColorSpaces& spaces = screen_info->display_color_spaces;
++      for (bool needs_alpha : {false, true}) {
++        for (auto usage : {gfx::ContentColorUsage::kWideColorGamut,
++                           gfx::ContentColorUsage::kHDR}) {
++          spaces.SetOutputColorSpaceAndFormat(
++              usage, needs_alpha, space,
++              spaces.GetOutputFormat(usage, needs_alpha));
++        }
++      }
++      // kSRGB is deliberately left alone. On a real wide-gamut display sRGB
++      // content still goes to an sRGB output space; overwriting it would
++      // describe a display that composites everything as P3, which no host
++      // reports.
++
++      // SupportsHDR() is true if the HDR output space is HDR *or* if the
++      // headroom exceeds 1. Setting the headroom explicitly keeps the SDR case
++      // from inheriting whatever the build host's display advertised.
++      spaces.SetHDRMaxLuminanceRelative(hdr ? 4.99f : 1.0f);
++    }
+   }
+ 
+   // TODO(crbug.com/1194700 and crbug.com/1182855): Use cross-process screen

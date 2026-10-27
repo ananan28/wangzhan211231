@@ -1,0 +1,58 @@
+Subject: [PATCH] extensions: chrome.runtime on web pages from the profile
+
+When the profile sets extensions.externally_connectable, http and https
+pages get chrome.runtime and window.browser, as on a real Chrome with a
+wallet-style extension installed. file: and about:blank pages get
+neither, matching that extension's manifest. When the profile says false
+or nothing, the real installed extensions decide, so a real extension's
+objects are never withdrawn. The browser process checks each message
+against real manifests, so a page learns nothing about what is
+installed.
+
+diff --git a/extensions/renderer/native_extension_bindings_system.cc b/extensions/renderer/native_extension_bindings_system.cc
+index 651e7d7175..cd62c77761 100644
+--- a/extensions/renderer/native_extension_bindings_system.cc
++++ b/extensions/renderer/native_extension_bindings_system.cc
+@@ -9,6 +9,7 @@
+ #include <string_view>
+ #include <utility>
+ 
++#include "base/apostate/profile.h"
+ #include "base/command_line.h"
+ #include "base/compiler_specific.h"
+ #include "base/feature_list.h"
+@@ -383,6 +384,34 @@ std::string GetContextOwner(v8::Local<v8::Context> context) {
+ // depends on the installed extensions and the active URL (in the case of
+ // extensions communicating with external websites).
+ bool CanWebpageContextConnectExternally(ScriptContext* context) {
++  // Apostate: a composed identity may answer this question before the host's
++  // extension set does. One boolean is enough because the question is asked
++  // of the whole set at once -- the loop below returns on the first match and
++  // never reports which extension matched -- so a profile that says "some
++  // installed extension names this page in externally_connectable" is
++  // indistinguishable from the set that would have said it.
++  //
++  // The scheme test is the manifest. `externally_connectable.matches` of
++  // ["http://*/*", "https://*/*"] is MetaMask's shape and the one measured
++  // against stock Chrome: every http and https page gets `chrome.runtime` and
++  // `window.browser`, `file://` and `about:blank` get neither. An
++  // unconditional true would instead reproduce an `<all_urls>` manifest,
++  // which is a rarer install and a louder claim.
++  //
++  // Additive, and that is deliberate. nullopt is --fingerprint=host and falls
++  // through. An explicit false also falls through rather than suppressing a
++  // real extension's match: an operator who installed a wallet into this
++  // user-data-dir is already showing the page its content script and its
++  // injected objects, so withdrawing only the runtime accessor would compose
++  // a state no install produces, and the browser process honours the
++  // manifest either way (message_service.cc re-checks
++  // externally_connectable against the source frame's URL and is untouched).
++  const base::apostate::Profile* profile = base::apostate::Profile::Get();
++  if (profile && profile->extensions_externally_connectable().value_or(false) &&
++      context->url().SchemeIsHTTPOrHTTPS()) {
++    return true;
++  }
++
+   // TODO(devlin): This doesn't seem thread-safe with ServiceWorkers?
+   for (const auto& extension :
+        *RendererExtensionRegistry::Get()->GetMainThreadExtensionSet()) {

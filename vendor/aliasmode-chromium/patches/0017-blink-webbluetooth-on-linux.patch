@@ -1,0 +1,43 @@
+Subject: [PATCH] bluetooth: expose WebBluetooth on Linux builds
+
+Stock Chromium ships navigator.bluetooth on macOS, Windows, ChromeOS,
+iOS and Android and leaves it experimental on Linux. A Linux build
+claiming macOS would then be missing an API every real Mac Chrome has.
+WebBluetooth is stable on Linux too, backed by the real BlueZ code, and
+getAvailability() returns false on a host with no adapter.
+BarcodeDetector stays off on Linux, because it has no Linux backend and
+would be present but broken.
+
+diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+index 2d83908b85..dafbdf13aa 100644
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -6938,6 +6938,20 @@
+ 
+     // WebBluetooth is enabled by default on Android, ChromeOS, iOS, macOS and
+     // Windows.
++    //
++    // Apostate also enables it on Linux. Upstream leaves Linux at
++    // "experimental", so the Bluetooth interface is absent from the global
++    // scope there and present everywhere else. That absence is a property of
++    // the host we build on, not of the device a profile claims to be: a
++    // profile describing Windows or macOS hardware served from a Linux host
++    // would be missing an interface the claimed device has, which is decidable
++    // from one page load with no reference data.
++    //
++    // The BlueZ backend exists on Linux, so this exposes a real implementation
++    // rather than a stub. On a host with no adapter getAvailability() resolves
++    // false, which is what the claimed device reports when its radio is off —
++    // coherent, where an absent interface is not. Availability itself is not
++    // yet driven from the profile; see the ledger row.
+     {
+       name: "WebBluetooth",
+       public: true,
+@@ -6945,6 +6959,7 @@
+         "Android": "stable",
+         "ChromeOS": "stable",
+         "iOS": "stable",
++        "Linux": "stable",
+         "Mac": "stable",
+         "Win": "stable",
+         "default": "experimental",

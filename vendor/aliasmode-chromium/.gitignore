@@ -1,0 +1,47 @@
+# Internal-facing material. Never committed — this repo's history is public.
+.internal/
+
+# Build artifacts and toolchains (all reproducible from build/ pins).
+# .workspace holds the checkout and toolchain — ~36GB of generated content,
+# none of it ours. The earlier rules were root-anchored and did not match it.
+/.workspace/
+/src/
+/depot_tools/
+/out/
+*.o
+*.a
+*.so
+*.dylib
+
+# Private key material. This repository's history is public and permanent, so a
+# key committed once is a key rotated forever. Release provenance is a keyless
+# GitHub artifact attestation, so there is no signing key to hold at all; these
+# rules exist because one `git add -A` is enough to publish a stray key that
+# was only ever meant to be local.
+*.pem
+*.key
+/apostate-release.pem
+/public-key.txt
+
+.DS_Store
+__pycache__/
+*.pyc
+venv/
+/python/build/
+/python/dist/
+/python/*.egg-info/
+/npm/dist/
+/npm/node_modules/
+/mcp/node_modules/
+.playwright-mcp/
+
+# Scratch planning notes written during a session, not repository content.
+/local/
+.venv/
+
+# Third-party fingerprint corpora are never redistributed from this repository.
+/resources/fingerprints/raw/vendor/
+
+# Our own captures ARE the ground truth and are committed. Only vendor material
+# is excluded (above).
+.empryo
