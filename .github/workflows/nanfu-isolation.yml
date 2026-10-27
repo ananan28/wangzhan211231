@@ -1,0 +1,30 @@
+name: Nanfu Chromium isolation check
+on:
+  push:
+    branches: [feature/chromium-migration]
+    paths:
+      - .github/workflows/nanfu-isolation.yml
+      - vendor/aliasmode/scripts/nanfu-isolation.test.ts
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  chromium:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: vendor/aliasmode
+    steps:
+      - name: Preserve line endings
+        run: git config --global core.autocrlf false
+        working-directory: ${{ github.workspace }}
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.21"
+      - run: bun install --frozen-lockfile
+      - name: Test two Chromium profiles and restore
+        run: bun test scripts/nanfu-isolation.test.ts
+        env:
+          NANFU_LIVE_ISOLATION: "1"
