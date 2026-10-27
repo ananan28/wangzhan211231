@@ -62,8 +62,9 @@ liveTest("Chromium uses configured HTTP proxy and does not fall back after it st
       try {
         await page.goto(`http://nanfu-test.example:${originPort}/after-proxy-stop`, { timeout: 15000 });
       } catch { navigationFailed = true; }
-      expect(navigationFailed).toBe(true);
+      console.log(`after proxy stop: failed=${navigationFailed}, url=${page.url()}, directRequests=${directRequests}, body=${(await page.locator("body").innerText().catch(() => "")).slice(0, 300)}`);
       expect(directRequests).toBe(0);
+      expect(navigationFailed).toBe(true);
     } finally {
       const session = await browser.newBrowserCDPSession();
       await session.send("Browser.close").catch(() => {});
