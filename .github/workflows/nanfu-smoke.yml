@@ -1,0 +1,38 @@
+name: Nanfu installer smoke check
+on:
+  push:
+    branches: [feature/chromium-migration]
+    paths: [.github/workflows/nanfu-smoke.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 40569040918
+          name: nanfu-chromium-unverified-windows
+          path: installer
+      - name: Install and check application process
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installers = @(Get-ChildItem installer -Filter "*.exe" -File)
+          if ($installers.Count -ne 1) { throw "Expected exactly one installer" }
+          $hash = (Get-FileHash $installers[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "Installer SHA256: $hash"
+          $install = Start-Process -FilePath $installers[0].FullName -ArgumentList "/S" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Silent installation failed: $($install.ExitCode)" }
+          $exe = Join-Path $env:LOCALAPPDATA "AliasMode\aliasmode.exe"
+          if (!(Test-Path -LiteralPath $exe)) { throw "Installed executable was not found" }
+          $app = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 15
+          $app.Refresh()
+          if ($app.HasExited) { throw "Application exited during startup: $($app.ExitCode)" }
+          Stop-Process -Id $app.Id -Force
+          Write-Host "Installed application remained running for 15 seconds"
