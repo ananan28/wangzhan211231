@@ -18,10 +18,13 @@ jobs:
       run:
         working-directory: vendor/aliasmode
     steps:
+      - name: Preserve source line endings
+        run: git config --global core.autocrlf false
+        working-directory: ${{ github.workspace }}
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.3"
+          bun-version: "1.2.21"
       - uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: bun install --frozen-lockfile
