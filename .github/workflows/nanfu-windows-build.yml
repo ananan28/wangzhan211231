@@ -7,6 +7,7 @@ on:
       - vendor/aliasmode/web/**
       - vendor/aliasmode/src-tauri/nanfu.conf.json
       - vendor/aliasmode/src-tauri/src/**
+      - vendor/aliasmode/src-tauri/windows/**
   workflow_dispatch:
 permissions:
   contents: read
@@ -67,7 +68,7 @@ jobs:
           if ($installers.Count -ne 1) { throw "Expected one installer" }
           $installed = Start-Process -FilePath $installers[0].FullName -ArgumentList "/S" -Wait -PassThru
           if ($installed.ExitCode -ne 0) { throw "Installer failed: $($installed.ExitCode)" }
-          $exe = Join-Path $env:LOCALAPPDATA "南孚浏览器/aliasmode.exe"
+          $exe = Join-Path $env:LOCALAPPDATA "Nanfu/aliasmode.exe"
           if (!(Test-Path -LiteralPath $exe)) { throw "Branded application executable missing" }
           $env:RUST_BACKTRACE = "1"
           $stderr = Join-Path $env:RUNNER_TEMP "nanfu-startup-stderr.txt"
