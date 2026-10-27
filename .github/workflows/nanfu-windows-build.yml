@@ -5,6 +5,8 @@ on:
     paths:
       - .github/workflows/nanfu-windows-build.yml
       - vendor/aliasmode/web/**
+      - vendor/aliasmode/src-tauri/nanfu.conf.json
+      - vendor/aliasmode/src-tauri/src/**
   workflow_dispatch:
 permissions:
   contents: read
@@ -56,7 +58,27 @@ jobs:
           & $candidates[0].FullName scripts/prepare-windows-bundle.ts
           if ($LASTEXITCODE -ne 0) { throw "Bundle preparation failed" }
       - name: Build development installer
-        run: bunx tauri build --bundles nsis --no-sign
+        run: bunx tauri build --config src-tauri/nanfu.conf.json --bundles nsis --no-sign
+      - name: Verify branded installation starts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installers = @(Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -File)
+          if ($installers.Count -ne 1) { throw "Expected one installer" }
+          $installed = Start-Process -FilePath $installers[0].FullName -ArgumentList "/S" -Wait -PassThru
+          if ($installed.ExitCode -ne 0) { throw "Installer failed: $($installed.ExitCode)" }
+          $exe = Join-Path $env:LOCALAPPDATA "南孚浏览器/aliasmode.exe"
+          if (!(Test-Path -LiteralPath $exe)) { throw "Branded application executable missing" }
+          $app = Start-Process -FilePath $exe -PassThru
+          try {
+            Start-Sleep -Seconds 15
+            $app.Refresh()
+            if ($app.HasExited) { throw "Application exited during startup: $($app.ExitCode)" }
+            Write-Host "Branded application survived startup"
+          } finally {
+            if (!$app.HasExited) { Stop-Process -Id $app.Id -Force }
+          }
+          Get-FileHash -LiteralPath $installers[0].FullName -Algorithm SHA256
       - name: Save development installer
         uses: actions/upload-artifact@v4
         with:

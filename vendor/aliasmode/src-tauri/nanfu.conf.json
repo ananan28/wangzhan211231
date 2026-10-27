@@ -1,0 +1,8 @@
+{
+  "productName": "南孚浏览器",
+  "identifier": "com.nanfu.browser",
+  "bundle": {
+    "publisher": "南孚浏览器",
+    "createUpdaterArtifacts": false
+  }
+}

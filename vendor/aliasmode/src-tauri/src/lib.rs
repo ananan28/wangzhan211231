@@ -581,7 +581,7 @@ pub fn run() {
                 .map_err(|error| boxed(format!("invalid sidecar URL: {error}")))?;
             let readiness_data_dir = data_dir.clone();
             let webview_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                .title("AliasMode")
+                .title("南孚浏览器")
                 .visible(!background)
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(960.0, 640.0)

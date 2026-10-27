@@ -342,6 +342,9 @@ pub async fn check_for_updates(
     app: AppHandle,
     coordinator: tauri::State<'_, UpdateCoordinator>,
 ) -> Result<UpdateStatus, String> {
+    if app.config().identifier == "com.nanfu.browser" {
+        return Err("南孚开发版暂不支持在线更新，请使用南孚安装包升级。".to_owned());
+    }
     if !cfg!(any(
         target_os = "windows",
         target_os = "macos",
@@ -497,6 +500,9 @@ pub async fn update_now(
     coordinator: tauri::State<'_, UpdateCoordinator>,
     on_progress: Channel<UpdateProgress>,
 ) -> Result<(), String> {
+    if app.config().identifier == "com.nanfu.browser" {
+        return Err("南孚开发版暂不支持在线更新，请使用南孚安装包升级。".to_owned());
+    }
     if !cfg!(any(
         target_os = "windows",
         target_os = "macos",
