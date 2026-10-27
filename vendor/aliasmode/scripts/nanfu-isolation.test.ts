@@ -25,6 +25,7 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
       console.log(`isolation: launching ${name}`);
       child = Bun.spawn([executablePath, `--user-data-dir=${join(root, name)}`,
         "--headless=new", "--disable-gpu", "--no-first-run",
+        `--fingerprint=${name === "a" ? 314159 : 271828}`, "--fingerprint-platform=windows",
         "--remote-debugging-port=19223", "about:blank"], { stdout: "ignore", stderr: "ignore" });
       let ready = false;
       for (let i = 0; i < 45; i++) {
@@ -45,7 +46,20 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
         if (setValue !== undefined) {
           await page.evaluate(value => localStorage.setItem("isolation-test", value), setValue);
         }
-        return previous;
+        const canvas = await page.evaluate(() => {
+          const canvas = document.createElement("canvas");
+          canvas.width = 200;
+          canvas.height = 60;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Canvas unavailable");
+          ctx.fillStyle = "#12ac84";
+          ctx.fillRect(3, 2, 194, 54);
+          ctx.font = "17px sans-serif";
+          ctx.fillStyle = "#421ec9";
+          ctx.fillText("Nanfu canvas sample 0123456789", 5, 30);
+          return canvas.toDataURL();
+        });
+        return { previous, canvas };
       } finally {
         const session = await browser.newBrowserCDPSession();
         await session.send("Browser.close").catch(() => {});
@@ -62,10 +76,17 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
         child = undefined;
       }
     }
-    expect(await visit("a", "a")).toBeNull();
-    expect(await visit("b", "b")).toBeNull();
-    expect(await visit("a")).toBe("a");
-    expect(await visit("b")).toBe("b");
+    const firstA = await visit("a", "a");
+    const firstB = await visit("b", "b");
+    const restoredA = await visit("a");
+    const restoredB = await visit("b");
+    expect(firstA.previous).toBeNull();
+    expect(firstB.previous).toBeNull();
+    expect(restoredA.previous).toBe("a");
+    expect(restoredB.previous).toBe("b");
+    expect(restoredA.canvas).toBe(firstA.canvas);
+    expect(restoredB.canvas).toBe(firstB.canvas);
+    expect(firstA.canvas).not.toBe(firstB.canvas);
   } finally {
     if (child) { child.kill(); await child.exited; }
     server.stop(true);
