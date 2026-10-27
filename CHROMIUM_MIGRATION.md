@@ -1,24 +1,52 @@
 # 南孚浏览器 Chromium 迁移
 
-## 当前状态
+仓库：https://github.com/ananan28/wangzhan211231
+开发分支：`feature/chromium-migration`
 
-本分支仅记录迁移需求；尚未导入 Chromium 源码、实现功能、完成构建或生成安装包。Firefox 现有代码保留在 feature/tab-fingerprint 和 release/nanfu-baseline。
+## 代码范围
 
-## 目标
+- 已导入 AliasMode 桌面管理器和 AliasMode Chromium 补丁，分别位于 `vendor/aliasmode` 与 `vendor/aliasmode-chromium`。
+- 管理器基于 Tauri、Bun 和 React；Chromium 运行时使用固定版本下载和校验。
+- 本仓库不是完整 Chromium 上游源码 checkout。重建内核仍需按引擎仓库说明获取其固定的上游源码与构建依赖。
+- 保留上游许可证、NOTICE 与来源信息。旧 Firefox 工作留在原分支。
 
-- 使用 Chromium / Blink 内核，Windows x64 优先，保留 Chrome 扩展支持。
-- 浏览器内置多账号隔离、树形标签页、验证码辅助入口和右键整页翻译。
-- 标签页绑定独立指纹，刷新轮换为每标签页开关，默认关闭；IP 轮换由插件负责。
-- 对会话恢复、拖动、跨窗口、Worker、代理和扩展组合进行实际测试。
+## 已实现与已验证
 
-## 技术与构建限制
+- 管理界面显示南孚名称；可批量创建 1–100 个独立环境。环境不等于单个标签页。
+- Windows 开发安装包曾成功构建、静默安装并通过启动存活检查；已安装管理器的 sidecar 曾实际启动 Chromium。
+- 真实 Chromium 测试：两个环境 Cookie、本地存储相互隔离；不同种子 Canvas 输出不同；刷新输出稳定；退出重启恢复本地存储和各自 Canvas 输出。
+- 同时多开两个 Chromium 环境的隔离测试通过：
+  https://github.com/ananan28/wangzhan211231/actions/runs/40579090735
+- 批量创建、代理相关定向测试与 TypeScript 类型检查通过：
+  https://github.com/ananan28/wangzhan211231/actions/runs/40579090716
+- HTTP 代理关闭后未观察到测试页面请求回退到直连：
+  https://github.com/ananan28/wangzhan211231/actions/runs/40576175729
+  此测试直接启动 Chromium，不证明全部管理器启动路径、SOCKS、DNS、WebRTC 或代理扩展均安全。
 
-- Firefox Multi-Account Containers 依赖 Firefox 容器能力，Chromium 没有可直接使用的同等 API；需设计隔离架构和验证数据、网络及 Worker 边界。
-- Tree Style Tab 依赖 Firefox 扩展接口；需适配或重新实现树形界面。
-- Buster 有 Chromium 版本；集成前核查许可证、依赖、更新方式、权限及可用性。
-- Chromium 不自动包含 Google Chrome 专有服务；翻译功能需确认翻译引擎及服务。
-- 构建需要适用的 Windows 构建机、足够磁盘和联网；来源、版本、许可和依赖须固定并保留。
+## 新安装包改动（待构建验证）
 
-## 验收
+提交 `266354c587ae17744ddf911a10595a6023e2a4b8`：
 
-安装并启动；多账号存储隔离；树形标签页及恢复；右键实际网页翻译；验证码辅助；每标签页指纹及开关；代理插件与扩展兼容；退出重启恢复；分发安装包及完整可复现源码。所有项目均尚未验证。
+- 南孚构建覆盖配置：安装产品名称为“南孚浏览器”，应用标识为 `com.nanfu.browser`。
+- 主窗口标题改为“南孚浏览器”。
+- 南孚标识的应用阻止上游更新检查和安装，避免被上游安装器覆盖。
+- Windows 构建加入新安装包的静默安装及进程存活检查。
+- 构建地址：https://github.com/ananan28/wangzhan211231/actions/runs/40603953545
+- 本节记录提交的代码，不等于构建、安装或所有功能已通过。
+
+## 仍未完成
+
+1. 当前隔离边界是独立浏览器环境/进程，不是同一窗口中每个普通标签页独立指纹或数据容器。
+2. 每标签页“刷新更换指纹”开关、拖动与恢复绑定尚未实现。
+3. 批量创建标签页、原生树形标签页、右键整页翻译尚未完成。
+4. Buster、代理轮换扩展和整套 Chrome 扩展兼容性尚未实测；不自动安装或代用户启用验证码辅助。
+5. Worker、Service Worker、IndexedDB、CacheStorage、并行窗口和扩展组合隔离尚未完整验证。Canvas 测试不能代表全部指纹面。
+6. 安装器仍携带上游 Firefox 运行组件，因为上游管理器启动校验仍依赖它。删掉组件前必须修改准备、编译和启动流程并验证，不能称为纯 Chromium 安装包。
+7. 浏览器内核自身图标、名称和全部上游界面尚未完成南孚品牌替换。
+8. 暂无南孚签名自动更新服务；开发包未做代码签名，不是最终发行版。
+9. 全量上游测试和旧 baseline 构建流程未全部修复。定向测试通过不等于整个仓库所有 CI 通过。
+10. 尚无满足全部目标并完成验收的最终安装包。
+
+## 交付标准
+
+Windows 实际安装启动；管理器打开 Chromium；多环境同时运行及重启恢复；按确认的隔离边界实测存储和网络；支持固定代理且不默认自动轮换；扩展组合实测；批量标签页、树形标签页、整页翻译与逐标签页开关完成；提供对应源码版本、安装包及 SHA256。不得以状态测试代替浏览器运行验收。
