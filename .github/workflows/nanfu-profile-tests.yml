@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/nanfu-profile-tests.yml
       - vendor/aliasmode/web/**
+      - vendor/aliasmode/scripts/nanfu-isolation.test.ts
   workflow_dispatch:
 permissions:
   contents: read
