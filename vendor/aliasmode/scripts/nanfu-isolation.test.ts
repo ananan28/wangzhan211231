@@ -38,6 +38,7 @@ liveTest("Chromium profiles keep local data isolated across a restart", async ()
       const browser = await chromium.connectOverCDP("http://127.0.0.1:19223", { timeout: 30000 });
       try {
         const context = browser.contexts()[0];
+        if (!context) throw new Error("Chromium did not expose a default context");
         const page = context.pages()[0] ?? await context.newPage();
         await page.goto(url);
         const previous = await page.evaluate(() => localStorage.getItem("isolation-test"));
