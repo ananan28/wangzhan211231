@@ -27,6 +27,7 @@ liveTest("Chromium uses configured HTTP proxy and does not fall back after it st
   const proxy = createServer((_req, res) => {
     proxyRequests++;
     res.setHeader("content-type", "text/plain");
+    res.setHeader("cache-control", "no-store");
     res.end("through-proxy");
   });
   let child: ReturnType<typeof Bun.spawn> | undefined;
@@ -58,6 +59,8 @@ liveTest("Chromium uses configured HTTP proxy and does not fall back after it st
         proxy.close(error => error ? reject(error) : resolve());
         proxy.closeAllConnections();
       });
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Network.clearBrowserCache");
       let navigationFailed = false;
       try {
         await page.goto(`http://nanfu-test.example:${originPort}/after-proxy-stop`, { timeout: 15000 });
