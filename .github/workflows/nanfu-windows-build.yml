@@ -2,7 +2,9 @@ name: Nanfu Windows build
 on:
   push:
     branches: [feature/chromium-migration]
-    paths: [.github/workflows/nanfu-windows-build.yml]
+    paths:
+      - .github/workflows/nanfu-windows-build.yml
+      - vendor/aliasmode/web/**
   workflow_dispatch:
 permissions:
   contents: read
