@@ -158,6 +158,7 @@ test.skipIf(!enabled)("a live environment survives export and import without los
     await cache.put("/a.txt", new Response("a"));
     await cache.put("/b.txt", new Response("b"));
   });
+  console.log("page databases after create:", JSON.stringify(await pageA.evaluate(() => indexedDB.databases())));
   await pageA.goto(originB);
   await pageA.evaluate(() => localStorage.setItem("locale", "zh-CN"));
 
