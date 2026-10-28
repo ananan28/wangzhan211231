@@ -12,6 +12,7 @@ import type { ScriptRun } from "../scripts.ts";
 import type { PythonRuntimeStatus } from "../python-runtime.ts";
 import type { RuntimeDownload } from "../runtime-download.ts";
 import type { FolderInfo } from "../folders.ts";
+import type { TranslationSettings } from "../translation-core.ts";
 import {
   CLOUD_DIAGNOSTIC_TYPES,
   type CloudDiagnosticEvent,
@@ -1082,4 +1083,29 @@ export async function fetchScriptLog(runId: string, offset: number): Promise<{ t
   const body = await scriptRequest(`/ui/api/scripts/log?runId=${encodeURIComponent(runId)}&offset=${offset}`);
   if (typeof body.text !== "string" || !Number.isFinite(body.nextOffset)) throw new Error("Script log returned invalid data");
   return { text: body.text, nextOffset: body.nextOffset };
+}
+
+export async function fetchTranslation(): Promise<{ settings: TranslationSettings; keyPresent: boolean }> {
+  const path = "/ui/api/translation";
+  const response = await fetch(path);
+  const body = await apiJson(response, path);
+  if (!body.ok) throw new Error(body.error || "translation is unavailable");
+  return { settings: body.settings as TranslationSettings, keyPresent: body.keyPresent === true };
+}
+
+export async function saveTranslationSettings(settings: TranslationSettings): Promise<TranslationSettings> {
+  const path = "/ui/api/translation";
+  const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings }) });
+  const body = await apiJson(response, path);
+  if (!body.ok) throw new Error(body.error || "could not save translation settings");
+  return body.settings as TranslationSettings;
+}
+
+/** Hands the engine key to the manager for this run. It is stored in the OS credential store, never in the repository or logs. */
+export async function sendTranslationKey(key: string): Promise<boolean> {
+  const path = "/ui/api/translation/key";
+  const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) });
+  const body = await apiJson(response, path);
+  if (!body.ok) throw new Error(body.error || "could not store the translation key");
+  return body.keyPresent === true;
 }

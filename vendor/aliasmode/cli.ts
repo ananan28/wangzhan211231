@@ -25,6 +25,7 @@ import { ProfileStore } from "./store.ts";
 import { Launcher, readSnapshotChildBounded } from "./launcher.ts";
 import { linuxChromiumSandboxBlocked } from "./aliasmode-chromium.ts";
 import { AutofillBridge } from "./autofill-bridge.ts";
+import { TranslationBridge, TranslationService } from "./translation.ts";
 import {
   defaultPlaywrightRuntimeRoot,
   runPlaywrightWorker,
@@ -389,6 +390,7 @@ function makeLauncher(
   ensureSearchProvider = ensureDuckDuckGoDefault,
   // Local and Cloud profiles share one downloaded Chromium 155 runtime.
   chromiumRuntimeRoot?: string,
+  translation?: TranslationBridge,
 ): Launcher {
   const unsafeCanary = has(rest, "unsafe-disable-identity-gates");
   const autofill = new AutofillBridge(store);
@@ -396,6 +398,7 @@ function makeLauncher(
   return new Launcher({
     store,
     autofill,
+    ...(translation ? { translation } : {}),
     dataRoot: defaultDataRoot,
     ...(chromiumRuntimeRoot ? { chromiumRuntimeRoot } : {}),
     headless: has(rest, "headless"),
@@ -2602,6 +2605,11 @@ async function main() {
     ? new DesktopCredentialBridge(desktopHealth.instance)
     : null;
   ensureStateDirectories(paths);
+  // Translation settings are local-only; the engine key is held in memory and
+  // pushed by the desktop UI from the OS credential store on start.
+  const translationService = new TranslationService(join(paths.root, "translation.json"));
+  const translationBridge = new TranslationBridge(translationService);
+  translationBridge.listen();
   if (cmd === "__cloud-cross-device-acceptance") {
     const fixtureUrl = flag(rest, "fixture-url");
     if (!fixtureUrl) throw new Error("Cloud cross-device acceptance requires --fixture-url");
@@ -2741,7 +2749,7 @@ async function main() {
         // attributes locks to this id; a per-operator token overrides it.
         const owner = defaultOperatorName(identityDbPath);
         console.log(`local instance "${owner}" (hub lock attribution: this box's operator id)`);
-        const launcher = makeLauncher(store, rest, true, profileDataRoot, undefined, join(paths.root, "runtimes"));
+        const launcher = makeLauncher(store, rest, true, profileDataRoot, undefined, join(paths.root, "runtimes"), translationBridge);
         await launcher.reconcileOrphans();
         prefetchBrowserRuntimes(launcher, store);
         const coord = new RemoteCoordinator({
@@ -2777,6 +2785,7 @@ async function main() {
           port,
           lifecycleAdmission,
           appConfig,
+          translation: translationService,
           paths,
           defaultCloudUrl,
           cloudAuth,
@@ -2842,7 +2851,7 @@ async function main() {
       // stale crash row rejects startup before it can be proven dead.
       console.log(`${configuredMode.mode} mode: preparing browser recovery`);
       console.log("startup: initializing autofill bridge");
-      const launcher = makeLauncher(store, rest, savedMode.mode === "cloud", profileDataRoot, undefined, join(paths.root, "runtimes"));
+      const launcher = makeLauncher(store, rest, savedMode.mode === "cloud", profileDataRoot, undefined, join(paths.root, "runtimes"), translationBridge);
       console.log(`startup: checking ${store.listLaunches().length} saved browser process(es)`);
       await launcher.reconcileOrphans();
       if (savedMode.mode !== "cloud") {
@@ -2871,6 +2880,7 @@ async function main() {
           port,
           lifecycleAdmission,
           appConfig,
+          translation: translationService,
           paths,
           defaultCloudUrl,
           cloudAuth,
@@ -2929,6 +2939,7 @@ async function main() {
         port,
         lifecycleAdmission,
         appConfig,
+        translation: translationService,
         paths,
         defaultCloudUrl,
         cloudAuth,
@@ -2953,7 +2964,7 @@ async function main() {
     }
     case "serve": {
       const store = new ProfileStore(dbPath);
-      const launcher = makeLauncher(store, rest, savedMode.mode === "cloud", profileDataRoot, undefined, join(paths.root, "runtimes"));
+      const launcher = makeLauncher(store, rest, savedMode.mode === "cloud", profileDataRoot, undefined, join(paths.root, "runtimes"), translationBridge);
       await launcher.reconcileOrphans();
       if (savedMode.mode !== "cloud") await launcher.certifySurvivors();
       const cloudBrowser = makeCloudBrowser(launcher, store, cloudConnection, pendingSync);
@@ -2966,6 +2977,7 @@ async function main() {
         port: Number(flag(rest, "port") ?? 50400),
         lifecycleAdmission,
         appConfig,
+        translation: translationService,
         paths,
         defaultCloudUrl,
         cloudAuth,

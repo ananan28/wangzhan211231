@@ -37,6 +37,8 @@ import type { ProfileStore } from "./store.ts";
 import { lookupProxyExitLocation, type ExitLocation } from "./geoip.ts";
 import type { AutofillBridge } from "./autofill-bridge.ts";
 import { AUTOFILL_EXTENSION_REVISION, autofillExtensionDir } from "./autofill-extension.ts";
+import type { TranslationBridge } from "./translation.ts";
+import { translationExtensionDir } from "./translation-extension.ts";
 import { allocatePort } from "./ports.ts";
 import {
   DEFAULT_WINDOW_HEIGHT_SCALE, DEFAULT_WINDOW_WIDTH_SCALE, deriveFingerprintFlags, isMobileUserAgent, launchWindowSize,
@@ -456,6 +458,7 @@ export function platformHomeUrl(platform: string | undefined, telegramClient: "a
 export interface LauncherOptions {
   store: ProfileStore;
   autofill?: AutofillBridge;
+  translation?: TranslationBridge;
   /** Path to the CloakBrowser binary. Defaults to $CLOAKBROWSER_BINARY_PATH. */
   binaryPath?: string;
   /**
@@ -810,6 +813,7 @@ const RESETTABLE_SESSION_STORES = [
 export class Launcher {
   private store: ProfileStore;
   private autofill?: AutofillBridge;
+  private translation?: TranslationBridge;
   private dpapiKeysReadable: (keys: string[]) => Promise<boolean[] | null>;
   /** DPAPI answers per encrypted cookie key, so reopening a profile does not respawn PowerShell. */
   private readonly cookieKeyReadable = new Map<string, boolean>();
@@ -922,6 +926,7 @@ export class Launcher {
     this.store = opts.store;
     this.dpapiKeysReadable = opts.dpapiKeysReadable ?? ((keys) => dpapiKeysReadable(keys, 15_000));
     this.autofill = opts.autofill;
+    this.translation = opts.translation;
     this.binaryPath = opts.binaryPath ?? defaultBinaryPath();
     this.unsafeDisableIdentityGates = opts.unsafeDisableIdentityGates ?? false;
     this.expectedBinarySha256 = (
@@ -1212,6 +1217,7 @@ export class Launcher {
       ...(profile.hardware ? { hardware: profile.hardware } : {}),
       extensions,
       ...(autofill ? { autofill: AUTOFILL_EXTENSION_REVISION } : {}),
+      ...(this.translation?.enabled() ? { translation: this.translation.revision } : {}),
     });
     return createHash("sha256").update(serialized).digest("hex");
   }
@@ -1398,6 +1404,7 @@ export class Launcher {
     }
     const hasAssignedExtensions = extDirs.length > 0;
     if (this.autofill) extDirs.unshift(autofillExtensionDir(userDataDir));
+    if (this.translation?.enabled()) extDirs.unshift(translationExtensionDir(userDataDir));
     if (extDirs.length) {
       args.push(`--load-extension=${extDirs.join(",")}`);
       if (hasAssignedExtensions) args.push(`--disable-extensions-except=${extDirs.join(",")}`);
@@ -2040,6 +2047,7 @@ export class Launcher {
       };
       this.store.recordLaunch(provisionalLaunch);
       this.autofill?.install(provisionalLaunch);
+      this.translation?.install(provisionalLaunch);
       spawnAttempted = true;
       try {
         proc = this.spawnFn(spawnVerifiedBinary.path, args, profile.chromiumRuntime ? { ...ALIASMODE_CHROMIUM_ENV } : undefined);
@@ -2944,6 +2952,7 @@ export class Launcher {
     this.windowFits.get(profileId)?.stop();
     if (launch.firefoxOwner) forgetFirefoxOwner(launch.firefoxOwner);
     this.autofill?.retire(profileId, launch);
+    this.translation?.retire(profileId, launch);
     this.liveReserved.delete(launch.debugPort);
     this.closeRelay(profileId);
     this.procs.delete(profileId);

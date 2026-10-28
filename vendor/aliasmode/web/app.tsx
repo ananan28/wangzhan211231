@@ -10,6 +10,7 @@ import { createProfilesInOrder } from "./batch-create.ts";
 import { ScriptRunPanel, ScriptsPage } from "./scripts.tsx";
 import { I18nProvider, availableLanguages, languageNativeName, useTranslation } from "./i18n.tsx";
 import { localeTimezoneMismatch } from "../profile-locale.ts";
+import { DEFAULT_TRANSLATION_SETTINGS, type TranslationEngine, type TranslationSettings } from "../translation-core.ts";
 import { folderTree, folderScope, folderGrantPermission, type FolderInfo } from "../folders.ts";
 import { THEME_KEY, readThemeChoice, themeCookie, type ThemeChoice } from "./theme.ts";
 import {
@@ -93,6 +94,9 @@ import {
   moveGroup,
   deleteGroup,
   fetchTotp,
+  fetchTranslation,
+  saveTranslationSettings,
+  sendTranslationKey,
 } from "./api.ts";
 
 /** Run async tasks with bounded concurrency (so "Open 50" isn't 50 at once). */
@@ -158,6 +162,7 @@ const PAGE_TITLES: Record<"profiles" | "scripts" | "settings" | "extensions" | "
 
 const SETTINGS_TABS = [
   { key: "account", label: "Account" },
+  { key: "translation", label: "Translation" },
   { key: "team", label: "Workspace" },
   { key: "advanced", label: "Advanced" },
 ] as const;
@@ -1269,6 +1274,12 @@ function App() {
   const [showCreate, setShowCreate] = useState(false);
   const [createProxyOpen, setCreateProxyOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("account");
+  const [translation, setTranslation] = useState<TranslationSettings | null>(null);
+  const [translationKeyPresent, setTranslationKeyPresent] = useState(false);
+  const [translationKeyDraft, setTranslationKeyDraft] = useState("");
+  const [translationBusy, setTranslationBusy] = useState(false);
+  const [translationErr, setTranslationErr] = useState<string | null>(null);
+  const [translationSaved, setTranslationSaved] = useState(false);
   const [remoteMcp, setRemoteMcp] = useState<RemoteMcpSettings>({ state: "idle" });
   const [remoteMcpTokenVisible, setRemoteMcpTokenVisible] = useState(false);
   const [remoteMcpCopied, setRemoteMcpCopied] = useState<"url" | "token" | null>(null);
@@ -1552,6 +1563,65 @@ function App() {
     const ok = await runTeamAction("invite", { email, role: teamRole }, `Invitation sent to ${email}`);
     if (ok) setTeamEmail("");
   };
+
+  const loadTranslation = async () => {
+    setTranslationErr(null);
+    try {
+      const current = await fetchTranslation();
+      setTranslation(current.settings);
+      setTranslationKeyPresent(current.keyPresent);
+      // The key never returns from the manager; the desktop hands it its copy for this run.
+      const invoke = desktopInvoke();
+      if (invoke && !current.keyPresent) {
+        const stored = await invoke("credential_get", { key: "translation_engine_key" }).catch(() => null);
+        if (typeof stored === "string" && stored) setTranslationKeyPresent(await sendTranslationKey(stored));
+      }
+    } catch (error) {
+      setTranslationErr(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const saveTranslationForm = async () => {
+    if (!translation) return;
+    setTranslationBusy(true);
+    setTranslationErr(null);
+    setTranslationSaved(false);
+    try {
+      setTranslation(await saveTranslationSettings(translation));
+      const key = translationKeyDraft.trim();
+      if (key) {
+        const invoke = desktopInvoke();
+        if (invoke) await invoke("credential_set", { key: "translation_engine_key", secret: key });
+        setTranslationKeyPresent(await sendTranslationKey(key));
+        setTranslationKeyDraft("");
+      }
+      setTranslationSaved(true);
+    } catch (error) {
+      setTranslationErr(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTranslationBusy(false);
+    }
+  };
+
+  const clearTranslationKey = async () => {
+    setTranslationBusy(true);
+    setTranslationErr(null);
+    setTranslationSaved(false);
+    try {
+      const invoke = desktopInvoke();
+      if (invoke) await invoke("credential_delete", { key: "translation_engine_key" });
+      setTranslationKeyDraft("");
+      setTranslationKeyPresent(await sendTranslationKey(""));
+    } catch (error) {
+      setTranslationErr(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTranslationBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (view === "settings" && settingsTab === "translation" && !translation && !translationErr) void loadTranslation();
+  }, [view, settingsTab]);
 
   const checkDesktopUpdate = async (manual: boolean) => {
     const invoke = desktopInvoke();
@@ -4431,6 +4501,125 @@ function App() {
             </div>
           </section>
           
+            </>
+          )}
+          {settingsTab === "translation" && (
+            <>
+              <h2 className="sect-title">{t("In-page translation")}</h2>
+              {!translation && !translationErr && <p>{t("Loading translation settings…")}</p>}
+              {translationErr && <div className="modal-err" role="alert">{t(translationErr)}</div>}
+              {translation && (
+                <>
+                  <section className="settings-card">
+                    <header><Icon name="activity" className="sm" /><h2>{t("Translation engine")}</h2></header>
+                    <div className="card-body">
+                      <label className="settings-row">
+                        <span>{t("Enable in-page translation")}</span>
+                        <input
+                          type="checkbox"
+                          checked={translation.enabled}
+                          onChange={(event) => { setTranslationSaved(false); setTranslation({ ...translation, enabled: event.target.checked }); }}
+                        />
+                      </label>
+                      <label className="settings-row">
+                        <span>{t("Engine")}</span>
+                        <select
+                          value={translation.engine}
+                          onChange={(event) => {
+                            const engine = event.target.value as TranslationEngine;
+                            setTranslationSaved(false);
+                            setTranslation({
+                              ...translation,
+                              engine,
+                              baseUrl: engine === "openai" && !translation.baseUrl ? DEFAULT_TRANSLATION_SETTINGS.baseUrl : translation.baseUrl,
+                            });
+                          }}
+                        >
+                          <option value="openai">{t("OpenAI-compatible")}</option>
+                          <option value="deepl">DeepL</option>
+                          <option value="custom">{t("Custom HTTP endpoint")}</option>
+                        </select>
+                      </label>
+                      <label className="settings-row">
+                        <span>{t("Engine URL")}</span>
+                        <input
+                          value={translation.baseUrl}
+                          placeholder={translation.engine === "deepl" ? t("Leave blank for api-free.deepl.com") : "https://api.openai.com/v1"}
+                          onChange={(event) => { setTranslationSaved(false); setTranslation({ ...translation, baseUrl: event.target.value.trim() }); }}
+                        />
+                      </label>
+                      {translation.engine === "openai" && (
+                        <label className="settings-row">
+                          <span>{t("Model")}</span>
+                          <input
+                            value={translation.model}
+                            placeholder="gpt-4o-mini"
+                            onChange={(event) => { setTranslationSaved(false); setTranslation({ ...translation, model: event.target.value.trim() }); }}
+                          />
+                        </label>
+                      )}
+                      <label className="settings-row">
+                        <span>{t("Translate into")}</span>
+                        <select
+                          value={translation.targetLanguage}
+                          onChange={(event) => { setTranslationSaved(false); setTranslation({ ...translation, targetLanguage: event.target.value }); }}
+                        >
+                          {!BCP47_LOCALES.some(([code]) => code === translation.targetLanguage) && (
+                            <option value={translation.targetLanguage}>{translation.targetLanguage}</option>
+                          )}
+                          {BCP47_LOCALES.map(([code, label]) => <option key={code} value={code}>{label} ({code})</option>)}
+                        </select>
+                      </label>
+                      <label className="settings-row">
+                        <span>{t("Layout")}</span>
+                        <select
+                          value={translation.mode}
+                          onChange={(event) => { setTranslationSaved(false); setTranslation({ ...translation, mode: event.target.value as TranslationSettings["mode"] }); }}
+                        >
+                          <option value="bilingual">{t("Show original and translation")}</option>
+                          <option value="replace">{t("Replace the original text")}</option>
+                        </select>
+                      </label>
+                      <label className="settings-row">
+                        <span>{t("Translate pages automatically")}</span>
+                        <input
+                          type="checkbox"
+                          checked={translation.autoTranslate}
+                          onChange={(event) => { setTranslationSaved(false); setTranslation({ ...translation, autoTranslate: event.target.checked }); }}
+                        />
+                      </label>
+                      <p>{t("Automatic translation starts when a page is not already in the target language. Right-click a page or selection to translate on demand.")}</p>
+                    </div>
+                  </section>
+                  <section className="settings-card">
+                    <header><Icon name="lock" className="sm" /><h2>{t("Engine key")}</h2></header>
+                    <div className="card-body">
+                      <label className="settings-row">
+                        <span>{translationKeyPresent ? t("Key stored") : t("No key stored")}</span>
+                        <input
+                          type="password"
+                          autoComplete="off"
+                          value={translationKeyDraft}
+                          placeholder={translationKeyPresent ? t("Enter a new key to replace it") : t("Paste the engine API key")}
+                          onChange={(event) => setTranslationKeyDraft(event.target.value)}
+                        />
+                      </label>
+                      <p>{t("The key is kept in this computer's credential store and handed to the environment only when a page asks for a translation. It is never written into the environment, exports or logs.")}</p>
+                      {translationKeyPresent && (
+                        <button className="btn" type="button" disabled={translationBusy} onClick={() => void clearTranslationKey()}>{t("Remove key")}</button>
+                      )}
+                    </div>
+                  </section>
+                  <p>{t("Translation requests run inside the environment's browser, so they follow its proxy. Only the page text is sent, and only to the engine configured here.")}</p>
+                  <p>{t("Settings apply the next time an environment starts.")}</p>
+                  {translationSaved && <p role="status">{t("Translation settings saved.")}</p>}
+                  <div className="update-actions">
+                    <button className="btn primary" type="button" disabled={translationBusy} onClick={() => void saveTranslationForm()}>
+                      {translationBusy ? t("Saving…") : t("Save translation settings")}
+                    </button>
+                  </div>
+                </>
+              )}
             </>
           )}
           {settingsTab === "team" && (

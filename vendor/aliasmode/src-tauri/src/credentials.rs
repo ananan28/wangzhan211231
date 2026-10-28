@@ -9,6 +9,7 @@ pub enum CredentialKey {
     DeviceCredential,
     QueueEncryptionKey,
     RemoteMcpConnector,
+    TranslationEngineKey,
 }
 
 impl CredentialKey {
@@ -18,6 +19,7 @@ impl CredentialKey {
             "device_credential" => Ok(Self::DeviceCredential),
             "queue_encryption_key" => Ok(Self::QueueEncryptionKey),
             "remote_mcp_connector" => Ok(Self::RemoteMcpConnector),
+            "translation_engine_key" => Ok(Self::TranslationEngineKey),
             _ => Err("unsupported credential key".to_owned()),
         }
     }
@@ -28,6 +30,7 @@ impl CredentialKey {
             Self::DeviceCredential => "AliasMode/device-credential",
             Self::QueueEncryptionKey => "AliasMode/queue-encryption-key",
             Self::RemoteMcpConnector => "AliasMode/remote-mcp-connector",
+            Self::TranslationEngineKey => "AliasMode/translation-engine-key",
         }
     }
 }

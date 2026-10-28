@@ -63,7 +63,7 @@ test("a typed timezone at creation survives a later proxy change", async () => {
     store.upsertProfile(created);
     const response = await handleUiRequest(new Request(`http://x/ui/api/profiles/${created.id}/update`, {
       method: "POST", body: JSON.stringify({ set: { proxyType: "http", proxy: "new-proxy.example:8080" } }),
-    }), {} as never, store, null, { timezoneFetch: async () => ({ json: async () => ({ status: "success", timezone: "Europe/Paris" }) }) } as never });
+    }), {} as never, store, null, { timezoneFetch: async () => ({ json: async () => ({ status: "success", timezone: "Europe/Paris" }) }) } as never);
     expect(response!.status).toBe(200);
     expect(store.getProfile(created.id)!.timezone).toBe("Asia/Shanghai");
   } finally {

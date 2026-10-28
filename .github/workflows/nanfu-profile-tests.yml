@@ -10,6 +10,9 @@ on:
       - vendor/aliasmode/create.ts
       - vendor/aliasmode/ui.ts
       - vendor/aliasmode/fingerprint-audit.ts
+      - vendor/aliasmode/translation-core.ts
+      - vendor/aliasmode/translation.ts
+      - vendor/aliasmode/translation-extension.ts
   workflow_dispatch:
 permissions:
   contents: read
@@ -28,5 +31,5 @@ jobs:
         with:
           bun-version: "1.2.21"
       - run: bun install --frozen-lockfile
-      - run: bun test web/batch-create.test.ts web/proxies.test.ts create.test.ts nanfu-fingerprint-edit.test.ts proxy-relay.test.ts proxy-check.test.ts
+      - run: bun test web/batch-create.test.ts web/proxies.test.ts create.test.ts nanfu-fingerprint-edit.test.ts nanfu-translation.test.ts proxy-relay.test.ts proxy-check.test.ts
       - run: bun run typecheck

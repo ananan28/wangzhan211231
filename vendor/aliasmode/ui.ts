@@ -15,6 +15,7 @@ import type { AutomationHealthStatus } from "./remote-types.ts";
 import type { RemoteCoordinator } from "./remote.ts";
 import type { AppConfigStore } from "./app-config.ts";
 import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from "./fingerprint-audit.ts";
+import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import type { CloudConnectionRuntime } from "./cloud-connection.ts";
 import type {
@@ -586,6 +587,7 @@ export interface UiRuntimeOptions {
   addCookie?: (ws: string, cookie: CookieRecord) => Promise<void>;
   /** Mode whose runtimes were wired when this process started. */
   runtimeMode?: "unconfigured" | "local" | "cloud";
+  translation?: TranslationService;
 }
 
 /**
@@ -753,6 +755,32 @@ export async function handleUiRequest(
       return noStoreJson({ ok: false, error: "Could not save language preference" }, 500);
     }
     return noStoreJson({ ok: true, language });
+  }
+
+  if (pathname === "/ui/api/translation" && req.method === "GET") {
+    if (!options.translation) return noStoreJson({ ok: false, error: "translation is unavailable" }, 503);
+    return noStoreJson({ ok: true, settings: options.translation.current(), keyPresent: options.translation.keyPresent() });
+  }
+
+  if (pathname === "/ui/api/translation" && req.method === "POST") {
+    if (!options.translation) return noStoreJson({ ok: false, error: "translation is unavailable" }, 503);
+    const body = (await req.json().catch(() => ({}))) as { settings?: unknown };
+    try {
+      return noStoreJson({ ok: true, settings: options.translation.save(body.settings) });
+    } catch (error) {
+      return noStoreJson({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  }
+
+  if (pathname === "/ui/api/translation/key" && req.method === "POST") {
+    if (!options.translation) return noStoreJson({ ok: false, error: "translation is unavailable" }, 503);
+    const body = (await req.json().catch(() => ({}))) as { key?: unknown };
+    try {
+      options.translation.setKey(body.key ?? "");
+      return noStoreJson({ ok: true, keyPresent: options.translation.keyPresent() });
+    } catch (error) {
+      return noStoreJson({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+    }
   }
 
   if (pathname === "/ui/api/cloud-events" && req.method === "GET") {

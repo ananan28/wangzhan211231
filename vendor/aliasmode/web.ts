@@ -12,6 +12,7 @@ import { profileDisplayNo, type Launcher } from "./launcher.ts";
 import type { ProfileStore } from "./store.ts";
 import type { RemoteCoordinator } from "./remote.ts";
 import type { AppConfigStore } from "./app-config.ts";
+import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import type { CloudConnectionRuntime } from "./cloud-connection.ts";
 import type { CloudBrowserLifecycle } from "./cloud-browser.ts";
@@ -55,6 +56,7 @@ export interface DashboardServerOptions {
   /** When set, the dashboard routes profiles/open/close/import/move via the hub. */
   remote?: RemoteCoordinator | null;
   appConfig?: AppConfigStore;
+  translation?: TranslationService;
   paths?: StatePaths;
   defaultCloudUrl?: string;
   cloudAuth?: CloudAuthRuntime;
@@ -365,6 +367,7 @@ export function serveDashboard(opts: DashboardServerOptions) {
       return dispatchWithLifecycleAdmission(req, admission, async () => {
         const ui = await handleUiRequest(req, launcher, store, opts.remote, {
           appConfig: opts.appConfig,
+          translation: opts.translation,
           paths: opts.paths,
           defaultCloudUrl: opts.defaultCloudUrl,
           cloudAuth: opts.cloudAuth,
