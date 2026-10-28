@@ -511,12 +511,15 @@ do $$
 declare n bigint;
 begin
   select count(*) into n from public.nanfu_environments;
-  if n <> 2 then raise exception 'manager should see own + subordinate window, saw %', n; end if;
-  if exists (select 1 from public.nanfu_environments where environment_id = 'env-b') then
-    raise exception 'manager saw a window outside the subtree';
+  if n <> 4 then raise exception 'manager should see self + two subordinates (4 windows), saw %', n; end if;
+  if exists (select 1 from public.nanfu_environments where environment_id = 'env-g') then
+    raise exception 'manager saw an admin window outside the subtree';
+  end if;
+  if exists (select 1 from public.nanfu_environments where environment_id = 'env-x') then
+    raise exception 'manager saw a window in an ungranted group';
   end if;
   select count(*) into n from public.nanfu_org_members;
-  if n <> 2 then raise exception 'manager should see self + subordinate, saw %', n; end if;
+  if n <> 3 then raise exception 'manager should see self + two subordinates, saw %', n; end if;
 end $$;
 commit;
 
