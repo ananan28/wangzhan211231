@@ -616,8 +616,13 @@ begin
   begin
     insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
     values (auth.uid(), (select id from public.nanfu_orgs), 'env-locked', '{"v":1,"ct":"eA=="}');
-  exception when insufficient_privilege then
-    blocked := true;
+  exception
+    when insufficient_privilege then
+      blocked := true;
+    when raise_exception then
+      -- The quota trigger fires before the policy check; either refusal counts.
+      if sqlerrm not like 'NANFU_MEMBER_INACTIVE:%' then raise; end if;
+      blocked := true;
   end;
   if not blocked then raise exception 'locked member created a window'; end if;
 end $$;
