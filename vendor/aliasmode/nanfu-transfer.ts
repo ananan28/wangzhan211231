@@ -11,6 +11,7 @@
  *     storage policy keeps only Telegram's auth IndexedDB, not chat data.
  */
 
+import type { BrowserContext, Cookie } from "playwright-core";
 import type { NanfuCipher } from "./nanfu-crypto.ts";
 import { normalizeBundle } from "./session.ts";
 import type { NanfuEnvironmentConfig } from "./nanfu-sync.ts";
@@ -226,6 +227,8 @@ export interface NanfuCdp {
 export interface NanfuCdpCaptureOptions {
   origins: readonly string[];
   indexedDB?: NanfuIndexedDBPolicy;
+  /** Browser-target session: `Storage.getCookies` includes HttpOnly cookies only there. */
+  cookieClient?: NanfuCdp;
 }
 
 export interface NanfuCdpCapture {
@@ -259,7 +262,7 @@ export async function captureNanfuFromCdp(
   cdp: NanfuCdp,
   options: NanfuCdpCaptureOptions,
 ): Promise<NanfuCdpCapture> {
-  const cookieReply = await cdp.send("Storage.getCookies");
+  const cookieReply = await (options.cookieClient ?? cdp).send("Storage.getCookies");
   const cookies = (Array.isArray(cookieReply?.cookies) ? cookieReply.cookies : []).map(cookieRecord);
   const origins: NanfuTransferOrigin[] = [];
   const serviceWorkers: NanfuTransferServiceWorkerManifest[] = [];
@@ -289,6 +292,29 @@ export async function captureNanfuFromCdp(
   return { cookies, origins, serviceWorkers, unreadableOrigins };
 }
 
+/** CDP wraps stored values and keys in RemoteObjects; unpack the JSON-safe part. */
+function indexedDbValue(raw: any): unknown {
+  if (raw && typeof raw === "object" && typeof raw.type === "string" && "value" in raw) {
+    return raw.value ?? null;
+  }
+  return raw;
+}
+
+function indexedDbKey(raw: any): unknown {
+  if (!raw || typeof raw !== "object" || typeof raw.type !== "string") return raw;
+  switch (raw.type) {
+    case "number":
+    case "string":
+      return indexedDbValue(raw);
+    case "date":
+      return new Date(Number(raw.date)).toISOString();
+    case "array":
+      return (Array.isArray(raw.array) ? raw.array : []).map(indexedDbKey);
+    default:
+      return indexedDbValue(raw);
+  }
+}
+
 async function captureIndexedDB(cdp: NanfuCdp, origin: string): Promise<unknown[]> {
   const names = await cdp.send("IndexedDB.requestDatabaseNames", { securityOrigin: origin });
   const databases: unknown[] = [];
@@ -311,7 +337,7 @@ async function captureIndexedDB(cdp: NanfuCdp, origin: string): Promise<unknown[
         });
         const batch = Array.isArray(page?.objectStoreDataEntries) ? page.objectStoreDataEntries : [];
         for (const record of batch) {
-          records.push({ key: record.key, value: record.value });
+          records.push({ key: indexedDbKey(record.key), value: indexedDbValue(record.value) });
         }
         skipCount += batch.length;
         if (!page?.hasMore || batch.length === 0) break;
@@ -341,4 +367,143 @@ async function captureCacheManifest(cdp: NanfuCdp, origin: string): Promise<Nanf
     caches.push({ name: String(cache.cacheName ?? ""), entries: Number(page?.returnCount ?? 0) });
   }
   return caches;
+}
+
+function cdpClient(session: { send: (method: any, params?: any) => Promise<any> }): NanfuCdp {
+  return { send: (method, params) => session.send(method, params) };
+}
+
+/**
+ * Capture from a live Playwright context. Each origin is opened first so its
+ * storage is materialised, then cookies come from the browser target (HttpOnly
+ * included) and the rest from the page target.
+ */
+export async function captureNanfuFromBrowser(
+  context: BrowserContext,
+  options: NanfuCdpCaptureOptions,
+): Promise<NanfuCdpCapture> {
+  const page = await context.newPage();
+  const pageSession = await context.newCDPSession(page);
+  const browserSession = await context.browser()?.newBrowserCDPSession();
+  await pageSession.send("DOMStorage.enable").catch(() => {});
+  await pageSession.send("IndexedDB.enable").catch(() => {});
+  try {
+    for (const origin of [...new Set(options.origins)]) {
+      await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+    }
+    const capture = await captureNanfuFromCdp(cdpClient(pageSession), {
+      ...options,
+      ...(browserSession ? { cookieClient: cdpClient(browserSession) } : {}),
+    });
+    if (!browserSession) capture.cookies = (await context.cookies()).map(playwrightCookieRecord);
+    return capture;
+  } finally {
+    await pageSession.detach().catch(() => {});
+    await browserSession?.detach().catch(() => {});
+    await page.close().catch(() => {});
+  }
+}
+
+function playwrightCookieRecord(cookie: Cookie): CookieRecord {
+  const record: CookieRecord = {
+    name: cookie.name,
+    value: cookie.value,
+    domain: cookie.domain,
+    path: cookie.path || "/",
+  };
+  if (cookie.expires > 0) record.expires = Math.floor(cookie.expires);
+  if (cookie.httpOnly) record.httpOnly = true;
+  if (cookie.secure) record.secure = true;
+  record.sameSite = cookie.sameSite;
+  return record;
+}
+
+function playwrightCookie(record: CookieRecord): Cookie {
+  const cookie: any = {
+    name: record.name,
+    value: record.value,
+    path: record.path || "/",
+  };
+  if (record.domain) cookie.domain = record.domain;
+  if (record.expires !== undefined) cookie.expires = record.expires;
+  if (record.httpOnly) cookie.httpOnly = true;
+  if (record.secure) cookie.secure = true;
+  if (record.sameSite) cookie.sameSite = record.sameSite;
+  return cookie as Cookie;
+}
+
+/** Import into a live context, cookies first, then each origin's storage. */
+export async function applyNanfuTransferToContext(
+  context: BrowserContext,
+  pkg: NanfuTransferPackage,
+): Promise<NanfuTransferApplyResult> {
+  const page = await context.newPage();
+  const at = async (origin: string) => {
+    const current = page.url();
+    if (!current.startsWith(origin)) {
+      await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    }
+  };
+  try {
+    return await applyNanfuTransfer(pkg, {
+      addCookies: async (cookies) => {
+        if (cookies.length > 0) await context.addCookies(cookies.map(playwrightCookie));
+      },
+      setLocalStorage: async (origin, entries) => {
+        await at(origin);
+        await page.evaluate((items) => {
+          for (const item of items) localStorage.setItem(item.name, item.value);
+        }, entries);
+      },
+      writeIndexedDB: async (origin, databases) => {
+        await at(origin);
+        await page.evaluate(async (list) => {
+          for (const info of list) {
+            await new Promise<void>((resolve) => {
+              const request = indexedDB.deleteDatabase(info.name);
+              request.onsuccess = request.onerror = request.onblocked = () => resolve();
+            });
+            const db = await new Promise<IDBDatabase>((resolve, reject) => {
+              const request = indexedDB.open(info.name, info.version || 1);
+              request.onupgradeneeded = () => {
+                for (const store of info.stores) {
+                  if (request.result.objectStoreNames.contains(store.name)) continue;
+                  const created = request.result.createObjectStore(store.name, {
+                    keyPath: store.keyPath ?? undefined,
+                    autoIncrement: !!store.autoIncrement,
+                  });
+                  for (const index of store.indexes ?? []) {
+                    created.createIndex(index.name, index.keyPath, {
+                      unique: !!index.unique,
+                      multiEntry: !!index.multiEntry,
+                    });
+                  }
+                }
+              };
+              request.onsuccess = () => resolve(request.result);
+              request.onerror = () => reject(request.error);
+            });
+            if (db.objectStoreNames.length > 0) {
+              const transaction = db.transaction(Array.from(db.objectStoreNames), "readwrite");
+              for (const store of info.stores) {
+                const target = transaction.objectStore(store.name);
+                for (const record of store.records) {
+                  if (store.keyPath) target.put(record.value);
+                  else target.put(record.value, record.key);
+                }
+              }
+              await new Promise<void>((resolve, reject) => {
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+                transaction.onabort = () => reject(transaction.error);
+              });
+            }
+            db.close();
+          }
+        }, databases as any);
+      },
+    });
+  } finally {
+    await page.close().catch(() => {});
+  }
 }

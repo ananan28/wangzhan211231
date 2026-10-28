@@ -29,4 +29,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Account and sync regression
         run: bun test nanfu-account.test.ts nanfu-sync.test.ts nanfu-transfer.test.ts
+      - name: CDP export and import round trip
+        env:
+          NANFU_CDP_TEST: "1"
+        run: bun test nanfu-transfer.cdp.test.ts
       - run: bun run typecheck
