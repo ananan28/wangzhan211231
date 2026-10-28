@@ -40,8 +40,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $installers = @(Get-ChildItem installer -Filter "*.exe" -File)
-          if ($installers.Count -ne 1) { throw "Expected exactly one installer" }
+          $installers = @(Get-ChildItem installer -Recurse -Filter "*.exe" -File)
+          if ($installers.Count -ne 1) { throw "Expected exactly one installer; found $($installers.Count)" }
           $hash = (Get-FileHash $installers[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $hash | Set-Content (Join-Path $env:NANFU_GUI_REPORT_DIR "installer-sha256.txt")
           $install = Start-Process -FilePath $installers[0].FullName -ArgumentList "/S" -Wait -PassThru
