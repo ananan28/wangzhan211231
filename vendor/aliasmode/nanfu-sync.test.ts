@@ -8,6 +8,7 @@ import {
   exportNanfuEnvironment,
   planNanfuSync,
   syncNanfuEnvironments,
+  type NanfuEnvironmentConfig,
   type NanfuLocalRecord,
   type NanfuRemoteRecord,
 } from "./nanfu-sync.ts";
@@ -79,7 +80,7 @@ test("environment payloads round-trip through AES-GCM and carry no plaintext", (
   const envelope = local.encrypt(config);
   expect(envelope).not.toContain("Work X");
   expect(envelope).not.toContain("proxy.example");
-  expect(cipher().decrypt(envelope)).toEqual(config);
+  expect(cipher().decrypt<NanfuEnvironmentConfig>(envelope)).toEqual(config);
 });
 
 test("a wrong passphrase and a tampered payload both fail closed", () => {
@@ -98,7 +99,7 @@ test("a second device adopts the salt carried by the first encrypted environment
   const first = cipher();
   const envelope = first.encrypt(exportNanfuEnvironment(profile(), new Map(), "2026-10-29T00:00:00.000Z"));
   const second = new NanfuSyncCipher("correct horse battery staple");
-  expect(second.decrypt(envelope).id).toBe("p1");
+  expect(second.decrypt<NanfuEnvironmentConfig>(envelope).id).toBe("p1");
   expect(second.keyParams().salt).toBe(JSON.parse(envelope).salt);
 });
 
@@ -149,20 +150,20 @@ test("the client talks to PostgREST with the anon key and the user's bearer toke
 
 test("upsert asks for a merge and stores the next version", async () => {
   let body: any;
-  let prefer: string | null = null;
+  const upsert: { prefer: string | null } = { prefer: null };
   const client = new NanfuSyncClient({
     baseUrl: "https://nanfu.supabase.co",
     anonKey: "anon-key",
     accessToken: async () => "access-token",
     fetchFn: async (url, init) => {
       expect(String(url)).toContain("on_conflict=user_id,environment_id");
-      prefer = new Headers(init?.headers).get("prefer");
+      upsert.prefer = new Headers(init?.headers).get("prefer");
       body = JSON.parse(String(init?.body));
       return Response.json([{ environment_id: "p1", version: 4, updated_at: "2026-10-29T01:00:00Z", payload: body[0].payload }]);
     },
   });
   const stored = await client.upsert("user-uuid", "device-1", { id: "p1", version: 3, envelope: "ciphertext", dirty: true });
-  expect(prefer).toBe("resolution=merge-duplicates,return=representation");
+  expect(upsert.prefer).toBe("resolution=merge-duplicates,return=representation");
   expect(body).toEqual([{
     user_id: "user-uuid",
     environment_id: "p1",
