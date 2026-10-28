@@ -281,6 +281,8 @@ fn scrubbed_sidecar_command(app: &AppHandle) -> Result<Command, String> {
         .sidecar("aliasmode-sidecar")
         .map_err(|error| error.to_string())?
         .env("CLOAKBROWSER_DOWNLOAD_URL", "")
+        .env("ALIASMODE_FIREFOX_BINARY_PATH", "")
+        .env("ALIASMODE_FIREFOX_BINARY_SHA256", "")
         .env("ALIASMODE_ACCESS_TOKEN", "")
         .env("ALIASMODE_REFRESH_TOKEN", "")
         .env("ALIASMODE_DEVICE_CREDENTIAL", "")
@@ -386,7 +388,7 @@ fn should_present_unexpected_exit(shutting_down: bool) -> bool {
 pub async fn launch_and_verify(
     app: &AppHandle,
     data_dir: &Path,
-    firefox: &FirefoxRuntime,
+    firefox: Option<&FirefoxRuntime>,
     playwright_runtime: &Path,
     nonce: &str,
     agent_nonce: &str,
@@ -399,9 +401,12 @@ pub async fn launch_and_verify(
         .env("ALIASMODE_AGENT_NONCE", agent_nonce)
         .env("ALIASMODE_BACKGROUND", if background { "1" } else { "0" })
         .env("ALIASMODE_DESKTOP_VERSION", VERSION)
-        .env("ALIASMODE_PLAYWRIGHT_RUNTIME", playwright_runtime)
-        .env("ALIASMODE_FIREFOX_BINARY_PATH", &firefox.executable)
-        .env("ALIASMODE_FIREFOX_BINARY_SHA256", &firefox.sha256);
+        .env("ALIASMODE_PLAYWRIGHT_RUNTIME", playwright_runtime);
+    if let Some(firefox) = firefox {
+        command = command
+            .env("ALIASMODE_FIREFOX_BINARY_PATH", &firefox.executable)
+            .env("ALIASMODE_FIREFOX_BINARY_SHA256", &firefox.sha256);
+    }
     // Chromium 155 on Windows draws pages at the primary display's scale, as Chrome does there.
     // New profiles get a screen no smaller than that display; Firefox profiles get the display.
     // A Firefox window opens inside its available area (without the taskbar, or menu bar and Dock).

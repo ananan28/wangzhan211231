@@ -1,55 +1,11 @@
 import { expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prepareWindowsBundle, WINDOWS_SIDECAR_TARGET } from "./prepare-windows-bundle.ts";
+import { prepareWindowsBundle, stageAgentRuntime, WINDOWS_SIDECAR_TARGET } from "./prepare-windows-bundle.ts";
+import { WINDOWS_CHROMIUM_METADATA } from "../aliasmode-chromium.ts";
 import { MCP_MODE } from "../sidecar-entry.ts";
 import { ALIASMODE_VERSION } from "../version.ts";
-
-const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
-
-function firefoxArchive(executable = "owned-firefox"): { bytes: Uint8Array; archiveSha256: string; executableSha256: string } {
-  const name = new TextEncoder().encode("firefox/aliasmode.exe");
-  const contents = new TextEncoder().encode(executable);
-  const local = new Uint8Array(30 + name.length + contents.length);
-  const localView = new DataView(local.buffer);
-  localView.setUint32(0, 0x04034b50, true);
-  localView.setUint16(4, 20, true);
-  localView.setUint32(18, contents.length, true);
-  localView.setUint32(22, contents.length, true);
-  localView.setUint16(26, name.length, true);
-  local.set(name, 30);
-  local.set(contents, 30 + name.length);
-
-  const central = new Uint8Array(46 + name.length);
-  const centralView = new DataView(central.buffer);
-  centralView.setUint32(0, 0x02014b50, true);
-  centralView.setUint16(4, 20, true);
-  centralView.setUint16(6, 20, true);
-  centralView.setUint32(20, contents.length, true);
-  centralView.setUint32(24, contents.length, true);
-  centralView.setUint16(28, name.length, true);
-  central.set(name, 46);
-
-  const end = new Uint8Array(22);
-  const endView = new DataView(end.buffer);
-  endView.setUint32(0, 0x06054b50, true);
-  endView.setUint16(8, 1, true);
-  endView.setUint16(10, 1, true);
-  endView.setUint32(12, central.length, true);
-  endView.setUint32(16, local.length, true);
-
-  const bytes = new Uint8Array(local.length + central.length + end.length);
-  bytes.set(local);
-  bytes.set(central, local.length);
-  bytes.set(end, local.length + central.length);
-  return {
-    bytes,
-    archiveSha256: createHash("sha256").update(bytes).digest("hex"),
-    executableSha256: sha256(executable),
-  };
-}
 
 test("Windows sidecar supports x64 CPUs without AVX2", () => {
   expect(WINDOWS_SIDECAR_TARGET).toBe("bun-windows-x64-baseline");
@@ -77,7 +33,6 @@ function workspace(): string {
   const cwd = mkdtempSync(join(tmpdir(), "aliasmode-windows-bundle-"));
   mkdirSync(join(cwd, "src-tauri"), { recursive: true });
   writeFileSync(join(cwd, "playwright-worker.mjs"), "worker");
-  writeFileSync(join(cwd, "firefox-worker.mjs"), "firefox worker");
   mkdirSync(join(cwd, "agent"), { recursive: true });
   for (const file of [
     "mcp-host.mjs",
@@ -108,89 +63,117 @@ function workspace(): string {
   return cwd;
 }
 
-test("Windows bundle preparation packages owned Firefox with verified hashes and no CloakBrowser", async () => {
+async function installTestNode(root: string): Promise<void> {
+  mkdirSync(join(root, "node"), { recursive: true });
+  writeFileSync(join(root, "node", "node.exe"), "node");
+}
+
+const compileTestSidecar = async (output: string) => { writeFileSync(output, "sidecar"); };
+
+test("Windows bundle prepares Chromium without Firefox input or resources", async () => {
   const cwd = workspace();
-  const firefox = firefoxArchive();
   const staging = join(cwd, "src-tauri", "target", "desktop-staging");
+  const resources = join(cwd, "src-tauri", "resources");
   mkdirSync(staging, { recursive: true });
   writeFileSync(join(staging, "stale"), "remove");
+  mkdirSync(join(resources, "firefox"), { recursive: true });
+  writeFileSync(join(resources, "firefox", "aliasmode.exe"), "stale runtime");
   try {
     const metadata = await prepareWindowsBundle({
-      cwd,
-      platform: "win32",
-      arch: "x64",
-      firefoxArchive: firefox,
-      compileSidecar: async (output) => { writeFileSync(output, "sidecar"); },
-      installNode: async (root) => {
-        mkdirSync(join(root, "node"), { recursive: true });
-        writeFileSync(join(root, "node", "node.exe"), "node");
-      },
+      cwd, platform: "win32", arch: "x64",
+      compileSidecar: compileTestSidecar, installNode: installTestNode,
     });
-
-    // The app downloads CloakBrowser on first use, so the installer carries none.
-    expect(metadata).toEqual({
-      firefox: {
-        executable: "firefox/aliasmode.exe",
-        sha256: firefox.executableSha256,
-        version: "156.0.1-beta.36",
-        archiveSha256: firefox.archiveSha256,
-      },
-    });
+    expect(metadata).toEqual({ chromium: WINDOWS_CHROMIUM_METADATA });
+    expect(metadata.chromium.version).toBe("155.0.8059.85-aliasmode.4");
+    expect(metadata.chromium.sha256).toBe("0ef4de1bef7c12534031318e07ac89fa7942916a3abc89057985aafefbca619f");
+    expect(metadata.chromium.archiveSha256).toBe("cfea275e4b7f3274b701e64c0483b46cbf6cd12ead9a6cfda6ff77b2680e7a23");
     expect(existsSync(join(staging, "stale"))).toBe(false);
-    expect(existsSync(join(cwd, "src-tauri", "resources", "cloakbrowser"))).toBe(false);
-    expect(readFileSync(join(cwd, "src-tauri", "resources", "firefox", "firefox", "aliasmode.exe"), "utf8")).toBe("owned-firefox");
-    expect(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "node", "node.exe"), "utf8")).toBe("node");
-    // Python scripts download their runtime on first use; the bundle carries no Python.
-    expect(existsSync(join(cwd, "src-tauri", "resources", "playwright", "python"))).toBe(false);
-    expect(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "agent", "script-runner.mjs"), "utf8")).toBe("script-runner.mjs");
-    expect(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "agent", "script-runner.py"), "utf8")).toBe("script-runner.py");
-    expect(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "worker.mjs"), "utf8")).toBe("worker");
-    expect(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "playwright-worker.mjs"), "utf8")).toBe("worker");
-    expect(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "firefox-worker.mjs"), "utf8")).toBe("firefox worker");
-    expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "node_modules", "playwright-core", "package.json"), "utf8")).version).toBe("1.58.2");
-    expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "node_modules", "ws", "package.json"), "utf8")).version).toBe("8.21.0");
-    expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "node_modules", "@modelcontextprotocol", "sdk", "package.json"), "utf8")).version).toBe("1.30.0");
-    expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "node_modules", "@playwright", "mcp", "package.json"), "utf8")).version).toBe("0.0.56");
-    expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "node_modules", "playwright", "package.json"), "utf8")).version).toBe("1.58.0-alpha-2026-01-16");
-    expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "node_modules", "zod", "package.json"), "utf8")).version).toBe("1.0.0");
-    expect(readFileSync(join(cwd, "src-tauri", "resources", "playwright", "agent", "mcp-host.mjs"), "utf8")).toBe("mcp-host.mjs");
+    expect(existsSync(join(resources, "firefox"))).toBe(false);
+    expect(existsSync(join(resources, "cloakbrowser"))).toBe(false);
+    expect(existsSync(join(resources, "playwright", "firefox-worker.mjs"))).toBe(false);
+    expect(readFileSync(join(resources, "playwright", "node", "node.exe"), "utf8")).toBe("node");
+    expect(existsSync(join(resources, "playwright", "python"))).toBe(false);
+    expect(readFileSync(join(resources, "playwright", "agent", "script-runner.mjs"), "utf8")).toBe("script-runner.mjs");
+    expect(readFileSync(join(resources, "playwright", "agent", "script-runner.py"), "utf8")).toBe("script-runner.py");
+    expect(readFileSync(join(resources, "playwright", "worker.mjs"), "utf8")).toBe("worker");
+    expect(readFileSync(join(resources, "playwright", "playwright-worker.mjs"), "utf8")).toBe("worker");
+    for (const [name, version] of Object.entries({
+      "playwright-core": "1.58.2", "ws": "8.21.0", "@modelcontextprotocol/sdk": "1.30.0",
+      "@playwright/mcp": "0.0.56", "playwright": "1.58.0-alpha-2026-01-16", "zod": "1.0.0",
+    })) {
+      const manifest = JSON.parse(readFileSync(join(resources, "playwright", "node_modules", ...name.split("/"), "package.json"), "utf8"));
+      expect(manifest.version).toBe(version);
+    }
+    expect(readFileSync(join(resources, "playwright", "agent", "mcp-host.mjs"), "utf8")).toBe("mcp-host.mjs");
     expect(readFileSync(join(cwd, "src-tauri", "binaries", "aliasmode-sidecar-x86_64-pc-windows-msvc.exe"), "utf8")).toBe("sidecar");
     expect(JSON.parse(readFileSync(join(cwd, "src-tauri", "generated", "browser.json"), "utf8"))).toEqual(metadata);
     expect(readFileSync(join(cwd, "src-tauri", "generated", "VERSION.txt"), "utf8")).toBe(`${ALIASMODE_VERSION}\n`);
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("Windows bundle rejects a replaced Node archive", async () => {
+  const cwd = workspace();
+  try {
+    await expect(prepareWindowsBundle({
+      cwd, platform: "win32", arch: "x64", compileSidecar: compileTestSidecar,
+      downloadNode: async () => new TextEncoder().encode("replaced Node archive"),
+    })).rejects.toThrow("official Node runtime SHA-256 mismatch");
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("Windows bundle rejects a missing Node executable", async () => {
+  const cwd = workspace();
+  try {
+    await expect(prepareWindowsBundle({
+      cwd, platform: "win32", arch: "x64", compileSidecar: compileTestSidecar,
+      installNode: async () => {},
+    })).rejects.toThrow("official Node runtime is incomplete");
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("Windows bundle still rejects missing Playwright workers", async () => {
+  const cwd = workspace();
+  rmSync(join(cwd, "playwright-worker.mjs"));
+  try {
+    await expect(prepareWindowsBundle({
+      cwd, platform: "win32", arch: "x64", compileSidecar: compileTestSidecar,
+      installNode: installTestNode,
+    })).rejects.toThrow();
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("Windows bundle still enforces pinned Playwright versions", async () => {
+  const cwd = workspace();
+  writeFileSync(join(cwd, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "0.0.0" }));
+  try {
+    await expect(prepareWindowsBundle({
+      cwd, platform: "win32", arch: "x64", compileSidecar: compileTestSidecar,
+      installNode: installTestNode,
+    })).rejects.toThrow("desktop dependency version mismatch: playwright-core");
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("non-Windows agent staging keeps the Firefox worker", () => {
+  for (const platform of ["darwin", "linux"] as const) {
+    const cwd = workspace();
+    const target = join(cwd, "staged", platform);
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(cwd, "firefox-worker.mjs"), "firefox worker");
+    try {
+      stageAgentRuntime(cwd, target, platform);
+      expect(readFileSync(join(target, "firefox-worker.mjs"), "utf8")).toBe("firefox worker");
+      expect(readFileSync(join(target, "playwright-worker.mjs"), "utf8")).toBe("worker");
+    } finally { rmSync(cwd, { recursive: true, force: true }); }
   }
 });
 
-test("Windows bundle preparation rejects a Firefox archive hash mismatch", async () => {
-  const cwd = workspace();
-  const archive = firefoxArchive();
-  try {
-    await expect(prepareWindowsBundle({
-      cwd,
-      platform: "win32",
-      arch: "x64",
-      firefoxArchive: { ...archive, archiveSha256: sha256("replaced") },
-      compileSidecar: async (output) => { writeFileSync(output, "sidecar"); },
-    })).rejects.toThrow("Firefox archive SHA-256 does not match the approved CI artifact");
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test("Windows bundle preparation rejects a Firefox executable hash mismatch", async () => {
-  const cwd = workspace();
-  const archive = firefoxArchive();
-  try {
-    await expect(prepareWindowsBundle({
-      cwd,
-      platform: "win32",
-      arch: "x64",
-      firefoxArchive: { ...archive, executableSha256: sha256("replaced") },
-      compileSidecar: async (output) => { writeFileSync(output, "sidecar"); },
-    })).rejects.toThrow("Firefox executable does not match the approved SHA-256");
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
+test("desktop resource manifests keep Firefox on non-Windows targets only", () => {
+  const root = join(import.meta.dir, "..", "src-tauri");
+  const base = JSON.parse(readFileSync(join(root, "tauri.conf.json"), "utf8"));
+  expect(base.bundle.resources).toEqual({ "resources/playwright/": "playwright/" });
+  for (const platform of ["macos", "linux"]) {
+    const override = JSON.parse(readFileSync(join(root, `tauri.${platform}.conf.json`), "utf8"));
+    expect(override.bundle.resources["resources/firefox/"]).toBe("firefox/");
   }
 });
 

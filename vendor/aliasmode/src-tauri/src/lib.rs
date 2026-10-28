@@ -467,8 +467,13 @@ pub fn run() {
             credentials::set_secret_dir(&data_dir);
 
             let resource_dir = app.path().resource_dir()?;
-            let mut firefox = browser::verify_firefox_resource(&resource_dir).map_err(boxed)?;
-            firefox.executable = cli_compatible_windows_path(&firefox.executable);
+            let firefox = if cfg!(windows) {
+                None
+            } else {
+                let mut runtime = browser::verify_firefox_resource(&resource_dir).map_err(boxed)?;
+                runtime.executable = cli_compatible_windows_path(&runtime.executable);
+                Some(runtime)
+            };
             let playwright_runtime = cli_compatible_windows_path(
                 &resource_dir
                     .join("playwright")
@@ -495,7 +500,7 @@ pub fn run() {
             if !playwright_manifest.is_file()
                 || !node_executable.is_file()
                 || !worker_script.is_file()
-                || !firefox_worker_script.is_file()
+                || (!cfg!(windows) && !firefox_worker_script.is_file())
                 || !playwright_worker_script.is_file()
                 || !agent_root.join("mcp-host.mjs").is_file()
                 || !agent_root.join("playwright-proxy.mjs").is_file()
@@ -535,7 +540,7 @@ pub fn run() {
             let (sidecar, port) = tauri::async_runtime::block_on(sidecar::launch_and_verify(
                 &handle,
                 &data_dir,
-                &firefox,
+                firefox.as_ref(),
                 &playwright_runtime,
                 &nonce,
                 &agent_nonce,

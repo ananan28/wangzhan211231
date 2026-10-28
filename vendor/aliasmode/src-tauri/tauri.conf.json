@@ -21,7 +21,6 @@
     "icon": ["icons/icon.ico"],
     "externalBin": ["binaries/aliasmode-sidecar"],
     "resources": {
-      "resources/firefox/": "firefox/",
       "resources/playwright/": "playwright/"
     },
     "windows": {

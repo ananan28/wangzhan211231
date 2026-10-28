@@ -35,6 +35,13 @@ const WINDOWS_BUILD = {
   // --aliasmode-keep-alive keeps the browser running after its last window closes.
   keepAlive: true,
 };
+export const WINDOWS_CHROMIUM_METADATA = {
+  executable: WINDOWS_BUILD.executable,
+  sha256: WINDOWS_BUILD.executableSha256,
+  version: `${WINDOWS_VERSION}-${WINDOWS_RELEASE}`,
+  archiveSha256: WINDOWS_BUILD.archiveSha256,
+} as const;
+
 // Upstream's Apostate v0.5.1 keeps its own Chromium version.
 const APOSTATE_VERSION = "155.0.8059.31";
 const APOSTATE_RELEASE = "https://github.com/heretic-tech/apostate/releases/download/v0.5.1";
