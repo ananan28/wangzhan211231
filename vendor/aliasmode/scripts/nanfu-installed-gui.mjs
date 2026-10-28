@@ -423,17 +423,25 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     ordinaryTabsShareCanvas: true,
     sameUaAcrossEnvironments: identityA.ua === identityB.ua,
     persistenceVerified: false,
+    rebuildableCacheClearedAfterStop: false,
   };
   await stage("ordinary-tab-sharing-boundary-verified");
   await closeProfile(first);
   await closeProfile(second);
   const restoredA = await openProfile(first, false);
   const restoredB = await openProfile(second, false);
-  assert.deepEqual(await isolationState(restoredA), stateA);
-  assert.deepEqual(await isolationState(restoredB), stateB);
+  const restartedA = await isolationState(restoredA);
+  const restartedB = await isolationState(restoredB);
+  // Account state must survive a stop; rebuildable CacheStorage/Service Worker
+  // trees are deliberately purged by the manager after a confirmed stop.
+  assert.deepEqual({ ...restartedA, cached: null }, stateA, "Account storage must survive restart");
+  assert.deepEqual({ ...restartedB, cached: null }, stateB, "Account storage must survive restart");
+  assert.equal(restartedA.cached, null, "Rebuildable CacheStorage is cleared after a confirmed stop");
+  assert.equal(restartedB.cached, null, "Rebuildable CacheStorage is cleared after a confirmed stop");
   assert.deepEqual(await identityState(restoredA), identityA);
   assert.deepEqual(await identityState(restoredB), identityB);
   report.isolation.persistenceVerified = true;
+  report.isolation.rebuildableCacheClearedAfterStop = true;
   await closeProfile(first);
   await closeProfile(second);
   await stage("installed-environment-storage-and-identity-restored");
