@@ -393,6 +393,9 @@ export async function captureNanfuFromBrowser(
     for (const origin of [...new Set(options.origins)]) {
       // DOMStorage only answers for the document the target currently shows.
       await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+      // Chrome's IndexedDB agent reports version 0 and no stores until the
+      // origin's metadata has been materialised in this renderer.
+      await page.evaluate(() => indexedDB.databases()).catch(() => {});
       const part = await captureNanfuFromCdp(cdpClient(pageSession), {
         origins: [origin],
         ...(options.indexedDB ? { indexedDB: options.indexedDB } : {}),
