@@ -34,6 +34,5 @@ jobs:
       - name: CDP export and import round trip
         env:
           NANFU_CDP_TEST: "1"
-          DEBUG: pw:browser
         run: bun test nanfu-transfer.cdp.test.ts
       - run: bun run typecheck
