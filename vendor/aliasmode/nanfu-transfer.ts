@@ -387,14 +387,31 @@ export async function captureNanfuFromBrowser(
   const browserSession = await context.browser()?.newBrowserCDPSession();
   await pageSession.send("DOMStorage.enable").catch(() => {});
   await pageSession.send("IndexedDB.enable").catch(() => {});
+  const cookieClient = browserSession ? cdpClient(browserSession) : undefined;
   try {
+    let capture: NanfuCdpCapture | undefined;
     for (const origin of [...new Set(options.origins)]) {
+      // DOMStorage only answers for the document the target currently shows.
       await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+      const part = await captureNanfuFromCdp(cdpClient(pageSession), {
+        origins: [origin],
+        ...(options.indexedDB ? { indexedDB: options.indexedDB } : {}),
+        ...(cookieClient ? { cookieClient } : {}),
+      });
+      if (!capture) {
+        capture = part;
+      } else {
+        capture.origins.push(...part.origins);
+        capture.serviceWorkers.push(...part.serviceWorkers);
+        capture.unreadableOrigins.push(...part.unreadableOrigins);
+      }
     }
-    const capture = await captureNanfuFromCdp(cdpClient(pageSession), {
-      ...options,
-      ...(browserSession ? { cookieClient: cdpClient(browserSession) } : {}),
-    });
+    if (!capture) {
+      capture = await captureNanfuFromCdp(cdpClient(pageSession), {
+        origins: [],
+        ...(cookieClient ? { cookieClient } : {}),
+      });
+    }
     if (!browserSession) capture.cookies = (await context.cookies()).map(playwrightCookieRecord);
     return capture;
   } finally {

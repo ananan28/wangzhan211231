@@ -87,9 +87,16 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const child of processes) child.kill();
+  await Promise.all(processes.map((child) => child.exited.catch(() => 0)));
   serverA?.stop(true);
   serverB?.stop(true);
-  for (const profile of profiles) rmSync(profile, { recursive: true, force: true });
+  for (const profile of profiles) {
+    try {
+      rmSync(profile, { recursive: true, force: true });
+    } catch {
+      // A killed browser may still hold its profile briefly; it lives in temp.
+    }
+  }
 });
 
 test.skipIf(!enabled)("a live environment survives export and import without losing login state", async () => {
