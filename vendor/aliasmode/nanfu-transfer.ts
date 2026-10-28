@@ -393,24 +393,55 @@ export async function captureNanfuFromBrowser(
     for (const origin of [...new Set(options.origins)]) {
       // DOMStorage only answers for the document the target currently shows.
       await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
-      // Chrome's IndexedDB agent reports version 0 and no stores until the
-      // origin's metadata has been materialised in this renderer.
-      await page.evaluate(async () => {
-        for (const info of await indexedDB.databases()) {
-          if (!info.name) continue;
-          await new Promise<void>((resolve) => {
-            const request = indexedDB.open(info.name!);
-            request.onsuccess = () => { request.result.close(); resolve(); };
-            request.onerror = () => resolve();
-            request.onblocked = () => resolve();
-          });
-        }
-      }).catch(() => {});
       const part = await captureNanfuFromCdp(cdpClient(pageSession), {
         origins: [origin],
-        ...(options.indexedDB ? { indexedDB: options.indexedDB } : {}),
         ...(cookieClient ? { cookieClient } : {}),
       });
+      if (options.indexedDB === "all") {
+        // The IndexedDB CDP agent reports version 0 and no stores for a fresh
+        // renderer, so enumerate the origin's databases from inside the page.
+        const entry = part.origins[0];
+        const databases = await page.evaluate(async () => {
+          const out: any[] = [];
+          for (const info of await indexedDB.databases()) {
+            if (!info.name) continue;
+            const db = await new Promise<IDBDatabase>((resolve, reject) => {
+              const request = indexedDB.open(info.name!);
+              request.onsuccess = () => resolve(request.result);
+              request.onerror = () => reject(request.error);
+            });
+            const stores: any[] = [];
+            for (const storeName of Array.from(db.objectStoreNames)) {
+              const store = db.transaction(storeName, "readonly").objectStore(storeName);
+              const records = await new Promise<any[]>((resolve, reject) => {
+                const request = store.openCursor();
+                const rows: any[] = [];
+                request.onsuccess = () => {
+                  const cursor = request.result;
+                  if (cursor) { rows.push({ key: cursor.key, value: cursor.value }); cursor.continue(); }
+                  else resolve(rows);
+                };
+                request.onerror = () => reject(request.error);
+              });
+              stores.push({
+                name: storeName,
+                keyPath: store.keyPath,
+                autoIncrement: store.autoIncrement,
+                indexes: Array.from(store.indexNames).map((indexName) => {
+                  const index = store.index(indexName);
+                  return { name: indexName, keyPath: index.keyPath, unique: index.unique, multiEntry: index.multiEntry };
+                }),
+                records,
+              });
+            }
+            const version = db.version;
+            db.close();
+            out.push({ name: info.name, version, stores });
+          }
+          return out;
+        }).catch(() => []);
+        if (entry && Array.isArray(databases) && databases.length > 0) entry.indexedDB = databases;
+      }
       if (!capture) {
         capture = part;
       } else {
