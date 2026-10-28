@@ -207,7 +207,7 @@ export class NanfuSyncClient {
   async list(userId: string): Promise<NanfuRemoteRecord[]> {
     const query = new URLSearchParams({
       select: "environment_id,version,updated_at,device_id,payload,deleted",
-      user_id: `eq.${userId}`,
+      owner_user_id: `eq.${userId}`,
       order: "environment_id.asc",
     });
     const rows = await this.request(`/${this.table}?${query}`, { method: "GET" });
@@ -223,12 +223,12 @@ export class NanfuSyncClient {
 
   async upsert(userId: string, deviceId: string, record: NanfuLocalRecord): Promise<NanfuRemoteRecord> {
     const rows = await this.request(
-      `/${this.table}?on_conflict=user_id,environment_id`,
+      `/${this.table}?on_conflict=owner_user_id,environment_id`,
       {
         method: "POST",
         headers: { prefer: "resolution=merge-duplicates,return=representation" },
         body: JSON.stringify([{
-          user_id: userId,
+          owner_user_id: userId,
           environment_id: record.id,
           version: record.version + 1,
           device_id: deviceId,
@@ -250,7 +250,7 @@ export class NanfuSyncClient {
 
   async remove(userId: string, id: string): Promise<void> {
     const query = new URLSearchParams({
-      user_id: `eq.${userId}`,
+      owner_user_id: `eq.${userId}`,
       environment_id: `eq.${id}`,
     });
     await this.request(`/${this.table}?${query}`, { method: "DELETE" });

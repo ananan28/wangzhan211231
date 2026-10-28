@@ -28,7 +28,7 @@ jobs:
           bun-version: "1.2.21"
       - run: bun install --frozen-lockfile
       - name: Account and sync regression
-        run: bun test nanfu-account.test.ts nanfu-sync.test.ts nanfu-transfer.test.ts
+        run: bun test nanfu-account.test.ts nanfu-sync.test.ts nanfu-transfer.test.ts nanfu-service.test.ts
       - name: Install Playwright Chromium
         run: node node_modules/playwright-core/cli.js install chromium
       - name: CDP export and import round trip
@@ -36,3 +36,25 @@ jobs:
           NANFU_CDP_TEST: "1"
         run: bun test nanfu-transfer.cdp.test.ts
       - run: bun run typecheck
+  rls:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Row-level security proof (two tenants, orgs, transfers)
+        env:
+          PGPASSWORD: postgres
+        run: >-
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1
+          -f supabase/tests/nanfu_transfers_rls.sql

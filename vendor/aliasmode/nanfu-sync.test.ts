@@ -143,7 +143,7 @@ test("the client talks to PostgREST with the anon key and the user's bearer toke
   const rows = await client.list("user-uuid");
   expect(rows).toEqual([{ id: "p1", version: 2, updatedAt: "2026-10-29T00:00:00Z", envelope: "env" }]);
   expect(seen[0]?.url).toContain("https://nanfu.supabase.co/rest/v1/nanfu_environments?");
-  expect(seen[0]?.url).toContain("user_id=eq.user-uuid");
+  expect(seen[0]?.url).toContain("owner_user_id=eq.user-uuid");
   expect(seen[0]?.headers.get("apikey")).toBe("anon-key");
   expect(seen[0]?.headers.get("authorization")).toBe("Bearer access-token");
 });
@@ -156,7 +156,7 @@ test("upsert asks for a merge and stores the next version", async () => {
     anonKey: "anon-key",
     accessToken: async () => "access-token",
     fetchFn: async (url, init) => {
-      expect(String(url)).toContain("on_conflict=user_id,environment_id");
+      expect(String(url)).toContain("on_conflict=owner_user_id,environment_id");
       upsert.prefer = new Headers(init?.headers).get("prefer");
       body = JSON.parse(String(init?.body));
       return Response.json([{ environment_id: "p1", version: 4, updated_at: "2026-10-29T01:00:00Z", payload: body[0].payload }]);
@@ -165,7 +165,7 @@ test("upsert asks for a merge and stores the next version", async () => {
   const stored = await client.upsert("user-uuid", "device-1", { id: "p1", version: 3, envelope: "ciphertext", dirty: true });
   expect(upsert.prefer).toBe("resolution=merge-duplicates,return=representation");
   expect(body).toEqual([{
-    user_id: "user-uuid",
+    owner_user_id: "user-uuid",
     environment_id: "p1",
     version: 4,
     device_id: "device-1",

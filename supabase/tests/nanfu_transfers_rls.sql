@@ -1,0 +1,836 @@
+-- Row-level-security proof for the Nanfu transfer table.
+--
+-- Runs on a plain Postgres 16 in CI: this file recreates the small parts of
+-- Supabase that the schema depends on (auth.users, auth.uid(), auth.jwt()) and
+-- then exercises the policies as two real database roles. No network, no real
+-- project, no test rows in the production database.
+--
+-- Run: psql -v ON_ERROR_STOP=1 -f supabase/tests/nanfu_transfers_rls.sql
+
+\set ON_ERROR_STOP on
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    create role authenticated nologin;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    create role anon nologin;
+  end if;
+end $$;
+
+create schema if not exists auth;
+
+create table if not exists auth.users (
+  id uuid primary key,
+  email text
+);
+
+-- Same shape as Supabase's helpers: they read the JWT claims PostgREST sets.
+create or replace function auth.uid() returns uuid
+language sql stable
+as $$
+  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+$$;
+
+create or replace function auth.jwt() returns jsonb
+language sql stable
+as $$
+  select coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb)
+$$;
+
+grant usage on schema auth to authenticated;
+grant execute on function auth.uid() to authenticated;
+grant execute on function auth.jwt() to authenticated;
+
+-- Applied twice on purpose: the operator pastes this file after every update.
+\i supabase/migrations/20261029_nanfu_environments.sql
+\i supabase/migrations/20261029_nanfu_environments.sql
+
+insert into auth.users (id, email) values
+  ('11111111-1111-1111-1111-111111111111', 'sender@example.com'),
+  ('22222222-2222-2222-2222-222222222222', 'recipient@example.com'),
+  ('33333333-3333-3333-3333-333333333333', 'stranger@example.com')
+on conflict (id) do nothing;
+
+-- Seeded as the database owner, which bypasses RLS on purpose so the fixtures
+-- exist regardless of what the policies allow the app to do.
+delete from public.nanfu_transfers where sender_id = '11111111-1111-1111-1111-111111111111';
+insert into public.nanfu_transfers
+  (id, sender_id, sender_email, recipient_email, environment_id, environment_name, payload, status, created_at, expires_at)
+values
+  ('aaaaaaaa-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'sender@example.com', 'recipient@example.com',
+   'env-1', 'Mail box', '{"v":1,"ct":"Y2lwaGVy"}', 'pending', now() - interval '1 hour', now() + interval '6 days'),
+  ('aaaaaaaa-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', 'sender@example.com', 'recipient@example.com',
+   'env-expired', 'Old box', '{"v":1,"ct":"b2xk"}', 'pending', now() - interval '10 days', now() - interval '3 days');
+
+-- ---------------------------------------------------------------------------
+-- 1. Visibility: sender sees own rows, recipient only the live addressed one,
+--    a stranger sees nothing. This is the anti-exfiltration proof.
+-- ---------------------------------------------------------------------------
+begin;
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+select set_config('request.jwt.claims', '{"sub":"11111111-1111-1111-1111-111111111111","email":"sender@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_transfers;
+  if n <> 2 then raise exception 'sender should see 2 own transfers, saw %', n; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
+select set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222","email":"recipient@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_transfers;
+  if n <> 1 then raise exception 'recipient should see only the live transfer, saw %', n; end if;
+  select count(*) into n from public.nanfu_transfers where environment_id = 'env-expired';
+  if n <> 0 then raise exception 'recipient must not see an expired transfer'; end if;
+  select count(*) into n from public.nanfu_transfers where id = 'aaaaaaaa-0000-0000-0000-000000000001';
+  if n <> 1 then raise exception 'recipient must see the addressed transfer'; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '33333333-3333-3333-3333-333333333333', true);
+select set_config('request.jwt.claims', '{"sub":"33333333-3333-3333-3333-333333333333","email":"stranger@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_transfers;
+  if n <> 0 then raise exception 'stranger read % foreign transfers', n; end if;
+  select count(*) into n from public.nanfu_transfers where id = 'aaaaaaaa-0000-0000-0000-000000000001';
+  if n <> 0 then raise exception 'stranger read a transfer by id'; end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 2. A recipient cannot rewrite a transfer: no update policy applies.
+-- ---------------------------------------------------------------------------
+begin;
+select set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
+select set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222","email":"recipient@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare changed bigint;
+begin
+  update public.nanfu_transfers set status = 'accepted'
+   where id = 'aaaaaaaa-0000-0000-0000-000000000001';
+  get diagnostics changed = row_count;
+  if changed <> 0 then raise exception 'recipient updated a row directly'; end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 3. A stranger cannot accept, and a recipient can only accept once.
+-- ---------------------------------------------------------------------------
+begin;
+select set_config('request.jwt.claim.sub', '33333333-3333-3333-3333-333333333333', true);
+select set_config('request.jwt.claims', '{"sub":"33333333-3333-3333-3333-333333333333","email":"stranger@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare blocked boolean := false;
+begin
+  begin
+    perform public.nanfu_accept_transfer('aaaaaaaa-0000-0000-0000-000000000001');
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'stranger accepted a transfer'; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
+select set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222","email":"recipient@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare accepted record; blocked boolean := false;
+begin
+  select * into accepted from public.nanfu_accept_transfer('aaaaaaaa-0000-0000-0000-000000000001');
+  if accepted.payload <> '{"v":1,"ct":"Y2lwaGVy"}' then raise exception 'accept returned the wrong payload'; end if;
+  if accepted.environment_id <> 'env-1' then raise exception 'accept returned the wrong environment'; end if;
+  begin
+    perform public.nanfu_accept_transfer('aaaaaaaa-0000-0000-0000-000000000001');
+  exception when raise_exception then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'a transfer was accepted twice'; end if;
+  if exists (select 1 from public.nanfu_transfers) then raise exception 'accepted transfer still visible to recipient'; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+select set_config('request.jwt.claims', '{"sub":"11111111-1111-1111-1111-111111111111","email":"sender@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare accepted boolean;
+begin
+  select (status = 'accepted' and accepted_at is not null) into accepted
+    from public.nanfu_transfers where id = 'aaaaaaaa-0000-0000-0000-000000000001';
+  if accepted is not true then raise exception 'sender cannot see the accepted receipt'; end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 4. The sender may revoke, but may never swap the package or addressee.
+-- ---------------------------------------------------------------------------
+begin;
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+select set_config('request.jwt.claims', '{"sub":"11111111-1111-1111-1111-111111111111","email":"sender@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare blocked boolean := false; changed bigint;
+begin
+  begin
+    update public.nanfu_transfers
+       set payload = '{"v":1,"ct":"dGFtcGVyZWQ"}'
+     where id = 'aaaaaaaa-0000-0000-0000-000000000002';
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'sender rewrote the payload'; end if;
+
+  update public.nanfu_transfers set status = 'revoked'
+   where id = 'aaaaaaaa-0000-0000-0000-000000000002';
+  get diagnostics changed = row_count;
+  if changed <> 1 then raise exception 'sender could not revoke'; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
+select set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222","email":"recipient@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare blocked boolean := false;
+begin
+  if exists (select 1 from public.nanfu_transfers where environment_id = 'env-expired') then
+    raise exception 'recipient sees a revoked transfer';
+  end if;
+  begin
+    perform public.nanfu_accept_transfer('aaaaaaaa-0000-0000-0000-000000000002');
+  exception when raise_exception then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'revoked transfer was accepted'; end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 5. A user cannot send on behalf of someone else.
+-- ---------------------------------------------------------------------------
+begin;
+select set_config('request.jwt.claim.sub', '33333333-3333-3333-3333-333333333333', true);
+select set_config('request.jwt.claims', '{"sub":"33333333-3333-3333-3333-333333333333","email":"stranger@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare blocked boolean := false;
+begin
+  begin
+    insert into public.nanfu_transfers
+      (sender_id, sender_email, recipient_email, environment_id, payload)
+    values
+      ('22222222-2222-2222-2222-222222222222', 'recipient@example.com', 'stranger@example.com', 'forged', '{"v":1,"ct":"eA"}');
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'stranger forged a sender identity'; end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 6. Environment rows keep the original tenant isolation.
+-- ---------------------------------------------------------------------------
+begin;
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+select set_config('request.jwt.claims', '{"sub":"11111111-1111-1111-1111-111111111111","email":"sender@example.com","role":"authenticated"}', true);
+set local role authenticated;
+insert into public.nanfu_environments (owner_user_id, environment_id, payload)
+values ('11111111-1111-1111-1111-111111111111', 'env-1', '{"v":1,"ct":"b3du"}');
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
+select set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222","email":"recipient@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_environments;
+  if n <> 0 then raise exception 'recipient read % foreign environments', n; end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 7. Organization fixtures: one owner, one admin, one manager, two members.
+--    Everything below runs as `authenticated` with JWT claims, exactly like
+--    PostgREST, so the RPCs and policies are exercised, not bypassed.
+-- ---------------------------------------------------------------------------
+
+insert into auth.users (id, email) values
+  ('44444444-4444-4444-4444-444444444444', 'owner@example.com'),
+  ('55555555-5555-5555-5555-555555555555', 'admin@example.com'),
+  ('66666666-6666-6666-6666-666666666666', 'manager@example.com'),
+  ('77777777-7777-7777-7777-777777777777', 'member@example.com'),
+  ('88888888-8888-8888-8888-888888888888', 'member2@example.com')
+on conflict (id) do nothing;
+
+-- Harness-only scratch table so one scenario can hand a code/id to the next.
+create table if not exists public.nanfu_test_codes (label text primary key, code text not null);
+grant select, insert, update, delete on public.nanfu_test_codes to authenticated;
+
+begin;
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","email":"owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare blocked boolean := false;
+begin
+  perform public.nanfu_org_create('测试团队');
+  if (select count(*) from public.nanfu_orgs) <> 1 then raise exception 'org was not created'; end if;
+  if (select identity from public.nanfu_org_members where user_id = auth.uid()) <> 'owner' then
+    raise exception 'creator is not the owner';
+  end if;
+  begin
+    perform public.nanfu_org_create('second');
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'one account created two organizations'; end if;
+  insert into public.nanfu_test_codes (label, code)
+  select 'invite-admin', public.nanfu_org_create_invite('admin')::text;
+  insert into public.nanfu_test_codes (label, code)
+  select 'invite-manager', public.nanfu_org_create_invite('manager', r.id)
+    from public.nanfu_org_roles r where r.name = '经理';
+  insert into public.nanfu_test_codes (label, code)
+  select 'group-support', public.nanfu_org_create_group('客服组')::text;
+  insert into public.nanfu_test_codes (label, code)
+  select 'group-private', public.nanfu_org_create_group('私密组')::text;
+end $$;
+commit;
+
+-- Each invited account redeems its own code. A member already in the org
+-- cannot redeem a second one.
+begin;
+select set_config('request.jwt.claim.sub', '55555555-5555-5555-5555-555555555555', true);
+select set_config('request.jwt.claims', '{"sub":"55555555-5555-5555-5555-555555555555","email":"admin@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare blocked boolean := false;
+begin
+  perform public.nanfu_org_redeem_invite((select code from public.nanfu_test_codes where label = 'invite-admin'));
+  if (select identity from public.nanfu_org_members where user_id = auth.uid()) <> 'admin' then
+    raise exception 'admin invite produced the wrong identity';
+  end if;
+  begin
+    perform public.nanfu_org_redeem_invite((select code from public.nanfu_test_codes where label = 'invite-manager'));
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'an existing member joined twice'; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '66666666-6666-6666-6666-666666666666', true);
+select set_config('request.jwt.claims', '{"sub":"66666666-6666-6666-6666-666666666666","email":"manager@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  perform public.nanfu_org_redeem_invite((select code from public.nanfu_test_codes where label = 'invite-manager'));
+  if (select identity from public.nanfu_org_members where user_id = auth.uid()) <> 'manager' then
+    raise exception 'manager invite produced the wrong identity';
+  end if;
+end $$;
+commit;
+
+-- The subordinate invites are issued after the manager has joined, because the
+-- invite pins an existing manager.
+begin;
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","email":"owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  insert into public.nanfu_test_codes (label, code)
+  select 'invite-member', public.nanfu_org_create_invite('member', r.id, 2, '66666666-6666-6666-6666-666666666666')
+    from public.nanfu_org_roles r where r.name = '成员';
+  insert into public.nanfu_test_codes (label, code)
+  select 'invite-member2', public.nanfu_org_create_invite('member', r.id, 2, '66666666-6666-6666-6666-666666666666')
+    from public.nanfu_org_roles r where r.name = '成员';
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '77777777-7777-7777-7777-777777777777', true);
+select set_config('request.jwt.claims', '{"sub":"77777777-7777-7777-7777-777777777777","email":"member@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  perform public.nanfu_org_redeem_invite((select code from public.nanfu_test_codes where label = 'invite-member'));
+  if (select env_quota from public.nanfu_org_members where user_id = auth.uid()) <> 2 then
+    raise exception 'member invite did not carry the quota';
+  end if;
+  if (select manager_user_id from public.nanfu_org_members where user_id = auth.uid())
+     <> '66666666-6666-6666-6666-666666666666' then
+    raise exception 'member invite did not carry the manager';
+  end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '88888888-8888-8888-8888-888888888888', true);
+select set_config('request.jwt.claims', '{"sub":"88888888-8888-8888-8888-888888888888","email":"member2@example.com","role":"authenticated"}', true);
+set local role authenticated;
+select public.nanfu_org_redeem_invite((select code from public.nanfu_test_codes where label = 'invite-member2'));
+commit;
+
+-- The 客服组 grant is created once the member exists.
+begin;
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","email":"owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  perform public.nanfu_org_grant_group(
+    (select code::uuid from public.nanfu_test_codes where label = 'group-support'),
+    '77777777-7777-7777-7777-777777777777',
+    true
+  );
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 8. Windows: owner, admin, manager and members each create one; the member
+--    quota rejects the third window with a coded error.
+-- ---------------------------------------------------------------------------
+
+begin;
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","email":"owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+values ('44444444-4444-4444-4444-444444444444',
+        (select id from public.nanfu_orgs), 'env-o', '{"v":1,"ct":"b3duZXI="}');
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '55555555-5555-5555-5555-555555555555', true);
+select set_config('request.jwt.claims', '{"sub":"55555555-5555-5555-5555-555555555555","email":"admin@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare gid uuid;
+begin
+  select code::uuid into gid from public.nanfu_test_codes where label = 'group-support';
+  insert into public.nanfu_environments (owner_user_id, org_id, group_id, environment_id, payload)
+  values (auth.uid(), (select id from public.nanfu_orgs), gid, 'env-g', '{"v":1,"ct":"Z3JvdXA="}');
+  select code::uuid into gid from public.nanfu_test_codes where label = 'group-private';
+  insert into public.nanfu_environments (owner_user_id, org_id, group_id, environment_id, payload)
+  values (auth.uid(), (select id from public.nanfu_orgs), gid, 'env-x', '{"v":1,"ct":"cHJpdmF0ZQ=="}');
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '77777777-7777-7777-7777-777777777777', true);
+select set_config('request.jwt.claims', '{"sub":"77777777-7777-7777-7777-777777777777","email":"member@example.com","role":"authenticated"}', true);
+set local role authenticated;
+insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+values (auth.uid(), (select id from public.nanfu_orgs), 'env-b', '{"v":1,"ct":"bWVtYmVy"}');
+do $$
+declare blocked boolean := false;
+begin
+  begin
+    insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+    values (auth.uid(), (select id from public.nanfu_orgs), 'env-b3', '{"v":1,"ct":"b3Zlcg=="}');
+  exception when raise_exception then
+    if sqlerrm not like 'NANFU_ENV_QUOTA:%' then raise; end if;
+    blocked := true;
+  end;
+  if not blocked then raise exception 'a third window was created over a quota of 2'; end if;
+end $$;
+insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+values (auth.uid(), (select id from public.nanfu_orgs), 'env-b2', '{"v":1,"ct":"bWVtYmVyMg=="}');
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '88888888-8888-8888-8888-888888888888', true);
+select set_config('request.jwt.claims', '{"sub":"88888888-8888-8888-8888-888888888888","email":"member2@example.com","role":"authenticated"}', true);
+set local role authenticated;
+insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+values (auth.uid(), (select id from public.nanfu_orgs), 'env-c', '{"v":1,"ct":"bWVtYmVyMg=="}');
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '66666666-6666-6666-6666-666666666666', true);
+select set_config('request.jwt.claims', '{"sub":"66666666-6666-6666-6666-666666666666","email":"manager@example.com","role":"authenticated"}', true);
+set local role authenticated;
+insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+values (auth.uid(), (select id from public.nanfu_orgs), 'env-m', '{"v":1,"ct":"bWFuYWdlcg=="}');
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 9. Visibility: ungranted groups are invisible; managers see only their
+--    subtree; owner/admin see the whole organization.
+-- ---------------------------------------------------------------------------
+
+begin;
+select set_config('request.jwt.claim.sub', '77777777-7777-7777-7777-777777777777', true);
+select set_config('request.jwt.claims', '{"sub":"77777777-7777-7777-7777-777777777777","email":"member@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_environments;
+  if n <> 3 then raise exception 'member should see own 2 + granted group 1, saw %', n; end if;
+  if exists (select 1 from public.nanfu_environments where environment_id = 'env-x') then
+    raise exception 'member saw a window in an ungranted group';
+  end if;
+  if exists (select 1 from public.nanfu_environments where environment_id = 'env-o') then
+    raise exception 'member saw the owner window';
+  end if;
+  if exists (select 1 from public.nanfu_environments where environment_id = 'env-m') then
+    raise exception 'member saw an unrelated manager window';
+  end if;
+  select count(*) into n from public.nanfu_org_members;
+  if n <> 1 then raise exception 'member should only see their own member row, saw %', n; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '66666666-6666-6666-6666-666666666666', true);
+select set_config('request.jwt.claims', '{"sub":"66666666-6666-6666-6666-666666666666","email":"manager@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_environments;
+  if n <> 2 then raise exception 'manager should see own + subordinate window, saw %', n; end if;
+  if exists (select 1 from public.nanfu_environments where environment_id = 'env-b') then
+    raise exception 'manager saw a window outside the subtree';
+  end if;
+  select count(*) into n from public.nanfu_org_members;
+  if n <> 2 then raise exception 'manager should see self + subordinate, saw %', n; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '55555555-5555-5555-5555-555555555555', true);
+select set_config('request.jwt.claims', '{"sub":"55555555-5555-5555-5555-555555555555","email":"admin@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_environments;
+  if n <> 7 then raise exception 'admin should see all 7 org windows, saw %', n; end if;
+  select count(*) into n from public.nanfu_org_members;
+  if n <> 5 then raise exception 'admin should see all 5 members, saw %', n; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '33333333-3333-3333-3333-333333333333', true);
+select set_config('request.jwt.claims', '{"sub":"33333333-3333-3333-3333-333333333333","email":"stranger@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint; blocked boolean := false;
+begin
+  select count(*) into n from public.nanfu_environments;
+  if n <> 0 then raise exception 'stranger read % org windows', n; end if;
+  select count(*) into n from public.nanfu_org_members;
+  if n <> 0 then raise exception 'stranger read % member rows', n; end if;
+  begin
+    perform * from public.nanfu_org_overview();
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'stranger called the organization overview'; end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 10. Organization plan ceiling: a new window is rejected, existing ones stay.
+-- ---------------------------------------------------------------------------
+
+select set_config('request.jwt.claim.sub', '', true);
+update public.nanfu_orgs set plan_env_max = (select count(*) from public.nanfu_environments where org_id = public.nanfu_orgs.id);
+
+begin;
+select set_config('request.jwt.claim.sub', '77777777-7777-7777-7777-777777777777', true);
+select set_config('request.jwt.claims', '{"sub":"77777777-7777-7777-7777-777777777777","email":"member@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare blocked boolean := false; changed bigint;
+begin
+  begin
+    insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+    values (auth.uid(), (select id from public.nanfu_orgs), 'env-over', '{"v":1,"ct":"eA=="}');
+  exception when raise_exception then
+    if sqlerrm not like 'NANFU_ORG_QUOTA:%' then raise; end if;
+    blocked := true;
+  end;
+  if not blocked then raise exception 'organization ceiling did not reject the window'; end if;
+  update public.nanfu_environments set payload = '{"v":1,"ct":"dXBkYXRlZA=="}' where environment_id = 'env-b';
+  get diagnostics changed = row_count;
+  if changed <> 1 then raise exception 'an over-limit member could not edit an existing window'; end if;
+end $$;
+commit;
+
+update public.nanfu_orgs set plan_env_max = 0;
+
+-- ---------------------------------------------------------------------------
+-- 11. Lock is not disable: a locked member loses reads and writes, data stays.
+-- ---------------------------------------------------------------------------
+
+begin;
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","email":"owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  perform public.nanfu_org_set_member('77777777-7777-7777-7777-777777777777', null, null, null, null, true);
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '77777777-7777-7777-7777-777777777777', true);
+select set_config('request.jwt.claims', '{"sub":"77777777-7777-7777-7777-777777777777","email":"member@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint; changed bigint; blocked boolean := false;
+begin
+  select count(*) into n from public.nanfu_environments;
+  if n <> 0 then raise exception 'locked member still read % windows', n; end if;
+  update public.nanfu_environments set payload = '{"v":1,"ct":"eA=="}' where environment_id = 'env-b';
+  get diagnostics changed = row_count;
+  if changed <> 0 then raise exception 'locked member updated a window'; end if;
+  begin
+    insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+    values (auth.uid(), (select id from public.nanfu_orgs), 'env-locked', '{"v":1,"ct":"eA=="}');
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'locked member created a window'; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","email":"owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  perform public.nanfu_org_set_member('77777777-7777-7777-7777-777777777777', null, null, null, null, false);
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '77777777-7777-7777-7777-777777777777', true);
+select set_config('request.jwt.claims', '{"sub":"77777777-7777-7777-7777-777777777777","email":"member@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_environments;
+  if n <> 3 then raise exception 'unlocked member still cannot read the 3 windows, saw %', n; end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 12. Peer transfer: request, recipient accepts, both lists change.
+-- ---------------------------------------------------------------------------
+
+begin;
+select set_config('request.jwt.claim.sub', '77777777-7777-7777-7777-777777777777', true);
+select set_config('request.jwt.claims', '{"sub":"77777777-7777-7777-7777-777777777777","email":"member@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare tid uuid;
+begin
+  tid := public.nanfu_env_transfer_request('env-b', '88888888-8888-8888-8888-888888888888');
+  insert into public.nanfu_test_codes (label, code) values ('transfer', tid::text)
+  on conflict (label) do update set code = excluded.code;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '88888888-8888-8888-8888-888888888888', true);
+select set_config('request.jwt.claims', '{"sub":"88888888-8888-8888-8888-888888888888","email":"member2@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare tid uuid; outcome text; n bigint;
+begin
+  select code::uuid into tid from public.nanfu_test_codes where label = 'transfer';
+  select count(*) into n from public.nanfu_env_transfers where id = tid;
+  if n <> 1 then raise exception 'recipient cannot see the pending transfer'; end if;
+  outcome := public.nanfu_env_transfer_respond(tid, true);
+  if outcome <> 'accepted' then raise exception 'transfer answer was %', outcome; end if;
+  select count(*) into n from public.nanfu_environments;
+  if n <> 2 then raise exception 'recipient should own env-c and env-b, saw %', n; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '77777777-7777-7777-7777-777777777777', true);
+select set_config('request.jwt.claims', '{"sub":"77777777-7777-7777-7777-777777777777","email":"member@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_environments;
+  if n <> 2 then raise exception 'sender still sees the transferred window, count %', n; end if;
+  if exists (select 1 from public.nanfu_environments where environment_id = 'env-b') then
+    raise exception 'sender still owns env-b after acceptance';
+  end if;
+end $$;
+commit;
+
+-- The recipient is at their quota: a second offered window is refused now, not
+-- silently accepted later.
+begin;
+select set_config('request.jwt.claim.sub', '55555555-5555-5555-5555-555555555555', true);
+select set_config('request.jwt.claims', '{"sub":"55555555-5555-5555-5555-555555555555","email":"admin@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare blocked boolean := false;
+begin
+  begin
+    perform public.nanfu_env_transfer_request('env-g', '88888888-8888-8888-8888-888888888888');
+  exception when raise_exception then
+    if sqlerrm not like 'NANFU_ENV_QUOTA:%' then raise; end if;
+    blocked := true;
+  end;
+  if not blocked then raise exception 'a transfer over the recipient quota was accepted'; end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 13. Owner force: immediate move, recorded, sender loses access at once.
+-- ---------------------------------------------------------------------------
+
+begin;
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","email":"owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare moved integer; n bigint;
+begin
+  moved := public.nanfu_env_transfer_batch(
+    array['env-b2'],
+    '44444444-4444-4444-4444-444444444444',
+    '主账号收回'
+  );
+  if moved <> 1 then raise exception 'bulk transfer moved % windows', moved; end if;
+  if (select owner_user_id from public.nanfu_environments where environment_id = 'env-b2')
+     <> '44444444-4444-4444-4444-444444444444' then
+    raise exception 'window did not move to the owner';
+  end if;
+  select count(*) into n from public.nanfu_env_transfers
+   where environment_id = 'env-b2' and forced and status = 'accepted' and note = '主账号收回';
+  if n <> 1 then raise exception 'forced transfer left no record'; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '77777777-7777-7777-7777-777777777777', true);
+select set_config('request.jwt.claims', '{"sub":"77777777-7777-7777-7777-777777777777","email":"member@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  if exists (select 1 from public.nanfu_environments where environment_id = 'env-b2') then
+    raise exception 'sender still sees a forcibly reclaimed window';
+  end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 14. Unauthorized management calls fail loudly, never silently.
+-- ---------------------------------------------------------------------------
+
+begin;
+select set_config('request.jwt.claim.sub', '77777777-7777-7777-7777-777777777777', true);
+select set_config('request.jwt.claims', '{"sub":"77777777-7777-7777-7777-777777777777","email":"member@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare quota_blocked boolean := false; batch_blocked boolean := false;
+begin
+  begin
+    perform public.nanfu_org_set_quota('66666666-6666-6666-6666-666666666666', 9);
+  exception when insufficient_privilege then
+    quota_blocked := true;
+  end;
+  begin
+    perform public.nanfu_env_transfer_batch(array['env-g'], '77777777-7777-7777-7777-777777777777', 'x');
+  exception when insufficient_privilege then
+    batch_blocked := true;
+  end;
+  if not quota_blocked then raise exception 'a member changed another quota'; end if;
+  if not batch_blocked then raise exception 'a member forced a batch transfer'; end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 15. Removing a member: windows return to the owner, the account sees nothing.
+-- ---------------------------------------------------------------------------
+
+begin;
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","email":"owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare moved integer; n bigint;
+begin
+  moved := public.nanfu_org_remove_member('88888888-8888-8888-8888-888888888888', true);
+  if moved <> 2 then raise exception 'removing a member reclaimed % windows', moved; end if;
+  select count(*) into n from public.nanfu_environments
+   where environment_id in ('env-b', 'env-c')
+     and owner_user_id = '44444444-4444-4444-4444-444444444444';
+  if n <> 2 then raise exception 'reclaimed windows did not reach the owner'; end if;
+  select count(*) into n from public.nanfu_org_members
+   where user_id = '88888888-8888-8888-8888-888888888888';
+  if n <> 0 then raise exception 'removed member row survived'; end if;
+  select count(*) into n from public.nanfu_org_group_grants
+   where user_id = '88888888-8888-8888-8888-888888888888';
+  if n <> 0 then raise exception 'removed member kept group grants'; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '88888888-8888-8888-8888-888888888888', true);
+select set_config('request.jwt.claims', '{"sub":"88888888-8888-8888-8888-888888888888","email":"member2@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint; blocked boolean := false;
+begin
+  select count(*) into n from public.nanfu_environments;
+  if n <> 0 then raise exception 'removed member still reads % windows', n; end if;
+  begin
+    perform public.nanfu_org_overview();
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'removed member still uses the organization RPCs'; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '66666666-6666-6666-6666-666666666666', true);
+select set_config('request.jwt.claims', '{"sub":"66666666-6666-6666-6666-666666666666","email":"manager@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_environments;
+  if n <> 1 then raise exception 'manager still sees the removed subordinate, count %', n; end if;
+end $$;
+commit;
+
+drop table if exists public.nanfu_test_codes;
+
+select 'nanfu RLS proof passed' as result;
