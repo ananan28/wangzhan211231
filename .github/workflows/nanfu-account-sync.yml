@@ -1,0 +1,32 @@
+name: Nanfu account and sync tests
+on:
+  workflow_dispatch:
+  push:
+    branches: [qoder/nanfu-usability-20261028]
+    paths:
+      - .github/workflows/nanfu-account-sync.yml
+      - vendor/aliasmode/nanfu-*.ts
+      - supabase/**
+permissions:
+  contents: read
+concurrency:
+  group: nanfu-account-sync-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  tests:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: vendor/aliasmode
+    steps:
+      - name: Preserve line endings
+        run: git config --global core.autocrlf false
+        working-directory: ${{ github.workspace }}
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.21"
+      - run: bun install --frozen-lockfile
+      - name: Account and sync regression
+        run: bun test nanfu-account.test.ts nanfu-sync.test.ts nanfu-transfer.test.ts
+      - run: bun run typecheck
