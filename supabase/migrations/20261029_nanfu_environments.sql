@@ -190,9 +190,10 @@ begin
 
   if new.status = 'accepted' then
     if caller is null
-       or not (
+       or not coalesce(
          old.recipient_id = caller
-         or (old.recipient_id is null and lower(old.recipient_email) = lower(coalesce(auth.jwt() ->> 'email', '')))
+         or (old.recipient_id is null and lower(old.recipient_email) = lower(coalesce(auth.jwt() ->> 'email', ''))),
+         false
        ) then
       raise exception 'this transfer is not addressed to you' using errcode = '42501';
     end if;
@@ -252,7 +253,13 @@ begin
   if row.expires_at <= now() then
     raise exception 'this transfer has expired' using errcode = 'P0001';
   end if;
-  if not (row.recipient_id = caller or (row.recipient_id is null and lower(row.recipient_email) = caller_email)) then
+  -- coalesce matters: with a null recipient_id the comparison is NULL, and a
+  -- bare NOT NULL would fall through and let a stranger accept the transfer.
+  if not coalesce(
+       row.recipient_id = caller
+       or (row.recipient_id is null and lower(row.recipient_email) = caller_email),
+       false
+     ) then
     raise exception 'this transfer is not addressed to you' using errcode = '42501';
   end if;
 
