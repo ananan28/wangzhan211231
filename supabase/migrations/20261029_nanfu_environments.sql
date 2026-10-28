@@ -47,7 +47,6 @@ create index if not exists nanfu_environments_updated_idx
   on public.nanfu_environments (user_id, updated_at desc);
 
 alter table public.nanfu_environments enable row level security;
-alter table public.nanfu_environments force row level security;
 
 revoke all on table public.nanfu_environments from anon;
 grant select, insert, update, delete on table public.nanfu_environments to authenticated;
@@ -66,27 +65,6 @@ drop trigger if exists nanfu_environments_touch on public.nanfu_environments;
 create trigger nanfu_environments_touch
   before insert or update on public.nanfu_environments
   for each row execute function public.nanfu_environments_touch();
-
-drop policy if exists nanfu_environments_select_own on public.nanfu_environments;
-create policy nanfu_environments_select_own
-  on public.nanfu_environments for select to authenticated
-  using (auth.uid() = user_id);
-
-drop policy if exists nanfu_environments_insert_own on public.nanfu_environments;
-create policy nanfu_environments_insert_own
-  on public.nanfu_environments for insert to authenticated
-  with check (auth.uid() = user_id);
-
-drop policy if exists nanfu_environments_update_own on public.nanfu_environments;
-create policy nanfu_environments_update_own
-  on public.nanfu_environments for update to authenticated
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
-drop policy if exists nanfu_environments_delete_own on public.nanfu_environments;
-create policy nanfu_environments_delete_own
-  on public.nanfu_environments for delete to authenticated
-  using (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
 -- 2. Transfers (environments handed from one account to another)
