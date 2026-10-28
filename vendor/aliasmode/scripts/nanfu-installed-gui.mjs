@@ -434,10 +434,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   const restartedB = await isolationState(restoredB);
   // Account state must survive a stop; rebuildable CacheStorage/Service Worker
   // trees are deliberately purged by the manager after a confirmed stop.
-  assert.deepEqual({ ...restartedA, cached: null }, stateA, "Account storage must survive restart");
-  assert.deepEqual({ ...restartedB, cached: null }, stateB, "Account storage must survive restart");
-  assert.equal(restartedA.cached, null, "Rebuildable CacheStorage is cleared after a confirmed stop");
-  assert.equal(restartedB.cached, null, "Rebuildable CacheStorage is cleared after a confirmed stop");
+  assert.deepEqual(restartedA, { ...stateA, cached: null }, "Account storage must survive restart");
+  assert.deepEqual(restartedB, { ...stateB, cached: null }, "Account storage must survive restart");
   assert.deepEqual(await identityState(restoredA), identityA);
   assert.deepEqual(await identityState(restoredB), identityB);
   report.isolation.persistenceVerified = true;
