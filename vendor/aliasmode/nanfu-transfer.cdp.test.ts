@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chromium, type Browser } from "playwright-core";
 import { NanfuCipher, NanfuDecryptError } from "./nanfu-crypto.ts";
 import { exportNanfuEnvironment } from "./nanfu-sync.ts";
@@ -14,17 +17,62 @@ import type { Profile } from "./types.ts";
 
 /**
  * Real-browser round trip: a live Chromium profile is exported over CDP and
- * imported into a fresh context. Gated because it needs an installed Chrome.
+ * imported into a fresh browser process. Gated because it needs a Chromium build.
  */
 const enabled = process.env.NANFU_CDP_TEST === "1";
 const passphrase = "correct horse battery staple";
 const cipher = () => new NanfuCipher(passphrase);
 
-let browser: Browser;
+const DEBUG_PORT = 9333;
+const debugEndpoint = `http://127.0.0.1:${DEBUG_PORT}`;
+
 let serverA: ReturnType<typeof Bun.serve>;
 let serverB: ReturnType<typeof Bun.serve>;
 let originA: string;
 let originB: string;
+const processes: Array<{ kill(): void; exited: Promise<number> }> = [];
+const profiles: string[] = [];
+
+/**
+ * Bun cannot complete Playwright's fd-3 pipe handshake with a browser it
+ * spawns, so start Chromium ourselves on a debugging port and attach over CDP.
+ */
+async function connectChrome(): Promise<{ browser: Browser; stop(): Promise<void> }> {
+  const profile = mkdtempSync(join(tmpdir(), "nanfu-cdp-"));
+  profiles.push(profile);
+  const child = Bun.spawn([
+    chromium.executablePath(),
+    "--headless=new",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--no-first-run",
+    "--no-default-browser-check",
+    `--user-data-dir=${profile}`,
+    `--remote-debugging-port=${DEBUG_PORT}`,
+    "about:blank",
+  ], { stdout: "ignore", stderr: "ignore" });
+  processes.push(child);
+  let ready = false;
+  for (let attempt = 0; attempt < 120 && !ready; attempt++) {
+    ready = await fetch(`${debugEndpoint}/json/version`).then((response) => response.ok).catch(() => false);
+    if (!ready) await Bun.sleep(250);
+  }
+  if (!ready) throw new Error("Chromium did not expose a debugging endpoint");
+  const browser = await chromium.connectOverCDP(debugEndpoint);
+  return {
+    browser,
+    async stop() {
+      await browser.close().catch(() => {});
+      child.kill();
+      await child.exited.catch(() => {});
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const up = await fetch(`${debugEndpoint}/json/version`).then(() => true).catch(() => false);
+        if (!up) return;
+        await Bun.sleep(250);
+      }
+    },
+  };
+}
 
 beforeAll(async () => {
   if (!enabled) return;
@@ -35,13 +83,13 @@ beforeAll(async () => {
   serverB = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: page });
   originA = `http://127.0.0.1:${serverA.port}`;
   originB = `http://127.0.0.1:${serverB.port}`;
-  browser = await chromium.launch({ headless: true, timeout: 60_000 });
 });
 
 afterAll(async () => {
-  await browser?.close().catch(() => {});
+  for (const child of processes) child.kill();
   serverA?.stop(true);
   serverB?.stop(true);
+  for (const profile of profiles) rmSync(profile, { recursive: true, force: true });
 });
 
 test.skipIf(!enabled)("a live environment survives export and import without losing login state", async () => {
@@ -62,7 +110,8 @@ test.skipIf(!enabled)("a live environment survives export and import without los
     proxy: { type: "http", host: "proxy.example", port: "8080", user: "proxy-user", pass: "proxy-pass" },
   } as unknown as Profile, new Map([["ext1", "uBlock Origin"]]), "2026-10-29T00:00:00.000Z");
 
-  const contextA = await browser.newContext();
+  const first = await connectChrome();
+  const contextA = first.browser.contexts()[0] ?? await first.browser.newContext();
   const expires = Math.floor(Date.now() / 1000) + 3_600;
   await contextA.addCookies([{
     name: "sid",
@@ -164,7 +213,9 @@ test.skipIf(!enabled)("a live environment survives export and import without los
   expect(imported.kernelMismatch).toBeUndefined();
   expect(imported.package.environment).toEqual(environment);
 
-  const contextB = await browser.newContext();
+  await first.stop();
+  const second = await connectChrome();
+  const contextB = second.browser.contexts()[0] ?? await second.browser.newContext();
   const applied = await applyNanfuTransferToContext(contextB, imported.package);
   expect(applied).toEqual({ cookies: captured.cookies.length, origins: 2, databases: 1 });
 
@@ -207,6 +258,5 @@ test.skipIf(!enabled)("a live environment survives export and import without los
   await pageB.goto(originB);
   expect(await pageB.evaluate(() => localStorage.getItem("locale"))).toBe("zh-CN");
 
-  await contextA.close();
-  await contextB.close();
-}, 120_000);
+  await second.stop();
+}, 180_000);
