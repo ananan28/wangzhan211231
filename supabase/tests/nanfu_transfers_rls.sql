@@ -443,6 +443,8 @@ select set_config('request.jwt.claims', '{"sub":"77777777-7777-7777-7777-7777777
 set local role authenticated;
 insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
 values (auth.uid(), (select id from public.nanfu_orgs), 'env-b', '{"v":1,"ct":"bWVtYmVy"}');
+insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+values (auth.uid(), (select id from public.nanfu_orgs), 'env-b2', '{"v":1,"ct":"bWVtYmVyMg=="}');
 do $$
 declare blocked boolean := false;
 begin
@@ -455,8 +457,6 @@ begin
   end;
   if not blocked then raise exception 'a third window was created over a quota of 2'; end if;
 end $$;
-insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
-values (auth.uid(), (select id from public.nanfu_orgs), 'env-b2', '{"v":1,"ct":"bWVtYmVyMg=="}');
 commit;
 
 begin;
