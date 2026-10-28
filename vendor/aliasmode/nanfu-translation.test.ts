@@ -99,14 +99,15 @@ test("the helper is installed per launch and only answers with its own token", a
     bridge.listen();
     expect(bridge.port).toBeGreaterThan(0);
     const userDataDir = join(root, "profile");
-    const launch = { profileId: "p1", debugPort: 9222, startedAt: new Date(0).toISOString(), userDataDir } as never;
+    const startedAt = new Date(0).toISOString();
+    const launch = { profileId: "p1", debugPort: 9222, startedAt, userDataDir };
 
     // Disabled: no helper token is left behind.
-    bridge.install(launch);
+    bridge.install(launch as never);
     expect(existsSync(join(translationExtensionDir(userDataDir), "bind.json"))).toBe(false);
 
     service.save({ ...DEFAULT_TRANSLATION_SETTINGS, enabled: true });
-    bridge.install(launch);
+    bridge.install(launch as never);
     const directory = translationExtensionDir(userDataDir);
     expect(JSON.parse(readFileSync(join(directory, "manifest.json"), "utf8"))).toEqual(TRANSLATION_MANIFEST);
     for (const asset of ["background.js", "content.js", "popup.html", "popup.js", "bind.json"]) {
@@ -126,7 +127,7 @@ test("the helper is installed per launch and only answers with its own token", a
     service.save({ ...DEFAULT_TRANSLATION_SETTINGS, enabled: false });
     expect((await call(bind.token)).status).toBe(409);
 
-    bridge.retire("p1", { debugPort: 9222, startedAt: launch.startedAt });
+    bridge.retire("p1", { debugPort: 9222, startedAt });
     expect(existsSync(join(directory, "bind.json"))).toBe(false);
   } finally {
     bridge.close();

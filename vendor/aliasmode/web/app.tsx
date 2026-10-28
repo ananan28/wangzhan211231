@@ -1570,12 +1570,6 @@ function App() {
       const current = await fetchTranslation();
       setTranslation(current.settings);
       setTranslationKeyPresent(current.keyPresent);
-      // The key never returns from the manager; the desktop hands it its copy for this run.
-      const invoke = desktopInvoke();
-      if (invoke && !current.keyPresent) {
-        const stored = await invoke("credential_get", { key: "translation_engine_key" }).catch(() => null);
-        if (typeof stored === "string" && stored) setTranslationKeyPresent(await sendTranslationKey(stored));
-      }
     } catch (error) {
       setTranslationErr(error instanceof Error ? error.message : String(error));
     }
@@ -1618,6 +1612,16 @@ function App() {
       setTranslationBusy(false);
     }
   };
+
+  useEffect(() => {
+    // The manager keeps the key in memory for one run, so every start hands it the
+    // copy from the OS credential store before any environment can ask for it.
+    const invoke = desktopInvoke();
+    if (!invoke) return;
+    invoke("credential_get", { key: "translation_engine_key" })
+      .then((stored: unknown) => { if (typeof stored === "string" && stored) return sendTranslationKey(stored); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (view === "settings" && settingsTab === "translation" && !translation && !translationErr) void loadTranslation();
