@@ -316,14 +316,10 @@ function indexedDbKey(raw: any): unknown {
 }
 
 async function captureIndexedDB(cdp: NanfuCdp, origin: string): Promise<unknown[]> {
-  const names = await cdp.send("IndexedDB.requestDatabaseNames", { securityOrigin: origin, storageKey: `${origin}/` });
+  const names = await cdp.send("IndexedDB.requestDatabaseNames", { securityOrigin: origin });
   const databases: unknown[] = [];
   for (const name of Array.isArray(names?.databaseNames) ? names.databaseNames : []) {
-    const meta = await cdp.send("IndexedDB.requestDatabase", {
-      securityOrigin: origin,
-      storageKey: `${origin}/`,
-      databaseName: name,
-    });
+    const meta = await cdp.send("IndexedDB.requestDatabase", { securityOrigin: origin, databaseName: name });
     const database = meta?.database ?? (Array.isArray(meta?.objectStores) ? meta : {});
     const stores: unknown[] = [];
     for (const store of Array.isArray(database.objectStores) ? database.objectStores : []) {
@@ -332,7 +328,6 @@ async function captureIndexedDB(cdp: NanfuCdp, origin: string): Promise<unknown[
       for (;;) {
         const page = await cdp.send("IndexedDB.requestData", {
           securityOrigin: origin,
-          storageKey: `${origin}/`,
           databaseName: name,
           objectStoreName: store.name,
           indexName: "",
