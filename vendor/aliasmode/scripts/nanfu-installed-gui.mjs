@@ -211,7 +211,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   await page.locator(".sidenav").waitFor();
   await stage("tauri-manager-ready");
 
-  await page.getByRole("button", { name: "New Profile", exact: true }).click();
+  await page.locator(".sidebar").getByRole("button", { name: "New Profile", exact: true }).click();
   await page.locator(".modal-backdrop").getByLabel("Name", { exact: true }).fill(profileName);
   await page.getByRole("button", { name: "Create profile", exact: true }).click();
   await page.getByRole("button", { name: `Edit ${profileName}`, exact: true }).waitFor();
