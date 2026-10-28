@@ -69,22 +69,28 @@ jobs:
       - name: Install GUI test dependencies
         working-directory: vendor/aliasmode
         run: bun install --frozen-lockfile
-      - name: Start installed Tauri window for GUI acceptance
+      - name: Exercise installed Tauri extension manager and local MV3 resources
+        working-directory: vendor/aliasmode
         shell: pwsh
+        env:
+          NANFU_INSTALLED_CDP: http://127.0.0.1:9223
         run: |
           $ErrorActionPreference = "Stop"
           $state = Join-Path $env:APPDATA "com.nanfu.browser"
           New-Item -ItemType Directory -Path $state -Force | Out-Null
           '{"version":1,"mode":"local","localAnalytics":false}' | Set-Content (Join-Path $state "config.json") -Encoding utf8NoBOM
-          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9223 --remote-debugging-address=127.0.0.1"
+          $env:ALIASMODE_ACCEPTANCE_WEBVIEW_DEBUG = "1"
+          $env:ALIASMODE_ACCEPTANCE_WEBVIEW_DEBUG_PORT = "9223"
           $env:RUST_BACKTRACE = "1"
           $app = Start-Process -FilePath (Join-Path $env:NANFU_INSTALL_ROOT "aliasmode.exe") -PassThru -RedirectStandardOutput (Join-Path $env:NANFU_GUI_REPORT_DIR "tauri-stdout.log") -RedirectStandardError (Join-Path $env:NANFU_GUI_REPORT_DIR "tauri-stderr.log")
           $app.Id | Set-Content (Join-Path $env:NANFU_GUI_REPORT_DIR "tauri.pid")
-      - name: Exercise installed extension manager GUI and local MV3 resources
-        working-directory: vendor/aliasmode
-        env:
-          NANFU_INSTALLED_CDP: http://127.0.0.1:9223
-        run: bun scripts/nanfu-installed-gui.mjs
+          try {
+            & bun scripts/nanfu-installed-gui.mjs
+            if ($LASTEXITCODE -ne 0) { throw "Installed GUI acceptance failed: $LASTEXITCODE" }
+          } finally {
+            $app.Refresh()
+            @{ pid=$app.Id; exited=$app.HasExited; exitCode=$(if ($app.HasExited) { $app.ExitCode } else { $null }) } | ConvertTo-Json | Set-Content (Join-Path $env:NANFU_GUI_REPORT_DIR "tauri-process.json")
+          }
       - name: Stop acceptance application process tree
         if: always()
         shell: pwsh
