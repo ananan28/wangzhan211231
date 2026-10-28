@@ -1786,6 +1786,21 @@ async function waitForWindowsAcceptanceTabs(port: number, expected: readonly str
   throw new Error("clean-close tab restoration did not return the exact saved user pages");
 }
 
+export function windowsAcceptanceProfiles(rest: string[]): Profile[] {
+  const [firstId, secondId] = WINDOWS_ACCEPTANCE_PROFILE_IDS;
+  const profiles = [
+    {
+      ...smokeProfile(firstId, windowsAcceptanceWindowMarker(firstId), 101),
+      platform: "x.com",
+    },
+    smokeProfile(secondId, windowsAcceptanceWindowMarker(secondId), 202),
+  ];
+  if (flag(rest, "chromium-runtime") === "aliasmode") {
+    for (const profile of profiles) profile.chromiumRuntime = "aliasmode";
+  }
+  return profiles;
+}
+
 async function runWindowsWindowAcceptance(paths: StatePaths, rest: string[]): Promise<void> {
   if (process.platform !== "win32") {
     throw new Error("Windows window acceptance requires Windows");
@@ -1802,6 +1817,7 @@ async function runWindowsWindowAcceptance(paths: StatePaths, rest: string[]): Pr
       searchProviderResults.set(options.userDataDir, result);
       return result;
     },
+    join(paths.root, "runtimes"),
   );
   const [firstId, secondId] = WINDOWS_ACCEPTANCE_PROFILE_IDS;
   const tabServer = Bun.serve({
@@ -1824,13 +1840,7 @@ async function runWindowsWindowAcceptance(paths: StatePaths, rest: string[]): Pr
   const restoredTabs = ["one", "two", "three"].map((name) =>
     `${tabOrigin}/tabs/${name}?profile=${encodeURIComponent(firstId)}`
   );
-  store.upsertProfiles([
-    {
-      ...smokeProfile(firstId, windowsAcceptanceWindowMarker(firstId), 101),
-      platform: "x.com",
-    },
-    smokeProfile(secondId, windowsAcceptanceWindowMarker(secondId), 202),
-  ]);
+  store.upsertProfiles(windowsAcceptanceProfiles(rest));
   const launch = (profileId: string) => {
     const value = store.getLaunch(profileId);
     if (!value) throw new Error(`managed CloakBrowser launch is missing for ${profileId}`);
