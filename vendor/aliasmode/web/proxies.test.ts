@@ -165,11 +165,15 @@ test("the proxy page shows a neutral missing-proxy hint and no third-party offer
 
 test("the dashboard, locales and shell carry no proxy referral or outreach tracking", async () => {
   expect(existsSync(new URL("./proxy-offer.tsx", import.meta.url))).toBe(false);
-  for (const file of ["app.tsx", "proxies.tsx", "styles.css", "locales/zh-CN.json", "locales/ru-RU.json", "../src-tauri/src/lib.rs"]) {
+  for (const file of ["app.tsx", "proxies.tsx", "styles.css", "locales/zh-CN.json", "locales/ru-RU.json"]) {
     const text = (await Bun.file(new URL(`./${file}`, import.meta.url)).text()).toLowerCase();
     expect(text).not.toContain("nobleproxy");
     expect(text).not.toContain("utm_source=aliasmode");
     expect(text).not.toContain("proxy-referral");
     expect(text).not.toContain("outreach-offer");
   }
+  // The shell keeps rejecting those links (covered by its own unit test); the
+  // special-case proxy offer allowance must be gone.
+  const shell = await Bun.file(new URL("../src-tauri/src/lib.rs", import.meta.url)).text();
+  expect(shell).not.toContain("fn proxy_offer_url");
 });
