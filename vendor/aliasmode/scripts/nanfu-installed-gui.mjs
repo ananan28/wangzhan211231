@@ -95,7 +95,19 @@ async function api(path) {
 async function upload(path) {
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Upload ZIP/CRX", exact: true }).click();
-  await (await chooser).setFiles(path);
+  await chooser;
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const { root } = await cdp.send("DOM.getDocument");
+    const { nodeId } = await cdp.send("DOM.querySelector", {
+      nodeId: root.nodeId,
+      selector: 'input[type="file"][accept=".zip,.crx,application/zip,application/x-chrome-extension"]',
+    });
+    assert.notEqual(nodeId, 0, "Extension file input must exist");
+    await cdp.send("DOM.setFileInputFiles", { nodeId, files: [path] });
+  } finally {
+    await cdp.detach();
+  }
 }
 
 async function openProfile() {
