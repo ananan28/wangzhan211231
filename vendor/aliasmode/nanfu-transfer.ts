@@ -316,10 +316,14 @@ function indexedDbKey(raw: any): unknown {
 }
 
 async function captureIndexedDB(cdp: NanfuCdp, origin: string): Promise<unknown[]> {
-  const names = await cdp.send("IndexedDB.requestDatabaseNames", { securityOrigin: origin });
+  const names = await cdp.send("IndexedDB.requestDatabaseNames", { securityOrigin: origin, storageKey: `${origin}/` });
   const databases: unknown[] = [];
   for (const name of Array.isArray(names?.databaseNames) ? names.databaseNames : []) {
-    const meta = await cdp.send("IndexedDB.requestDatabase", { securityOrigin: origin, databaseName: name });
+    const meta = await cdp.send("IndexedDB.requestDatabase", {
+      securityOrigin: origin,
+      storageKey: `${origin}/`,
+      databaseName: name,
+    });
     const database = meta?.database ?? (Array.isArray(meta?.objectStores) ? meta : {});
     const stores: unknown[] = [];
     for (const store of Array.isArray(database.objectStores) ? database.objectStores : []) {
@@ -328,6 +332,7 @@ async function captureIndexedDB(cdp: NanfuCdp, origin: string): Promise<unknown[
       for (;;) {
         const page = await cdp.send("IndexedDB.requestData", {
           securityOrigin: origin,
+          storageKey: `${origin}/`,
           databaseName: name,
           objectStoreName: store.name,
           indexName: "",
@@ -395,7 +400,17 @@ export async function captureNanfuFromBrowser(
       await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
       // Chrome's IndexedDB agent reports version 0 and no stores until the
       // origin's metadata has been materialised in this renderer.
-      await page.evaluate(() => indexedDB.databases()).catch(() => {});
+      await page.evaluate(async () => {
+        for (const info of await indexedDB.databases()) {
+          if (!info.name) continue;
+          await new Promise<void>((resolve) => {
+            const request = indexedDB.open(info.name!);
+            request.onsuccess = () => { request.result.close(); resolve(); };
+            request.onerror = () => resolve();
+            request.onblocked = () => resolve();
+          });
+        }
+      }).catch(() => {});
       const part = await captureNanfuFromCdp(cdpClient(pageSession), {
         origins: [origin],
         ...(options.indexedDB ? { indexedDB: options.indexedDB } : {}),
