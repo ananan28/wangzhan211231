@@ -320,7 +320,7 @@ async function captureIndexedDB(cdp: NanfuCdp, origin: string): Promise<unknown[
   const databases: unknown[] = [];
   for (const name of Array.isArray(names?.databaseNames) ? names.databaseNames : []) {
     const meta = await cdp.send("IndexedDB.requestDatabase", { securityOrigin: origin, databaseName: name });
-    const database = meta?.database ?? {};
+    const database = meta?.database ?? (Array.isArray(meta?.objectStores) ? meta : {});
     const stores: unknown[] = [];
     for (const store of Array.isArray(database.objectStores) ? database.objectStores : []) {
       const records: unknown[] = [];

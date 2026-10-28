@@ -182,6 +182,7 @@ test.skipIf(!enabled)("a live environment survives export and import without los
     { name: "token", value: "local-secret" },
   ]);
   const database = (mail?.indexedDB as any[])[0];
+  if (!database || database.version !== 2) console.log("captured database:", JSON.stringify(database));
   expect(database.name).toBe("nanfu-mail");
   expect(database.version).toBe(2);
   expect(database.stores[0].name).toBe("messages");
