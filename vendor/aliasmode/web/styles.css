@@ -554,18 +554,6 @@ a.navitem { box-sizing: border-box; text-decoration: none; cursor: pointer; }
   font-size: 11px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums;
 }
 .navitem.active .cnt { color: var(--accent-ink); background: var(--raised); }
-/* Buy-proxies cart beside the Proxies item. A sibling of the button, since a
-   link cannot nest inside one. */
-.navrow { position: relative; }
-.navbuy {
-  position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
-  display: grid; place-items: center; width: 26px; height: 26px;
-  color: var(--accent); border-radius: var(--r-sm);
-  transition: background .12s ease, color .12s ease;
-}
-.navbuy:hover { color: var(--on-fill); background: var(--accent-fill); }
-.navbuy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.sidebar.collapsed .navbuy { display: none; }
 
 .sidesection { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px; margin-top: 16px; padding: 0 2px; }
 /* Keep two folder rows usable; navigation gives up height first. */
@@ -1004,7 +992,7 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 .update-settings .update-progress { width: 100%; }
 .filterbar .update-progress { width: 220px; margin-left: auto; }
 
-/* Proxy checker and conditional NobleProxy offer in both profile dialogs. */
+/* Proxy checker in both profile dialogs. */
 .proxy-check-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .proxy-check-btn { min-width: 118px; }
 .proxy-check-result {
@@ -1016,31 +1004,6 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 .proxy-check-result.unstable { color: var(--warn-ink); background: var(--warn-soft); border-color: var(--warn-line); }
 .proxy-check-result.failed { color: var(--danger-ink); background: var(--danger-soft); border-color: var(--danger-line); }
 .proxy-check-result.unavailable { color: var(--muted); background: var(--surface-sunken); border-color: var(--line); }
-.proxy-referral {
-  display: flex; align-items: center; gap: 11px;
-  padding: 10px 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--r-md); text-decoration: none;
-  transition: background .12s ease, border-color .12s ease;
-}
-.proxy-referral:hover { background: var(--accent-soft); border-color: var(--accent-line); }
-.proxy-referral:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.proxy-referral-icon {
-  display: grid; place-items: center; flex: 0 0 32px; height: 32px;
-  color: var(--accent); background: var(--accent-soft); border-radius: var(--r-sm);
-}
-.proxy-referral:hover .proxy-referral-icon { background: var(--raised); }
-.proxy-referral-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
-.proxy-referral-text strong { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12.5px; font-weight: 650; }
-.proxy-referral-text small { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
-.proxy-referral-tag {
-  padding: 1px 7px; color: var(--accent-ink); background: var(--accent-soft); border: 1px solid var(--accent-line);
-  border-radius: var(--r-pill); font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap;
-}
-.proxy-referral-go { color: var(--muted); font-size: 14px; }
-/* Offer shown above the profile list after an import, with a dismiss button. */
-.import-offer { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; padding: 0 14px 12px; }
-.import-offer .proxy-referral { flex: 1; min-width: 0; }
-.proxy-referral:hover .proxy-referral-go { color: var(--accent); }
 
 /* Remote MCP settings card (Cloud mode). Fields/buttons reuse .fld and .btn;
    only the status pill and connect guide need their own rules. */
@@ -1191,9 +1154,6 @@ td.col-tags .chip + .chip { margin-left: 4px; }
   font-size: 12px; line-height: 1.6;
 }
 .hint code { padding: 1px 5px; border-radius: var(--r-xs); background: var(--surface-active); font: 11.5px var(--mono); }
-.outreach-offer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-.outreach-offer a { color: var(--accent); }
-.outreach-offer button { margin-left: auto; }
 
 .modal-err, .modal-ok {
   display: flex; align-items: flex-start; gap: 8px;

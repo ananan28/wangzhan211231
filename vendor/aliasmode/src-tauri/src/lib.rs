@@ -28,16 +28,14 @@ use tauri_plugin_shell::ShellExt;
 
 const IMPORT_RESTRICTION: &str = "Windows DPAPI protects persisted browser secrets, so this import works only for the same Windows machine and account. Persisted persona fields are preserved, but runtime or browser differences can change the account-visible fingerprint.";
 
-const ALLOWED_EXTERNAL_URLS: [&str; 9] = [
+const ALLOWED_EXTERNAL_URLS: [&str; 7] = [
     "https://aliasmode.com/support/",
     "https://aliasmode.com/terms/",
     "https://aliasmode.com/privacy/",
     "https://aliasmode.com/acceptable-use/",
-    "https://nobleproxy.com/t/aliasmode",
     "https://t.me/aliasmode",
     "https://github.com/aliasmode/aliasmode",
     "https://xreacher.com/",
-    "https://xreacher.com/?utm_source=aliasmode&utm_medium=app&utm_campaign=outreach&utm_content=profile-editor",
 ];
 
 const WINDOWS_ACCEPTANCE_BROWSER_ARGS: &str =
@@ -54,23 +52,7 @@ fn windows_acceptance_browser_args(enabled: bool, debug_port: Option<&str>) -> O
 }
 
 fn allowed_external_url(url: &str) -> bool {
-    ALLOWED_EXTERNAL_URLS.contains(&url) || proxy_offer_url(url)
-}
-
-/// The proxy offer link can name the button that was clicked, a quantity and the app language.
-fn proxy_offer_url(url: &str) -> bool {
-    let Some(query) = url.strip_prefix("https://nobleproxy.com/t/aliasmode?") else {
-        return false;
-    };
-    query.split('&').all(|pair| {
-        pair.split_once('=').is_some_and(|(key, value)| {
-            matches!(key, "src" | "qty" | "lang")
-                && (1..=32).contains(&value.len())
-                && value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        })
-    })
+    ALLOWED_EXTERNAL_URLS.contains(&url)
 }
 
 #[allow(deprecated)]
@@ -289,15 +271,9 @@ mod tests {
             "https://aliasmode.com/terms/",
             "https://aliasmode.com/privacy/",
             "https://aliasmode.com/acceptable-use/",
-            "https://nobleproxy.com/t/aliasmode",
             "https://t.me/aliasmode",
             "https://github.com/aliasmode/aliasmode",
             "https://xreacher.com/",
-            "https://xreacher.com/?utm_source=aliasmode&utm_medium=app&utm_campaign=outreach&utm_content=profile-editor",
-            "https://nobleproxy.com/t/aliasmode?src=sidebar-cart",
-            "https://nobleproxy.com/t/aliasmode?src=proxies-no-proxy&qty=12",
-            "https://nobleproxy.com/t/aliasmode?src=profile-dialog&lang=zh-CN",
-            "https://nobleproxy.com/t/aliasmode?src=import-no-proxy&qty=3&lang=ru-RU",
         ] {
             assert!(allowed_external_url(url));
         }
@@ -307,19 +283,10 @@ mod tests {
             "https://aliasmode.com/terms/extra",
             "https://aliasmode.com/terms/?continue=https://example.com",
             "https://example.com/terms/",
-            "http://nobleproxy.com/t/aliasmode",
-            "https://nobleproxy.com/t/aliasmode/",
-            "https://nobleproxy.com/t/aliasmode?source=app",
-            "https://nobleproxy.com/t/aliasmode?",
-            "https://nobleproxy.com/t/aliasmode?src=",
-            "https://nobleproxy.com/t/aliasmode?src=sidebar-cart&next=https://example.com",
-            "https://nobleproxy.com/t/aliasmode?src=a%2Fb",
-            "https://nobleproxy.com/t/aliasmode?src=sidebar-cart#fragment",
-            "https://nobleproxy.com/t/aliasmode/?src=sidebar-cart",
-            "https://nobleproxy.com/t/other?src=sidebar-cart",
-            "https://nobleproxy.com/t/another-campaign",
-            "https://example.com/t/aliasmode",
-            "https://xreacher.com/?utm_source=aliasmode&utm_medium=app&utm_campaign=outreach&utm_content=profile-editor&profile=example",
+            "https://nobleproxy.com/t/aliasmode",
+            "https://nobleproxy.com/t/aliasmode?src=sidebar-cart",
+            "https://nobleproxy.com/t/aliasmode?src=proxies-no-proxy&qty=12",
+            "https://xreacher.com/?utm_source=aliasmode&utm_medium=app&utm_campaign=outreach&utm_content=profile-editor",
         ] {
             assert!(!allowed_external_url(url));
         }

@@ -4,7 +4,6 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import "./proxies.css";
 import { ProxiesPage } from "./proxies.tsx";
-import { CartIcon, ProxyProviderOffer, proxyOfferUrl } from "./proxy-offer.tsx";
 import { TrashPage } from "./trash.tsx";
 import { parsePastedProxy } from "./proxy-input.ts";
 import { createProfilesInOrder } from "./batch-create.ts";
@@ -1123,69 +1122,51 @@ function proxyFailureMessage(t: (s: string) => string, reason: ProxyCheckResult[
 
 function ProxyCheckFeedback({ hasProxy, state }: { hasProxy: boolean; state: ProxyCheckUiState }) {
   const { t } = useTranslation();
-  if (!hasProxy) return <ProxyProviderOffer placement="profile-dialog" />;
+  if (!hasProxy) return <p className="tools-hint">{t("No proxy assigned")}</p>;
   if (state.error) {
     const invalid = state.error === "invalid";
     return (
-      <>
-        <div className={`proxy-check-result ${invalid ? "failed" : "unavailable"}`} role="status">
-          <Icon name={invalid ? "alert" : "activity"} className="sm" />
-          <span>{invalid
-            ? t("Proxy details are invalid. Check them and try again.")
-            : t("Proxy check is unavailable. Try again later.")}</span>
-        </div>
-        {invalid
-          ? <ProxyProviderOffer placement="profile-dialog-check-failed" replacement />
-          : <ProxyProviderOffer placement="profile-dialog" />}
-      </>
+      <div className={`proxy-check-result ${invalid ? "failed" : "unavailable"}`} role="status">
+        <Icon name={invalid ? "alert" : "activity"} className="sm" />
+        <span>{invalid
+          ? t("Proxy details are invalid. Check them and try again.")
+          : t("Proxy check is unavailable. Try again later.")}</span>
+      </div>
     );
   }
   const result = state.result;
-  // A profile that already has a proxy keeps the offer, so it also shows in Edit profile.
-  if (!result) return <ProxyProviderOffer placement="profile-dialog" />;
+  if (!result) return null;
   const location = [result.city, result.region, result.country].filter(Boolean).join(", ");
   const exit = [result.ip ? `Exit IP: ${result.ip}` : "", location].filter(Boolean).join(" · ");
   if (result.status === "working") {
     return (
-      <>
-        <div className="proxy-check-result working" role="status">
-          <Icon name="check" className="sm" />
-          <span><strong>{t("Proxy is working.")}</strong>{exit && <> {exit}.</>}{result.rotating && <> Rotating exit IPs detected.</>}</span>
-        </div>
-        <ProxyProviderOffer placement="profile-dialog" />
-      </>
+      <div className="proxy-check-result working" role="status">
+        <Icon name="check" className="sm" />
+        <span><strong>{t("Proxy is working.")}</strong>{exit && <> {exit}.</>}{result.rotating && <> Rotating exit IPs detected.</>}</span>
+      </div>
     );
   }
   if (result.status === "unstable") {
     return (
-      <>
-        <div className="proxy-check-result unstable" role="status">
-          <Icon name="warning" className="sm" />
-          <span><strong>{t("Proxy checks were mixed.")}</strong> {result.successes} of {result.attempts} succeeded.</span>
-        </div>
-        <ProxyProviderOffer placement="profile-dialog-check-failed" replacement />
-      </>
+      <div className="proxy-check-result unstable" role="status">
+        <Icon name="warning" className="sm" />
+        <span><strong>{t("Proxy checks were mixed.")}</strong> {result.successes} of {result.attempts} succeeded.</span>
+      </div>
     );
   }
   if (result.status === "failed") {
     return (
-      <>
-        <div className="proxy-check-result failed" role="status">
-          <Icon name="alert" className="sm" />
-          <span>{proxyFailureMessage(t, result.reason)}</span>
-        </div>
-        <ProxyProviderOffer placement="profile-dialog-check-failed" replacement />
-      </>
+      <div className="proxy-check-result failed" role="status">
+        <Icon name="alert" className="sm" />
+        <span>{proxyFailureMessage(t, result.reason)}</span>
+      </div>
     );
   }
   return (
-    <>
-      <div className="proxy-check-result unavailable" role="status">
-        <Icon name="activity" className="sm" />
-        <span>{t("Proxy check is unavailable. Try again later.")}</span>
-      </div>
-      <ProxyProviderOffer placement="profile-dialog" />
-    </>
+    <div className="proxy-check-result unavailable" role="status">
+      <Icon name="activity" className="sm" />
+      <span>{t("Proxy check is unavailable. Try again later.")}</span>
+    </div>
   );
 }
 
@@ -1326,9 +1307,6 @@ function App() {
   const [editForm, setEditForm] = useState<Record<string, string>>({});
   const [editInitialFingerprint, setEditInitialFingerprint] = useState<Record<string, string>>({});
   const [editInitialProxy, setEditInitialProxy] = useState({ proxy: "", proxyType: "http" });
-  const [outreachOfferDismissed, setOutreachOfferDismissed] = useState(() => {
-    try { return localStorage.getItem("aliasmode.offers.xreacherDismissed") === "1"; } catch { return false; }
-  });
   const [editProxyCheck, setEditProxyCheck] = useState<ProxyCheckUiState>(EMPTY_PROXY_CHECK);
   const editProxyCheckGeneration = useRef(0);
   const [editErr, setEditErr] = useState<string | null>(null);
@@ -1386,8 +1364,6 @@ function App() {
   // One source at a time: two full-height inputs stacked made it ambiguous which
   // one the Import button would actually read.
   const [bulkSource, setBulkSource] = useState<"file" | "paste">("file");
-  // After an import, offer proxies for the profiles that have none, until dismissed.
-  const [showImportOffer, setShowImportOffer] = useState(false);
   const bulkFileRef = useRef<HTMLInputElement>(null);
   const authGeneration = useRef(0);
   const remoteMcpInFlight = useRef<Promise<void> | null>(null);
@@ -2578,7 +2554,6 @@ function App() {
       if (r.ok) {
         closeBulk();
         await load();
-        setShowImportOffer(true);
         const issues = r.errors?.length ? ` Reported ${r.errors.length} invalid record(s); invalid proxies were quarantined for repair.` : "";
         alert(`Imported ${r.profiles} profile(s) from ${r.files} file(s).${issues}`);
       }
@@ -3448,19 +3423,9 @@ function App() {
             <Icon name="user" /><span className="navlabel">{t("Shared with me")}</span><span className="cnt">{sharedProfiles.length}</span>
           </button>}
           {!appMode?.legacyRemote && <>
-            <div className="navrow">
-              <button type="button" className={`navitem${view === "proxies" ? " active" : ""}`} data-tip={t("Proxies")} title={t("Proxies")} onClick={() => setView("proxies")}>
-                <Icon name="activity" /><span className="navlabel">{t("Proxies")}</span>
-              </button>
-              <a
-                className="navbuy"
-                href={proxyOfferUrl("sidebar-cart", language)}
-                target="_blank"
-                rel="noreferrer"
-                title={t("Buy proxies at the AliasMode price")}
-                aria-label={t("Buy proxies from NobleProxy at the AliasMode user price (opens externally)")}
-              ><CartIcon /></a>
-            </div>
+            <button type="button" className={`navitem${view === "proxies" ? " active" : ""}`} data-tip={t("Proxies")} title={t("Proxies")} onClick={() => setView("proxies")}>
+              <Icon name="activity" /><span className="navlabel">{t("Proxies")}</span>
+            </button>
             <button type="button" className={`navitem${view === "trash" ? " active" : ""}`} data-tip={t("Trash")} title={t("Trash")} onClick={() => setView("trash")}>
               <Icon name="trash" /><span className="navlabel">{t("Trash")}</span>
             </button>
@@ -3800,13 +3765,6 @@ function App() {
           </div>
           {runtimeDownloads.length > 0 && <RuntimeDownloadProgressView downloads={runtimeDownloads} />}
         </div>
-
-        {showImportOffer && profilesWithoutProxy > 0 && (
-          <div className="import-offer">
-            <ProxyProviderOffer placement="import-no-proxy" missing={profilesWithoutProxy} />
-            <button type="button" className="iconbtn" aria-label={t("Dismiss")} onClick={() => setShowImportOffer(false)}><Icon name="close" className="sm" /></button>
-          </div>
-        )}
 
         {filtered.length > 0 && (
           <div className="toolbar" role="status">
@@ -4933,16 +4891,6 @@ function App() {
                       <PlatformPicker value={editForm.platform ?? ""} onChange={(v) => setEF("platform", v)} />
                     </label>
                   </div>
-                  {!outreachOfferDismissed && ["x.com", "linkedin.com", "telegram.org"].includes(editForm.platform ?? "") && (
-                    <div className="outreach-offer hint">
-                      <span>{t("Need outreach campaigns?")}</span>
-                      <a href="https://xreacher.com/?utm_source=aliasmode&utm_medium=app&utm_campaign=outreach&utm_content=profile-editor" target="_blank" rel="noreferrer">{t("Run outreach with Xreacher ↗")}</a>
-                      <button type="button" className="btn xs ghost" aria-label={t("Dismiss Xreacher offer")} onClick={() => {
-                        setOutreachOfferDismissed(true);
-                        writeSetting("aliasmode.offers.xreacherDismissed", "1");
-                      }}><Icon name="close" className="sm" /></button>
-                    </div>
-                  )}
                   <label className="fld">
                     <span>{t("Browser")}</span>
                     <input value={browserLabel(editEngine, editChromiumRuntime, ownChromium)} readOnly className="ro" />
