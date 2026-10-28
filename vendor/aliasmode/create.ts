@@ -13,9 +13,10 @@
 import type { Profile, ProfileEngine, ProxySpec } from "./types.ts";
 import { completeProfileFingerprint, createFirefoxProfileConfig, normalizeChromiumRuntime, syncFirefoxTimezone } from "./firefox-config.ts";
 import { chromiumDeviceScale, defaultChromiumRuntime, hostDisplayScale, hostDisplaySize } from "./aliasmode-chromium.ts";
-import { deterministicSeed, generateProfileHardware, hostPlatformOs } from "./fingerprint.ts";
+import { deterministicSeed, editedProfileHardware, generateProfileHardware, hostPlatformOs } from "./fingerprint.ts";
 import { normalizeProxySpec } from "./proxy.ts";
-import { parseStrictCustomNo, parseStrictResolution, parsePlatformOs } from "./parse.ts";
+import { parseStrictCores, parseStrictCustomNo, parseStrictResolution, parseStrictSeed, parseStrictTimezone, parsePlatformOs } from "./parse.ts";
+import { normalizeProfileLocale } from "./profile-locale.ts";
 
 export interface NewProfileInput {
   /** Browser identity engine. Omitted means this computer's default engine. */
@@ -39,6 +40,14 @@ export interface NewProfileInput {
   screen?: string;
   /** Fingerprint OS override: "windows" | "macos" | "linux". Empty/omitted → host OS. */
   platformOs?: string;
+  /** BCP-47 language (e.g. "fr-FR"). Empty/omitted → the language this computer reports. */
+  locale?: string;
+  /** IANA timezone (e.g. "Europe/Paris"). Empty/omitted → this computer's timezone. */
+  timezone?: string;
+  /** Processor count the environment reports. Empty/omitted → derived from the seed. */
+  cores?: string;
+  /** Fixed fingerprint seed. Empty/omitted → derived from the new profile id. */
+  seed?: string;
   /** Operator-chosen serial shown in the roster and the browser window title. */
   customNo?: string;
 }
@@ -120,19 +129,22 @@ export function buildNewProfile(input: NewProfileInput, exists: (id: string) => 
   const display = hostScreenFloor(engine, chromiumRuntime);
   const selected = screen ? parseStrictResolution(screen) : engine === "firefox" && display ? display : defaultScreen(display);
   const platformOs = parsePlatformOs(input.platformOs) ?? hostPlatformOs();
+  const seed = input.seed ? parseStrictSeed(input.seed) : deterministicSeed(id);
   const firefox = engine === "firefox"
-    ? createFirefoxProfileConfig(selected.width, selected.height, platformOs, deterministicSeed(id))
+    ? createFirefoxProfileConfig(selected.width, selected.height, platformOs, seed)
     : undefined;
   const firefoxUa = firefox?.config["navigator.userAgent"];
   const firefoxScreenWidth = firefox?.config["screen.width"];
   const firefoxScreenHeight = firefox?.config["screen.height"];
   const firefoxTimezone = firefox?.config.timezone;
+  const locale = input.locale ? normalizeProfileLocale(input.locale) : undefined;
+  const timezone = input.timezone ? parseStrictTimezone(input.timezone) : undefined;
 
-  return completeProfileFingerprint({
+  const profile = completeProfileFingerprint({
     id,
     engine,
     ...(chromiumRuntime ? { chromiumRuntime } : {}),
-    ...(engine === "chromium" && !chromiumRuntime ? { hardware: generateProfileHardware(deterministicSeed(id)) } : {}),
+    ...(engine === "chromium" && !chromiumRuntime ? { hardware: generateProfileHardware(seed) } : {}),
     ...(firefox ? { firefox } : {}),
     accId: "",
     name: (input.name || "").trim() || id, // AdsPower auto-names blank profiles after the id
@@ -151,13 +163,24 @@ export function buildNewProfile(input: NewProfileInput, exists: (id: string) => 
     // happens to run on — a silent identity change on a move between boxes.
     // An explicit operator choice wins; otherwise fall back to the host OS.
     platformOs,
-    timezone: typeof firefoxTimezone === "string" ? firefoxTimezone : Intl.DateTimeFormat().resolvedOptions().timeZone,
+    ...(locale ? { locale } : {}),
+    timezone: timezone ?? (typeof firefoxTimezone === "string" ? firefoxTimezone : Intl.DateTimeFormat().resolvedOptions().timeZone),
     screenWidth: typeof firefoxScreenWidth === "number" ? firefoxScreenWidth : selected.width,
     screenHeight: typeof firefoxScreenHeight === "number" ? firefoxScreenHeight : selected.height,
-    fingerprintSeed: deterministicSeed(id),
+    fingerprintSeed: seed,
     cookies: [],
     seeded: false,
   });
+  if (timezone) {
+    // A typed timezone stays when the proxy changes and on every launch.
+    profile.timezoneManual = true;
+    syncFirefoxTimezone(profile);
+  }
+  if (input.cores) {
+    const hardware = editedProfileHardware(profile, parseStrictCores(input.cores));
+    if (hardware) profile.hardware = hardware;
+  }
+  return profile;
 }
 
 /**

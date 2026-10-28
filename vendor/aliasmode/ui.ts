@@ -14,6 +14,7 @@ import type { ProfileStore } from "./store.ts";
 import type { AutomationHealthStatus } from "./remote-types.ts";
 import type { RemoteCoordinator } from "./remote.ts";
 import type { AppConfigStore } from "./app-config.ts";
+import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from "./fingerprint-audit.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import type { CloudConnectionRuntime } from "./cloud-connection.ts";
 import type {
@@ -2222,6 +2223,7 @@ export async function handleUiRequest(
       if (!remote && store.getLaunch(id) && fingerprintChanges(p, set)) {
         return Response.json({ ok: false, error: "close the browser before editing fingerprint settings" }, { status: 409 });
       }
+      const fingerprintBefore = fingerprintValues(p);
       let previousGroup = p.group;
       const proxyChanged = applyEdits(p, set);
       // A new proxy gets its exit timezone, like a Cloud edit. A failed lookup keeps the saved one.
@@ -2248,6 +2250,9 @@ export async function handleUiRequest(
         store.upsertProfile(p);
         if ("timezone" in set) store.setTimezone(id, p.timezone);
         if ("cores" in set) store.setHardware(id, p.hardware);
+        // Audit only local saved state, with fingerprint fields alone (no account data).
+        const saved = store.getProfile(id);
+        if (saved) appendFingerprintAudit(options.paths?.root, fingerprintAuditEntry(fingerprintBefore, fingerprintValues(saved), id));
       }
       return Response.json({ ok: true });
     } catch (e) {

@@ -258,7 +258,6 @@
   "Browser": "浏览器类型",
   "CDP, PDF, and Chrome extensions are available.": "CDP、PDF 和 Chrome 扩展可用。",
   "Check proxy": "检测代理",
-  "The browser keeps the locked values coordinated. Screen and operating system are the only fingerprint settings you can override.": "浏览器会自动帮你协调锁定的指纹值。屏幕和操作系统是你仅有的可覆盖指纹设置。",
   "Converting…": "转换中…",
   "Create profile": "创建环境",
   "Creating…": "创建中…",
@@ -699,8 +698,12 @@
   "Automatic · {n} cores": "自动 · {n} 核",
   "Automatic · e.g. 8": "自动 · 例如 8",
   "We recommend keeping every setting automatic. Custom values can make the browser look inconsistent, easier to detect, and can trigger account checks.": "建议所有设置保持自动。自定义值可能让浏览器指纹前后不一致、更容易被识别，并可能触发账号验证。",
-  "Leave a field blank to keep it automatic. A timezone you type stays when the proxy changes.": "留空即保持自动。你输入的时区在更换代理后也会保留。",
   "AliasMode Chromium shows at most the processor count of the computer it runs on.": "AliasMode Chromium 显示的处理器核心数不会超过所运行电脑的核心数。",
   "These settings work together. Changing them can create an inconsistent fingerprint, make your browser easier to detect, or trigger account verification. We recommend automatic settings. Custom changes are your responsibility.\n\nSave fingerprint changes?": "这些设置相互配合。修改它们可能导致指纹不一致、让浏览器更容易被识别，或触发账号验证。建议使用自动设置。自定义修改由你自行负责。\n\n保存指纹修改？",
-  "Some proxies did not pass the check.": "部分代理未通过检查。"
+  "Some proxies did not pass the check.": "部分代理未通过检查。",
+  "Screen and operating system are the fingerprint settings you can override here.": "屏幕和操作系统是这里可覆盖的指纹设置。",
+  "Leave a field blank to keep it automatic. Changes apply the next time this environment starts. A typed timezone stays when the proxy changes.": "留空即保持自动。修改会在下次启动该环境时生效。手动填写的时区在更换代理后仍会保留。",
+  "Follow this computer": "跟随本机",
+  "Custom language tag…": "自定义语言标签…",
+  "BCP-47, e.g. en-US": "BCP-47，例如 en-US"
 }

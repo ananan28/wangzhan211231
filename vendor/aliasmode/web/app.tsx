@@ -754,9 +754,63 @@ const AUTOMATIC_FINGERPRINT_FIELDS = [
   ["RAM", "Automatic"],
   ["Fingerprint seed", "Automatic · unique and stable"],
   ["Timezone", "Stored · set from the proxy automatically"],
+  ["Language", "Stored · follows the proxy"],
   ["Canvas / WebGL / audio", "Automatic"],
   ["WebRTC", "Automatic · proxy-aware"],
 ] as const;
+
+/** Common browser languages, as canonical BCP-47 tags. The kernel applies the tag to navigator.language and Accept-Language. */
+const BCP47_LOCALES: ReadonlyArray<readonly [string, string]> = [
+  ["zh-CN", "简体中文"], ["zh-TW", "繁體中文"], ["en-US", "English (US)"], ["en-GB", "English (UK)"],
+  ["ru-RU", "Русский"], ["ja-JP", "日本語"], ["ko-KR", "한국어"], ["de-DE", "Deutsch"], ["fr-FR", "Français"],
+  ["es-ES", "Español (ES)"], ["es-MX", "Español (MX)"], ["pt-BR", "Português (BR)"], ["pt-PT", "Português (PT)"],
+  ["it-IT", "Italiano"], ["nl-NL", "Nederlands"], ["pl-PL", "Polski"], ["tr-TR", "Türkçe"], ["ar-SA", "العربية"],
+  ["he-IL", "עברית"], ["hi-IN", "हिन्दी"], ["id-ID", "Bahasa Indonesia"], ["th-TH", "ไทย"], ["vi-VN", "Tiếng Việt"],
+  ["uk-UA", "Українська"], ["cs-CZ", "Čeština"], ["sv-SE", "Svenska"], ["da-DK", "Dansk"], ["fi-FI", "Suomi"],
+  ["nb-NO", "Norsk bokmål"], ["el-GR", "Ελληνικά"], ["hu-HU", "Magyar"], ["ro-RO", "Română"], ["bg-BG", "Български"],
+  ["sk-SK", "Slovenčina"], ["sl-SI", "Slovenščina"], ["hr-HR", "Hrvatski"], ["sr-RS", "Српски"], ["lt-LT", "Lietuvių"],
+  ["lv-LV", "Latviešu"], ["et-EE", "Eesti"], ["fa-IR", "فارسی"], ["ms-MY", "Bahasa Melayu"], ["fil-PH", "Filipino"],
+  ["bn-BD", "বাংলা"], ["ur-PK", "اردو"], ["ta-IN", "தமிழ்"], ["te-IN", "తెలుగు"], ["mr-IN", "मराठी"],
+  ["gu-IN", "ગુજરાતી"], ["kk-KZ", "Қазақша"], ["uz-UZ", "Oʻzbekcha"], ["az-AZ", "Azərbaycan"], ["ka-GE", "ქართული"],
+  ["hy-AM", "Հայերեն"], ["mn-MN", "Монгол"], ["ne-NP", "नेपाली"], ["si-LK", "සිංහල"], ["km-KH", "ខ្មែរ"],
+  ["lo-LA", "ລາວ"], ["my-MM", "မြန်မာ"],
+];
+const KNOWN_LOCALES = new Set(BCP47_LOCALES.map(([code]) => code));
+
+/** Automatic (follows the computer/proxy) or a typed BCP-47 tag. The kernel canonicalizes it on save. */
+function LanguageField({ value, onChange, disabled = false }: { value: string; onChange: (value: string) => void; disabled?: boolean }) {
+  const { t } = useTranslation();
+  const [custom, setCustom] = useState(false);
+  useEffect(() => {
+    if (value && KNOWN_LOCALES.has(value)) setCustom(false);
+  }, [value]);
+  const typed = custom || (!!value && !KNOWN_LOCALES.has(value));
+  return (
+    <>
+      <select
+        value={typed ? "__custom" : value}
+        disabled={disabled}
+        onChange={(event) => {
+          if (event.target.value === "__custom") { setCustom(true); return; }
+          setCustom(false);
+          onChange(event.target.value);
+        }}
+      >
+        <option value="">{t("Follow this computer")}</option>
+        {BCP47_LOCALES.map(([code, label]) => <option key={code} value={code}>{label} ({code})</option>)}
+        <option value="__custom">{t("Custom language tag…")}</option>
+      </select>
+      {typed && (
+        <input
+          value={value}
+          disabled={disabled}
+          placeholder={t("BCP-47, e.g. en-US")}
+          onChange={(event) => onChange(event.target.value.trim())}
+        />
+      )}
+    </>
+  );
+}
 
 // A template literal, so the translation key holds the same line breaks as the source.
 const FINGERPRINT_EDIT_WARNING = `These settings work together. Changing them can create an inconsistent fingerprint, make your browser easier to detect, or trigger account verification. We recommend automatic settings. Custom changes are your responsibility.
@@ -849,7 +903,7 @@ function FingerprintSettings({
         {onLocaleChange && (
           <label className="fld">
             <span>{t("Language")}</span>
-            <input value={locale ?? ""} disabled={disabled} placeholder={t("Automatic · e.g. en-US")} onChange={(event) => onLocaleChange(event.target.value)} />
+            <LanguageField value={locale ?? ""} disabled={disabled} onChange={onLocaleChange} />
           </label>
         )}
         {onCoresChange && (
@@ -865,7 +919,7 @@ function FingerprintSettings({
           </label>
         )}
         {AUTOMATIC_FINGERPRINT_FIELDS.filter(([label]) => !(
-          (label === "Timezone" && onTimezoneChange) || (label === "CPU" && onCoresChange) || (label === "Fingerprint seed" && onSeedChange)
+          (label === "Timezone" && onTimezoneChange) || (label === "Language" && onLocaleChange) || (label === "CPU" && onCoresChange) || (label === "Fingerprint seed" && onSeedChange)
         )).map(([label, value]) => {
           // A stored value is the same on every computer that opens the profile.
           const stored = label === "GPU" ? hardware?.gpu : label === "CPU" && hardware?.cores ? `${hardware.cores} cores` : undefined;
@@ -880,10 +934,10 @@ function FingerprintSettings({
         <div className="hint">{disabled
           ? t("Close the browser before changing fingerprint settings.")
           : onTimezoneChange
-            ? `${t("Leave a field blank to keep it automatic. A timezone you type stays when the proxy changes.")}${chromiumRuntime && cores ? ` ${t("AliasMode Chromium shows at most the processor count of the computer it runs on.")}` : ""}`
+            ? `${t("Leave a field blank to keep it automatic. Changes apply the next time this environment starts. A typed timezone stays when the proxy changes.")}${chromiumRuntime && cores ? ` ${t("AliasMode Chromium shows at most the processor count of the computer it runs on.")}` : ""}`
             : engine === "firefox"
               ? t("AliasMode Firefox uses its native profile. CDP, PDF, and Chrome extensions are unavailable.")
-              : t("The browser keeps the locked values coordinated. Screen and operating system are the only fingerprint settings you can override.")}</div>
+              : t("Screen and operating system are the fingerprint settings you can override here.")}</div>
         {onUndo && <button type="button" className="btn ghost" disabled={disabled} onClick={onUndo}>{t("Undo fingerprint edits")}</button>}
       </div>
     </details>
@@ -1098,7 +1152,7 @@ async function storeDesktopCloudCredentials(
 
 const BLANK_FORM = {
   name: "", engine: "chromium" as "chromium" | "firefox", chromiumRuntime: "" as "" | "aliasmode", group: "", platform: "", proxyType: "http", host: "", port: "", user: "", pass: "",
-  screen: "", platformOs: "", customNo: "", username: "", password: "", email: "", emailPassword: "", twofa: "",
+  screen: "", platformOs: "", locale: "", timezone: "", cores: "", seed: "", customNo: "", username: "", password: "", email: "", emailPassword: "", twofa: "",
 };
 
 const BLANK_COOKIE_FORM = { name: "", value: "", domain: "", path: "/" };
@@ -2666,6 +2720,11 @@ function App() {
         platform: form.platform,
         screen: form.screen,
         ...(form.platformOs ? { platformOs: form.platformOs } : {}),
+        ...(form.locale ? { locale: form.locale } : {}),
+        ...(form.timezone ? { timezone: form.timezone } : {}),
+        ...(form.cores ? { cores: form.cores } : {}),
+        // A fixed seed on a batch would give every profile the same identity; it is single-profile only.
+        ...(count === 1 && form.seed ? { seed: form.seed } : {}),
         ...(isCloudMode ? {} : { customNo: form.customNo }),
         username: form.username,
         password: form.password,
@@ -4812,7 +4871,15 @@ function App() {
                 </div>
               </details>
               <ProxyCheckFeedback hasProxy={createHasProxy} state={createProxyCheck} />
-              <FingerprintSettings engine={form.engine} chromiumRuntime={appMode?.legacyRemote ? "" : appMode?.chromiumRuntime ?? form.chromiumRuntime} ownChromium={ownChromium} screen={form.screen} onScreenChange={(value) => setF("screen", value)} platformOs={form.platformOs} onPlatformOsChange={(value) => setF("platformOs", value)} />
+              <FingerprintSettings
+                engine={form.engine} chromiumRuntime={appMode?.legacyRemote ? "" : appMode?.chromiumRuntime ?? form.chromiumRuntime} ownChromium={ownChromium}
+                screen={form.screen} onScreenChange={(value) => setF("screen", value)}
+                platformOs={form.platformOs} onPlatformOsChange={(value) => setF("platformOs", value)}
+                timezone={form.timezone} onTimezoneChange={(value) => setF("timezone", value)}
+                locale={form.locale} onLocaleChange={(value) => setF("locale", value)}
+                cores={form.cores} onCoresChange={(value) => setF("cores", value)}
+                seed={form.seed} onSeedChange={(value) => setF("seed", value)}
+              />
             </div>
             <div className="modal-foot">
               <button className="btn ghost" disabled={creating} onClick={closeCreate}>{t("Cancel")}</button>
