@@ -16,7 +16,7 @@ const modelBytes = 89 * 1024 * 1024;
 const report = { stages: [], consoleErrors: [], pageErrors: [], modelInferenceTested: false };
 let manager;
 let page;
-let profileBrowser;
+const openProfiles = new Map();
 let profileId;
 let origin;
 
@@ -110,42 +110,121 @@ async function upload(path) {
   }
 }
 
-async function openProfile() {
+async function openProfile(profile = { id: profileId, name: profileName }, expectExtension = true) {
   await page.getByRole("button", { name: "All profiles", exact: false }).click();
-  const opened = page.waitForResponse(response => response.url().endsWith(`/profiles/${profileId}/open`) && response.request().method() === "POST", { timeout: 240000 });
-  await page.getByRole("button", { name: `Open ${profileName}`, exact: true }).click();
+  const opened = page.waitForResponse(response => response.url().endsWith(`/profiles/${profile.id}/open`) && response.request().method() === "POST", { timeout: 240000 });
+  await page.getByRole("button", { name: `Open ${profile.name}`, exact: true }).click();
   const response = await opened;
   const result = await response.json();
   assert.equal(response.ok(), true, JSON.stringify(result));
   assert.equal(result.ok, true, JSON.stringify(result));
-  const active = await api(`/api/v1/browser/active?user_id=${encodeURIComponent(profileId)}`);
+  openProfiles.set(profile.id, profile);
+  const active = await api(`/api/v1/browser/active?user_id=${encodeURIComponent(profile.id)}`);
   assert.equal(active.data.status, "Active");
   assert.ok(active.data.ws?.puppeteer, JSON.stringify(active));
-  profileBrowser = await chromium.connectOverCDP(active.data.ws.puppeteer);
-  const context = profileBrowser.contexts()[0];
+  const browser = await chromium.connectOverCDP(active.data.ws.puppeteer);
+  const context = browser.contexts()[0];
   const probe = context.pages().find(item => item.url().startsWith(origin)) ?? await context.newPage();
   await probe.goto(`${origin}/probe`);
-  const output = probe.locator("#nanfu-extension-proof");
-  await output.waitFor({ timeout: 120000 });
-  const proof = JSON.parse(await output.textContent());
-  assert.deepEqual(proof, { wasmBytes, modelBytes, modelFirst: 90, modelLast: 90, compiled: true, offscreen: true });
-  report.resourceProof = proof;
+  if (expectExtension) {
+    const output = probe.locator("#nanfu-extension-proof");
+    await output.waitFor({ timeout: 120000 });
+    const proof = JSON.parse(await output.textContent());
+    assert.deepEqual(proof, { wasmBytes, modelBytes, modelFirst: 90, modelLast: 90, compiled: true, offscreen: true });
+    report.resourceProof = proof;
+  }
   return probe;
 }
 
-async function closeProfile() {
+async function closeProfile(profile = { id: profileId, name: profileName }) {
   await page.getByRole("button", { name: "All profiles", exact: false }).click();
-  const closed = page.waitForResponse(response => response.url().endsWith(`/profiles/${profileId}/close`) && response.request().method() === "POST", { timeout: 120000 });
-  await page.getByRole("button", { name: `Close ${profileName}`, exact: true }).click();
+  const closed = page.waitForResponse(response => response.url().endsWith(`/profiles/${profile.id}/close`) && response.request().method() === "POST", { timeout: 120000 });
+  await page.getByRole("button", { name: `Close ${profile.name}`, exact: true }).click();
   const response = await closed;
   const result = await response.json();
   assert.equal(result.ok, true, JSON.stringify(result));
-  const active = await api(`/api/v1/browser/active?user_id=${encodeURIComponent(profileId)}`);
+  const active = await api(`/api/v1/browser/active?user_id=${encodeURIComponent(profile.id)}`);
   assert.equal(active.data.status, "Inactive");
-  profileBrowser = undefined;
+  openProfiles.delete(profile.id);
 }
 
-const server = createServer((_request, response) => {
+async function isolationState(target, value) {
+  return target.evaluate(async value => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open("nanfu-installed-isolation", 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("state");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      const indexed = await new Promise((resolve, reject) => {
+        const transaction = db.transaction("state", "readonly");
+        const request = transaction.objectStore("state").get("owner");
+        transaction.oncomplete = () => resolve(request.result ?? null);
+        transaction.onabort = () => reject(transaction.error);
+      });
+      const cache = await caches.open("nanfu-installed-isolation");
+      const cached = await cache.match("/isolation-owner");
+      const previous = {
+        local: localStorage.getItem("isolation-owner"),
+        cookie: document.cookie.split("; ").find(item => item.startsWith("isolation-owner=")) ?? null,
+        indexed,
+        cached: cached ? await cached.text() : null,
+      };
+      if (value !== undefined) {
+        localStorage.setItem("isolation-owner", value);
+        document.cookie = `isolation-owner=${value}; Path=/; Max-Age=86400; SameSite=Lax`;
+        await new Promise((resolve, reject) => {
+          const transaction = db.transaction("state", "readwrite");
+          transaction.objectStore("state").put(value, "owner");
+          transaction.oncomplete = () => resolve();
+          transaction.onabort = () => reject(transaction.error);
+        });
+        await cache.put("/isolation-owner", new Response(value));
+      }
+      return previous;
+    } finally {
+      db.close();
+    }
+  }, value);
+}
+
+async function identityState(target) {
+  const identity = await target.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 200; canvas.height = 60;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#12ac84"; ctx.fillRect(3, 2, 194, 54);
+    ctx.font = "17px sans-serif"; ctx.fillStyle = "#421ec9";
+    ctx.fillText("Nanfu canvas sample 0123456789", 5, 30);
+    const headers = await fetch("/headers").then(response => response.json());
+    const workerUrl = URL.createObjectURL(new Blob([
+      "postMessage({ua:navigator.userAgent,platform:navigator.platform})",
+    ], { type: "text/javascript" }));
+    const worker = new Worker(workerUrl);
+    try {
+      const observed = await new Promise((resolve, reject) => {
+        worker.onmessage = event => resolve(event.data);
+        worker.onerror = event => reject(new Error(event.message));
+      });
+      return { canvas: canvas.toDataURL(), ua: navigator.userAgent, platform: navigator.platform, headerUa: headers.ua, worker: observed };
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(workerUrl);
+    }
+  });
+  assert.match(identity.ua, /Chrome\//);
+  assert.equal(identity.headerUa, identity.ua);
+  assert.deepEqual(identity.worker, { ua: identity.ua, platform: identity.platform });
+  return identity;
+}
+
+const server = createServer((request, response) => {
+  if (request.url === "/headers") {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ua: request.headers["user-agent"] }));
+    return;
+  }
   response.writeHead(200, { "content-type": "text/html" });
   response.end('<!doctype html><title>Nanfu controlled extension test</title><h1>Offline extension verification</h1><button id="interaction">Click me</button><output id="clicked"></output><script>document.querySelector("button").onclick=()=>document.querySelector("#clicked").textContent="clicked"</script>');
 });
@@ -254,7 +333,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   await page.locator(".modal-backdrop").getByLabel(extensionName, { exact: true }).check();
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await page.locator(".modal-backdrop").waitFor({ state: "hidden" });
-  assert.deepEqual((await api("/ui/api/profiles")).profiles.find(item => item.id === profileId).extensions, [extensionId]);
+  assert.deepEqual((await api(`/ui/api/profiles/${profileId}`)).profile.extensions, [extensionId]);
   await stage("extension-assigned");
 
   let probe = await openProfile();
@@ -278,8 +357,62 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   await page.locator(".extrow").filter({ hasText: extensionName }).getByRole("button", { name: "Remove", exact: true }).click();
   await page.getByText("No extensions yet", { exact: true }).waitFor();
   assert.equal((await api("/ui/api/extensions")).extensions.length, 0);
-  assert.deepEqual((await api("/ui/api/profiles")).profiles.find(item => item.id === profileId).extensions, []);
+  assert.deepEqual((await api(`/ui/api/profiles/${profileId}`)).profile.extensions, []);
   await stage("extension-removed-and-unassigned");
+
+  const otherName = "Nanfu GUI isolated environment";
+  await page.locator(".sidebar").getByRole("button", { name: "New Profile", exact: true }).click();
+  await page.locator(".modal-backdrop").getByLabel("Name", { exact: true }).fill(otherName);
+  await page.getByRole("button", { name: "Create profile", exact: true }).click();
+  await page.getByRole("button", { name: `Edit ${otherName}`, exact: true }).waitFor();
+  const profiles = (await api("/ui/api/profiles")).profiles;
+  const other = profiles.find(item => item.name === otherName);
+  assert.ok(other);
+  const first = (await api(`/ui/api/profiles/${profileId}`)).profile;
+  const second = (await api(`/ui/api/profiles/${other.id}`)).profile;
+  assert.equal(second.engine, "chromium");
+  assert.notEqual(first.fingerprintSeed, second.fingerprintSeed);
+  const empty = { local: null, cookie: null, indexed: null, cached: null };
+  const stateA = { local: "A", cookie: "isolation-owner=A", indexed: "A", cached: "A" };
+  const stateB = { local: "B", cookie: "isolation-owner=B", indexed: "B", cached: "B" };
+  const a = await openProfile(first, false);
+  assert.deepEqual(await isolationState(a, "A"), empty);
+  const identityA = await identityState(a);
+  const b = await openProfile(second, false);
+  assert.deepEqual(await isolationState(b, "B"), empty);
+  const identityB = await identityState(b);
+  assert.notEqual(identityA.canvas, identityB.canvas);
+  assert.deepEqual(await isolationState(a), stateA);
+  assert.deepEqual(await isolationState(b), stateB);
+  await stage("installed-environments-isolated");
+
+  await a.evaluate(() => sessionStorage.setItem("isolation-owner", "A-tab"));
+  const tab = await a.context().newPage();
+  await tab.goto(`${origin}/probe`);
+  assert.deepEqual(await isolationState(tab), stateA);
+  assert.deepEqual(await identityState(tab), identityA);
+  assert.equal(await tab.evaluate(() => sessionStorage.getItem("isolation-owner")), null);
+  await tab.close();
+  report.isolation = {
+    unit: "independent-environment",
+    ordinaryTabsShareAccountStorage: true,
+    ordinaryTabsShareCanvas: true,
+    sameUaAcrossEnvironments: identityA.ua === identityB.ua,
+    persistenceVerified: false,
+  };
+  await stage("ordinary-tab-sharing-boundary-verified");
+  await closeProfile(first);
+  await closeProfile(second);
+  const restoredA = await openProfile(first, false);
+  const restoredB = await openProfile(second, false);
+  assert.deepEqual(await isolationState(restoredA), stateA);
+  assert.deepEqual(await isolationState(restoredB), stateB);
+  assert.deepEqual(await identityState(restoredA), identityA);
+  assert.deepEqual(await identityState(restoredB), identityB);
+  report.isolation.persistenceVerified = true;
+  await closeProfile(first);
+  await closeProfile(second);
+  await stage("installed-environment-storage-and-identity-restored");
   assert.deepEqual(report.pageErrors, []);
   report.ok = true;
 } catch (error) {
@@ -288,7 +421,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (page) await page.screenshot({ path: join(reportDir, "failure.png") }).catch(() => {});
   throw error;
 } finally {
-  if (profileBrowser?.isConnected() && page) await closeProfile().catch(error => { report.cleanupError = String(error); });
+  for (const profile of [...openProfiles.values()]) {
+    await closeProfile(profile).catch(error => { (report.cleanupErrors ??= []).push(String(error)); });
+  }
   await writeFile(join(reportDir, "gui-result.json"), JSON.stringify(report, null, 2));
   await manager?.close().catch(() => {});
   await new Promise(resolve => server.close(resolve));
