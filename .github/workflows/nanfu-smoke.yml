@@ -1,50 +1,104 @@
 name: Nanfu installer smoke check
 on:
-  push:
-    branches: [feature/chromium-migration]
-    paths: [.github/workflows/nanfu-smoke.yml]
   workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful Nanfu Windows build run containing the installer
+        required: true
+        type: string
 permissions:
   contents: read
   actions: read
 jobs:
   smoke:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
+      - uses: actions/checkout@v4
+      - name: Verify installer provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:BUILD_RUN_ID -notmatch '^\d+$') { throw "build_run_id must be numeric" }
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:BUILD_RUN_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Cannot read build run" }
+          if ($run.conclusion -ne "success" -or $run.path -ne ".github/workflows/nanfu-windows-build.yml") { throw "Expected a successful Nanfu Windows build" }
+          $proof = Join-Path $env:RUNNER_TEMP "nanfu-installed-proof"
+          New-Item -ItemType Directory -Path $proof -Force | Out-Null
+          @{ buildRunId=$env:BUILD_RUN_ID; installerCommit=$run.head_sha; testCommit=$env:GITHUB_SHA } | ConvertTo-Json | Set-Content (Join-Path $proof "provenance.json")
+          "NANFU_GUI_REPORT_DIR=$proof" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: 40571216563
+          run-id: ${{ inputs.build_run_id }}
           name: nanfu-chromium-unverified-windows
           path: installer
-      - name: Install and check application process
+      - name: Install Nanfu and verify Chromium-only resources
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $installers = @(Get-ChildItem installer -Filter "*.exe" -File)
           if ($installers.Count -ne 1) { throw "Expected exactly one installer" }
           $hash = (Get-FileHash $installers[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          Write-Host "Installer SHA256: $hash"
+          $hash | Set-Content (Join-Path $env:NANFU_GUI_REPORT_DIR "installer-sha256.txt")
           $install = Start-Process -FilePath $installers[0].FullName -ArgumentList "/S" -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "Silent installation failed: $($install.ExitCode)" }
-          $exe = Join-Path $env:LOCALAPPDATA "AliasMode\aliasmode.exe"
-          if (!(Test-Path -LiteralPath $exe)) { throw "Installed executable was not found" }
-          $app = Start-Process -FilePath $exe -PassThru
-          Start-Sleep -Seconds 15
-          $app.Refresh()
-          if ($app.HasExited) { throw "Application exited during startup: $($app.ExitCode)" }
-          Stop-Process -Id $app.Id -Force
-          Write-Host "Installed application remained running for 15 seconds"
-      - name: Verify installed manager launches Chromium
+          $root = Join-Path $env:LOCALAPPDATA "Nanfu"
+          foreach ($name in @("aliasmode.exe", "aliasmode-sidecar.exe", "playwright")) {
+            if (!(Test-Path -LiteralPath (Join-Path $root $name))) { throw "Installed resource missing: $name" }
+          }
+          if (Test-Path -LiteralPath (Join-Path $root "firefox")) { throw "Unexpected bundled Firefox runtime" }
+          if (@(Get-ChildItem $root -Recurse -File -Filter "firefox.exe").Count -ne 0) { throw "Unexpected Firefox executable" }
+          "NANFU_INSTALL_ROOT=$root" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "Chromium-only installation verified" | Set-Content (Join-Path $env:NANFU_GUI_REPORT_DIR "installation.txt")
+      - name: Verify three installed Chromium lifecycle cycles through a controlled proxy
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = Join-Path $env:LOCALAPPDATA "AliasMode"
-          $sidecar = Join-Path $root "aliasmode-sidecar.exe"
-          if (!(Test-Path -LiteralPath $sidecar)) { throw "Installed sidecar not found" }
-          $env:ALIASMODE_PLAYWRIGHT_RUNTIME = Join-Path $root "playwright"
-          if (!(Test-Path -LiteralPath $env:ALIASMODE_PLAYWRIGHT_RUNTIME)) { throw "Packaged browser runtime not found" }
-          $state = Join-Path $env:RUNNER_TEMP "nanfu-chromium-smoke"
-          & $sidecar __cloud-launcher-smoke --chromium-runtime aliasmode --headless --state-root $state
-          if ($LASTEXITCODE -ne 0) { throw "Installed manager failed Chromium profile smoke: $LASTEXITCODE" }
+          $sidecar = Join-Path $env:NANFU_INSTALL_ROOT "aliasmode-sidecar.exe"
+          $env:ALIASMODE_PLAYWRIGHT_RUNTIME = Join-Path $env:NANFU_INSTALL_ROOT "playwright"
+          $state = Join-Path $env:RUNNER_TEMP "nanfu-sidecar-smoke"
+          & $sidecar __cloud-launcher-smoke --chromium-runtime aliasmode --proxy-mismatch --state-root $state 2>&1 | Tee-Object -FilePath (Join-Path $env:NANFU_GUI_REPORT_DIR "sidecar-smoke.log")
+          if ($LASTEXITCODE -ne 0) { throw "Installed Chromium lifecycle check failed: $LASTEXITCODE" }
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.21"
+      - name: Install GUI test dependencies
+        working-directory: vendor/aliasmode
+        run: bun install --frozen-lockfile
+      - name: Start installed Tauri window for GUI acceptance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $state = Join-Path $env:APPDATA "com.nanfu.browser"
+          New-Item -ItemType Directory -Path $state -Force | Out-Null
+          '{"version":1,"mode":"local","localAnalytics":false}' | Set-Content (Join-Path $state "config.json") -Encoding utf8NoBOM
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9223 --remote-debugging-address=127.0.0.1"
+          $env:RUST_BACKTRACE = "1"
+          $app = Start-Process -FilePath (Join-Path $env:NANFU_INSTALL_ROOT "aliasmode.exe") -PassThru -RedirectStandardOutput (Join-Path $env:NANFU_GUI_REPORT_DIR "tauri-stdout.log") -RedirectStandardError (Join-Path $env:NANFU_GUI_REPORT_DIR "tauri-stderr.log")
+          $app.Id | Set-Content (Join-Path $env:NANFU_GUI_REPORT_DIR "tauri.pid")
+      - name: Exercise installed extension manager GUI and local MV3 resources
+        working-directory: vendor/aliasmode
+        env:
+          NANFU_INSTALLED_CDP: http://127.0.0.1:9223
+        run: bun scripts/nanfu-installed-gui.mjs
+      - name: Stop acceptance application process tree
+        if: always()
+        shell: pwsh
+        run: |
+          $pidFile = Join-Path $env:RUNNER_TEMP "nanfu-installed-proof/tauri.pid"
+          if (Test-Path $pidFile) {
+            $appPid = [int](Get-Content $pidFile)
+            if (Get-Process -Id $appPid -ErrorAction SilentlyContinue) { taskkill.exe /PID $appPid /T /F }
+          }
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nanfu-installed-gui-evidence
+          path: ${{ runner.temp }}/nanfu-installed-proof
+          retention-days: 7
+          if-no-files-found: warn
