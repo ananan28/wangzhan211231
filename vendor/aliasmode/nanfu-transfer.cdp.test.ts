@@ -35,7 +35,7 @@ beforeAll(async () => {
   serverB = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: page });
   originA = `http://127.0.0.1:${serverA.port}`;
   originB = `http://127.0.0.1:${serverB.port}`;
-  browser = await chromium.launch({ channel: "chrome", headless: true });
+  browser = await chromium.launch({ headless: true, timeout: 60_000 });
 });
 
 afterAll(async () => {
