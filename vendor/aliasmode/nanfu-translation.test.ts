@@ -99,7 +99,7 @@ test("the helper is installed per launch and only answers with its own token", a
     bridge.listen();
     expect(bridge.port).toBeGreaterThan(0);
     const userDataDir = join(root, "profile");
-    const startedAt = new Date(0).toISOString();
+    const startedAt = 0;
     const launch = { profileId: "p1", debugPort: 9222, startedAt, userDataDir };
 
     // Disabled: no helper token is left behind.
