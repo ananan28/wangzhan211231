@@ -172,9 +172,9 @@ test.skipIf(!enabled)("a live environment survives export and import without los
     domain: "127.0.0.1",
     path: "/",
     httpOnly: true,
-    secure: false,
     sameSite: "Lax",
   });
+  expect(sid?.secure).toBeUndefined();
   expect(sid?.expires).toBe(expires);
   const mail = captured.origins.find((origin) => origin.origin === originA);
   expect(mail?.localStorage.sort((a, b) => a.name.localeCompare(b.name))).toEqual([
