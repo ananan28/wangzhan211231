@@ -43,8 +43,8 @@ create table if not exists public.nanfu_environments (
   primary key (user_id, environment_id)
 );
 
-create index if not exists nanfu_environments_updated_idx
-  on public.nanfu_environments (user_id, updated_at desc);
+-- The list index is created after the ownership rename (section 5), where the
+-- column is already called owner_user_id.
 
 alter table public.nanfu_environments enable row level security;
 
