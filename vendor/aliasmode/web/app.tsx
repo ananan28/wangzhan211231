@@ -1357,6 +1357,8 @@ function App() {
   const [extInstallBusy, setExtInstallBusy] = useState(false);
   const [extBusy, setExtBusy] = useState(false);
   const [extErr, setExtErr] = useState<string | null>(null);
+  const [extRemoval, setExtRemoval] = useState<Extension | null>(null);
+  const [extRemoveBusy, setExtRemoveBusy] = useState(false);
   const extFileRef = useRef<HTMLInputElement>(null);
   const [bulkExt, setBulkExt] = useState(""); // extension chosen for bulk assign
   // Update-from-file modal (export → edit → re-upload, matched by id)
@@ -1431,6 +1433,7 @@ function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (extRemoval) { setExtRemoval(null); return; }
       if (accessTarget) { if (!teamBusy) setAccessTarget(null); return; }
       if (movingFolder) { if (!folderMoveBusy) setMovingFolder(null); return; }
       if (pendingMode) { if (!modeBusy) setPendingMode(null); return; }
@@ -2961,19 +2964,21 @@ function App() {
       setExtBusy(false);
     }
   };
-  const doRemoveExtension = async (id: string, name: string) => {
-    const message = isCloudMode
-      ? `Remove extension "${name}" from this device? Cloud assignments remain and will show as not installed here.`
-      : `Remove extension "${name}"? It will be unassigned from all profiles.`;
-    if (!confirm(message)) return;
+  const doRemoveExtension = async () => {
+    if (!extRemoval || extRemoveBusy) return;
+    const { id } = extRemoval;
+    setExtRemoval(null);
+    setExtRemoveBusy(true);
     setExtErr(null);
     try {
       const r = await removeExtension(id);
-      if (!r.ok) setExtErr(r.error || "remove failed");
+      if (!r.ok) { setExtErr(r.error || "remove failed"); return; }
       setEditExts((xs) => xs.filter((x) => x !== id));
       await Promise.all([reloadExtensions(), reloadGroupExtensionDefaults()]);
     } catch (e) {
       setExtErr(String(e));
+    } finally {
+      setExtRemoveBusy(false);
     }
   };
   const toggleEditExt = (id: string) =>
@@ -4243,7 +4248,7 @@ function App() {
                   <Icon name="puzzle" className="sm" />
                   <span className="extname">{x.name}</span>
                   <span className="spacer" />
-                  <button className="btn xs danger" onClick={() => doRemoveExtension(x.id, x.name)}>Remove</button>
+                  <button className="btn xs danger" disabled={extRemoveBusy} onClick={() => setExtRemoval(x)}>Remove</button>
                 </div>
               ))}
             </div>
@@ -4685,6 +4690,23 @@ function App() {
           <div className="modal-foot"><button className="btn" disabled={teamBusy} onClick={() => setAccessTarget(null)}>{t("Close")}</button></div>
         </div>
       </div>}
+
+      {extRemoval && (
+        <div className="modal-backdrop" onClick={() => setExtRemoval(null)}>
+          <div className="modal mode-confirm" role="dialog" aria-modal="true" aria-labelledby="extension-remove-title" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head" id="extension-remove-title">{t("Remove extension")}</div>
+            <div className="modal-body">
+              <p>{isCloudMode
+                ? `Remove extension "${extRemoval.name}" from this device? Cloud assignments remain and will show as not installed here.`
+                : `Remove extension "${extRemoval.name}"? It will be unassigned from all profiles.`}</p>
+            </div>
+            <div className="modal-foot">
+              <button className="btn ghost" type="button" autoFocus onClick={() => setExtRemoval(null)}>{t("Cancel")}</button>
+              <button className="btn danger" type="button" disabled={extRemoveBusy} onClick={() => void doRemoveExtension()}>{t("Remove extension")}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showCreate && (
         /* Form dialog: a stray backdrop click must not discard typed input —
