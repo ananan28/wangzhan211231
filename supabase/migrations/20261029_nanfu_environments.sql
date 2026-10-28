@@ -991,7 +991,7 @@ begin
      or p_user = (select o.owner_user_id from public.nanfu_orgs o where o.id = me.org_id) then
     raise exception 'the owner cannot be changed' using errcode = '42501';
   end if;
-  public.nanfu_org_assert_target(me, p_user);
+  perform public.nanfu_org_assert_target(me, p_user);
   if p_identity is not null then
     if p_identity not in ('admin', 'manager', 'member') then
       raise exception 'unknown identity %', p_identity using errcode = 'P0001';
@@ -1050,7 +1050,7 @@ begin
   if target.identity = 'owner' then
     raise exception 'the owner quota is set by the plan' using errcode = '42501';
   end if;
-  public.nanfu_org_assert_target(me, p_user);
+  perform public.nanfu_org_assert_target(me, p_user);
   update public.nanfu_org_members m set env_quota = p_quota
    where m.org_id = me.org_id and m.user_id = p_user;
 end;
@@ -1096,7 +1096,7 @@ begin
   if not found then
     raise exception 'NANFU_FORBIDDEN: this account is not in your organization' using errcode = '42501';
   end if;
-  public.nanfu_org_assert_target(me, p_user);
+  perform public.nanfu_org_assert_target(me, p_user);
   if coalesce(p_granted, true) then
     insert into public.nanfu_org_group_grants (group_id, user_id, org_id, granted_by)
     values (p_group, p_user, me.org_id, auth.uid())
@@ -1231,7 +1231,7 @@ begin
   if target.identity = 'owner' then
     raise exception 'the owner cannot be removed' using errcode = '42501';
   end if;
-  public.nanfu_org_assert_target(me, p_user);
+  perform public.nanfu_org_assert_target(me, p_user);
   select o.owner_user_id into org_owner from public.nanfu_orgs o where o.id = me.org_id;
 
   if coalesce(p_reclaim, true) then
