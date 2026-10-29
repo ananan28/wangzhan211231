@@ -464,6 +464,11 @@ export function platformHomeUrl(platform: string | undefined, telegramClient: "a
   if (p === "amazon.com" || p === "amazon") return "https://www.amazon.com/";
   if (p === "ebay.com" || p === "ebay") return "https://www.ebay.com/";
   if (p === "etsy.com" || p === "etsy") return "https://www.etsy.com/";
+  // A platform typed by hand is remembered as a bare host ("mysite.com"), so open
+  // it over https instead of leaving the window on the new-tab page.
+  if (/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:[/?#]\S*)?$/i.test(value)) {
+    return `https://${value}`;
+  }
   return null;
 }
 
@@ -2243,9 +2248,15 @@ export class Launcher {
         // Native artifacts remain authoritative even when the bounded target
         // probe sees no user page. A late restore must not race a platform-home
         // fallback and leave an extra tab beside the restored session.
+        // A restored session only wins when it restored a page the user was on.
+        // Chromium writes Default/Sessions on every run, so "has a session" alone
+        // can mean "the last run ended on a blank tab"; such a profile must still
+        // land on its platform. An inconclusive probe (null) keeps deferring to the
+        // restore so a late page never gets a second tab beside it.
+        const restoredUserPage = nativeSessionRestored || (restoreLastSession && startupTargets === null);
         const urlsToOpen = startupUrls.length > 0
           ? startupUrls
-          : !restoreLastSession && home
+          : home && !restoredUserPage
             ? [home]
             : [];
         if (urlsToOpen.length > 0) {

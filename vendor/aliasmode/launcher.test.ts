@@ -659,7 +659,7 @@ test("Windows search bootstrap runs once without suppressing native restore", as
   store.close();
 });
 
-test("Windows Local preserves native session artifacts without appending platform home", async () => {
+test("Windows Local opens the platform home when the restored session has no page", async () => {
   const store = seeded();
   const profile = store.getProfile("k1d0cd11")!;
   store.upsertProfile({ ...profile, platform: "x.com" });
@@ -696,12 +696,14 @@ test("Windows Local preserves native session artifacts without appending platfor
   expect(await launcher.stop("k1d0cd11")).toBe(true);
 
   targets = [{ type: "page", url: "about:blank" }];
-  // Chromium loaded its last session, cookies included, even though no page came back.
+  // Chromium loaded its last session, cookies included, but restored only a blank
+  // tab; the platform profile still has to land on its platform.
   expect(await launcher.start("k1d0cd11")).toMatchObject({ nativeSessionRestored: false, nativeSessionLoaded: true });
   expect(prepared).toBe(1);
   expect(spawnedArgs[1]).toContain("--restore-last-session");
   expect(navigated).toEqual([
     ["https://explicit.example/start"],
+    ["https://x.com/home"],
   ]);
   store.close();
 });
@@ -5560,4 +5562,9 @@ test("platformHomeUrl opens a full URL typed into the platform field", () => {
   expect(platformHomeUrl("javascript:alert(1)")).toBeNull();
   expect(platformHomeUrl("bsky.app")).toBe("https://bsky.app/");
   expect(platformHomeUrl("truth social")).toBe("https://truthsocial.com/");
+  // A platform added by hand is stored as a bare host, so it must still open.
+  expect(platformHomeUrl("mysite.example")).toBe("https://mysite.example");
+  expect(platformHomeUrl("sub.mysite.example:8443/login?x=1")).toBe("https://sub.mysite.example:8443/login?x=1");
+  expect(platformHomeUrl("my platform")).toBeNull();
+  expect(platformHomeUrl("localhost:8080")).toBeNull();
 });
