@@ -30,7 +30,7 @@ jobs:
           bun-version: "1.2.21"
       - run: bun install --frozen-lockfile
       - name: Account and sync regression
-        run: bun test nanfu-account.test.ts nanfu-sync.test.ts nanfu-transfer.test.ts nanfu-service.test.ts
+        run: bun test nanfu-account.test.ts nanfu-sync.test.ts nanfu-transfer.test.ts nanfu-service.test.ts fingerprint-extension.test.ts
       - name: Install Playwright Chromium
         run: node node_modules/playwright-core/cli.js install chromium
       - name: CDP export and import round trip

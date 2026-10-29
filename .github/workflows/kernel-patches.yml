@@ -1,0 +1,97 @@
+name: kernel-patches
+
+# Verifies that the Nanfu Chromium patch series applies to, and reverses from,
+# the exact upstream files pinned in kernel/pinned.json. This intentionally
+# does NOT build Chromium: a hosted runner cannot hold a Chromium checkout.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernel-patches-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-patches:
+    name: verify patch series (apply + reverse)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve pinned revision
+        id: pin
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          pin = json.load(open("kernel/pinned.json", encoding="utf-8"))["chromium"]
+          print("ref=" + pin["source_ref"])
+          print("commit=" + pin["source_commit"])
+          PY
+
+      - name: Verify pinned tag still resolves to pinned commit
+        env:
+          REF: ${{ steps.pin.outputs.ref }}
+          EXPECTED: ${{ steps.pin.outputs.commit }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            "https://chromium.googlesource.com/chromium/src/+/${REF}?format=JSON" \
+            -o "$RUNNER_TEMP/tag.json"
+          actual="$(tail -n +2 "$RUNNER_TEMP/tag.json" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])')"
+          echo "pinned=$EXPECTED actual=$actual"
+          test "$actual" = "$EXPECTED"
+
+      - name: Fetch only the files touched by the series
+        env:
+          REF: ${{ steps.pin.outputs.ref }}
+          SRC_DIR: ${{ runner.temp }}/chromium-src
+        run: |
+          set -euo pipefail
+          mkdir -p "$SRC_DIR"
+          mapfile -t paths < <(
+            grep -h '^+++ b/' kernel/patches/*.patch \
+              | sed 's|^+++ b/||' | sort -u
+          )
+          if [ "${#paths[@]}" -eq 0 ]; then
+            echo "no patched paths found" >&2
+            exit 1
+          fi
+          for path in "${paths[@]}"; do
+            mkdir -p "$SRC_DIR/$(dirname "$path")"
+            url="https://chromium.googlesource.com/chromium/src/+/${REF}/${path}?format=TEXT"
+            curl --fail --silent --show-error --retry 6 --retry-all-errors \
+              --retry-delay 5 -o "$RUNNER_TEMP/file.b64" "$url"
+            base64 --decode "$RUNNER_TEMP/file.b64" > "$SRC_DIR/$path"
+            printf 'fetched %s (%s bytes)\n' "$path" "$(wc -c < "$SRC_DIR/$path")"
+          done
+
+      - name: Apply series (check, then apply)
+        env:
+          SRC_DIR: ${{ runner.temp }}/chromium-src
+        run: bash kernel/apply-patches.sh "$SRC_DIR"
+
+      - name: Verify series reverses cleanly
+        env:
+          SRC_DIR: ${{ runner.temp }}/chromium-src
+        run: |
+          set -euo pipefail
+          mapfile -t patches < <(ls -1 kernel/patches/*.patch | sort -r)
+          for patch in "${patches[@]}"; do
+            echo "==> reverse-check $(basename "$patch")"
+            git -C "$SRC_DIR" apply --reverse --check "$GITHUB_WORKSPACE/$patch"
+            git -C "$SRC_DIR" apply --reverse "$GITHUB_WORKSPACE/$patch"
+          done
+          echo "all patches reversed cleanly"
+
+      - name: Report patch stats
+        if: always()
+        run: |
+          for patch in kernel/patches/*.patch; do
+            echo "--- $(basename "$patch")"
+            git apply --stat "$patch"
+          done
