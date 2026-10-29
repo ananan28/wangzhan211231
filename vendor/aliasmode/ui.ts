@@ -20,7 +20,7 @@ import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import type { NanfuRuntime } from "./nanfu-service.ts";
 import { NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword } from "./nanfu-account.ts";
 import { NanfuSyncError } from "./nanfu-sync.ts";
-import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
+import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
 import { NANFU_TRANSFER_ROUTE_PREFIX, handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
 import type { CloudConnectionRuntime } from "./cloud-connection.ts";
 import type {
@@ -695,7 +695,9 @@ export async function handleUiRequest(
         const revision = account.revision();
         const body = await req.json().catch(() => null);
         account.assertCurrent(revision);
-        const result = await mutateNanfuOrganization(client, action as NanfuOrganizationAction, body, req.signal);
+        const result = await mutateNanfuOrganization(client, action as NanfuOrganizationAction, body, req.signal, {
+          callerUserId: account.state().userId,
+        });
         account.assertCurrent(revision);
         return noStoreJson({ ok: true, result, userId: account.state().userId });
       }
@@ -734,6 +736,7 @@ export async function handleUiRequest(
           : "邮箱、密码或会话无效，请重新登录";
         return noStoreJson({ ok: false, error: message, retryable, code, state: account.state() }, retryable ? 503 : 401);
       }
+      if (error instanceof NanfuPolicyError) return noStoreJson({ ok: false, error: error.message, code: "NANFU_POLICY" }, error.status);
       if (error instanceof NanfuInputError) return noStoreJson({ ok: false, error: error.message }, 400);
       if (error instanceof NanfuSyncError) {
         const failure = nanfuOrganizationError(error);
