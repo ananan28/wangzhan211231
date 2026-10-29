@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  nanfuAuthAction, nanfuSelfJoin, fetchNanfuEnvironments, fetchNanfuOverview, nanfuOrganizationAction, NanfuApiError,
-  type NanfuAccountState, type NanfuOrganization, type NanfuVisibleEnvironment, type NanfuOrgOverview, type NanfuMutations,
+  nanfuAuthAction, nanfuSelfJoin, fetchNanfuEnvironments, nanfuOrganizationAction, NanfuApiError,
+  type NanfuAccountState, type NanfuOrganization, type NanfuVisibleEnvironment, type NanfuMutations,
 } from "./api.ts";
-import { NanfuManagement, nanfuIdentityName } from "./nanfu-management.tsx";
+import { nanfuIdentityName } from "./nanfu-management.tsx";
 
 export function NanfuAccountPage({ active, localCount, onLocal }: { active: boolean; localCount: number | null; onLocal: () => void }) {
   const [account, setAccount] = useState<NanfuAccountState>({ authenticated: false });
   const [persistent, setPersistent] = useState<boolean | null>(null);
   const [organization, setOrganization] = useState<NanfuOrganization | null>(null);
   const [environments, setEnvironments] = useState<NanfuVisibleEnvironment[]>([]);
-  const [overview, setOverview] = useState<NanfuOrgOverview | null>(null);
   const [organizationName, setOrganizationName] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [signInInvite, setSignInInvite] = useState("");
@@ -37,7 +36,6 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
     if (clear) {
       setOrganization(null);
       setOrganizationLoaded(false);
-      setOverview(null);
       setEnvironments([]);
       setQuery("");
       setGroup("all");
@@ -53,13 +51,6 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
     setOrganization(result.organization);
     setEnvironments(result.environments);
     setOrganizationLoaded(true);
-    const org = result.organization;
-    if (org && !org.locked && org.status === "active" && ["owner", "admin"].includes(org.identity)) {
-      const detail = await fetchNanfuOverview(signal);
-      if (!current(generation)) return;
-      if (detail.userId !== userId) throw new Error("账号已切换，请重新登录");
-      setOverview(detail.result);
-    }
   };
   const authenticate = async (action: "signin" | "signup" | "restore" | "signout") => {
     const { generation, controller } = begin();
@@ -216,7 +207,6 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
           </>}
         </>}
       </div></section>}
-      {account.authenticated && organization && overview && <NanfuManagement organization={organization} overview={overview} currentUserId={account.userId ?? ""} busy={busy} onMutate={mutate} onRefresh={() => void refresh()} />}
     </div>
   </section>;
 }

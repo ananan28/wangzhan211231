@@ -747,11 +747,18 @@ export async function handleUiRequest(
         const failure = error.failure;
         const retryable = failure.retryable;
         const code = failure.kind === "http" ? failure.code : undefined;
+        const status = failure.kind === "http" ? failure.status : 0;
+        // 409 表示本机已有有效登录态；原样回传，客户端据此直接进入工作区，
+        // 否则会被误显示成“邮箱或密码不正确”。
+        const alreadySignedIn = status === 409;
+        const credentialsRejected = status === 400 || status === 401;
         const message = code === "email_not_confirmed" ? "请先通过邮件确认邮箱，再登录"
           : retryable ? "南孚账号服务暂时不可用，凭据已保留，请重试"
-          : failure.kind === "http" && failure.status === 409 ? "请先退出当前南孚账号"
-          : "邮箱、密码或会话无效，请重新登录";
-        return noStoreJson({ ok: false, error: message, retryable, code, state: account.state() }, retryable ? 503 : 401);
+          : alreadySignedIn ? "请先退出当前南孚账号"
+          : credentialsRejected ? "邮箱或密码不正确。"
+          : "登录状态已失效，请重新登录";
+        return noStoreJson({ ok: false, error: message, retryable, code, alreadySignedIn, state: account.state() },
+          retryable ? 503 : alreadySignedIn ? 409 : 401);
       }
       if (error instanceof NanfuPolicyError) return noStoreJson({ ok: false, error: error.message, code: "NANFU_POLICY" }, error.status);
       if (error instanceof NanfuInputError) return noStoreJson({ ok: false, error: error.message }, 400);

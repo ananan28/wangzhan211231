@@ -1,4 +1,4 @@
-.nanfu-account-page[hidden] { display: none; }
+.nanfu-account-page[hidden], .nanfu-staff-page[hidden] { display: none; }
 .nanfu-transfer-page[hidden] { display: none; }
 .nanfu-auth-form, .nanfu-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
 .nanfu-auth-form .fld, .nanfu-filters .fld { flex: 1 1 220px; min-width: 0; }

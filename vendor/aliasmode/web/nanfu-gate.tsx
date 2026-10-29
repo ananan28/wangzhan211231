@@ -23,15 +23,24 @@ export function NanfuGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    refresh()
-      .catch(() => {
-        // The gate retries on submit; a failed probe must not trap the UI.
-      })
-      .finally(() => {
-        if (active) setBusy(false);
-      });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // 账号服务偶发超时时要多试几次：一次读不到状态就把已登录用户丢回登录框，
+    // 用户再输密码只会撞上“请先退出当前南孚账号”。
+    const probe = async (attempt: number): Promise<void> => {
+      try {
+        await refresh();
+      } catch {
+        if (active && attempt < 4) {
+          timer = setTimeout(() => void probe(attempt + 1), 1500 * (attempt + 1));
+          return;
+        }
+      }
+      if (active) setBusy(false);
+    };
+    void probe(0);
     return () => {
       active = false;
+      if (timer) clearTimeout(timer);
     };
   }, [refresh]);
 
@@ -56,11 +65,21 @@ export function NanfuGate({ children }: { children: ReactNode }) {
       else if (result.selfJoin?.orgId) setNotice("已加入组织。");
       else await nanfuSelfJoin().catch(() => undefined);
     } catch (failure) {
+      if (failure instanceof NanfuApiError && (failure.status === 409 || /退出当前南孚账号/.test(failure.message))) {
+        // 本机已有有效会话：直接进工作区，绝不把它当成密码错误。
+        try {
+          const state = await refresh();
+          if (state.authenticated) {
+            setPassword("");
+            return;
+          }
+        } catch {
+          // 刷新失败时保留服务端给出的提示。
+        }
+      }
       setError(
         failure instanceof NanfuApiError
-          ? failure.status === 401
-            ? "邮箱或密码不正确。"
-            : failure.message
+          ? failure.message
           : failure instanceof Error
             ? failure.message
             : "南孚服务暂时不可用，请重试。",
