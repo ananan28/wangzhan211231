@@ -53,6 +53,7 @@ const AGENT_PACKAGE_VERSIONS: Record<string, string> = {
   "@playwright/mcp": "0.0.56",
   "playwright": "1.58.0-alpha-2026-01-16",
   "playwright-core": "1.62.1",
+"ws": "8.22.0",
 };
 
 function packageDirectory(root: string, name: string): string {

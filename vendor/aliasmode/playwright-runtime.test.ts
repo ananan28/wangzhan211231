@@ -2308,7 +2308,7 @@ test("loads the installed Playwright ESM entrypoint", async () => {
     }));
     await writeFile(join(wsRoot, "package.json"), JSON.stringify({
       name: "ws",
-      version: "8.21.0",
+      version: "8.22.0",
     }));
     await writeFile(join(packageRoot, "index.mjs"), "export const chromium = {};");
     await mkdir(join(root, "node"));
@@ -2334,7 +2334,7 @@ test("rejects an installed runtime without its ESM entrypoint", async () => {
     }));
     await writeFile(join(wsRoot, "package.json"), JSON.stringify({
       name: "ws",
-      version: "8.21.0",
+      version: "8.22.0",
     }));
 
     await expect(verifyPlaywrightRuntime(root)).rejects.toThrow("incomplete");

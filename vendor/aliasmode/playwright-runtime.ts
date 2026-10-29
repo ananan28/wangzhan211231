@@ -310,7 +310,7 @@ export async function verifyPlaywrightRuntime(root?: string): Promise<void> {
     throw new Error(`${runtime.kind} Playwright runtime is incomplete${action}`);
   }
   if (playwright?.name !== "playwright-core" || playwright?.version !== "1.62.1"
-      || ws?.name !== "ws" || ws?.version !== "8.21.0") {
+      || ws?.name !== "ws" || ws?.version !== "8.22.0") {
     throw new Error(`${runtime.kind} Playwright runtime has unexpected dependencies`);
   }
   const files = runtime.kind === "packaged"

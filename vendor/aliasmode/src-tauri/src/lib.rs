@@ -468,6 +468,7 @@ pub fn run() {
             }
             for (package, expected) in [
                 ("playwright-core", "1.62.1"),
+                ("ws", "8.22.0"),
                 ("@modelcontextprotocol/sdk", "1.32.2"),
                 ("@playwright/mcp", "0.0.56"),
                 ("playwright", "1.58.0-alpha-2026-01-16"),
