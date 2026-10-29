@@ -4661,32 +4661,43 @@ function App() {
                             setTranslation({
                               ...translation,
                               engine,
-                              baseUrl: engine === "openai" && !translation.baseUrl ? DEFAULT_TRANSLATION_SETTINGS.baseUrl : translation.baseUrl,
+                              // The endpoint belongs to one engine: Google and DeepL
+                              // have fixed defaults, so a stored OpenAI URL must not follow them.
+                              baseUrl: engine === "google" || engine === "deepl"
+                                ? ""
+                                : translation.baseUrl || DEFAULT_TRANSLATION_SETTINGS.baseUrl,
                             });
                           }}
                         >
-                          <option value="openai">{t("OpenAI-compatible")}</option>
-                          <option value="deepl">DeepL</option>
-                          <option value="custom">{t("Custom HTTP endpoint")}</option>
+                          <option value="google">{t("Google Translate (no key needed)")}</option>
+                          <option value="openai">{t("OpenAI-compatible (key required)")}</option>
+                          <option value="deepl">{t("DeepL (key required)")}</option>
+                          <option value="custom">{t("Custom HTTP endpoint (key required)")}</option>
                         </select>
                       </label>
-                      <label className="settings-row">
-                        <span>{t("Engine URL")}</span>
-                        <input
-                          value={translation.baseUrl}
-                          placeholder={translation.engine === "deepl" ? t("Leave blank for api-free.deepl.com") : "https://api.openai.com/v1"}
-                          onChange={(event) => { setTranslationSaved(false); setTranslation({ ...translation, baseUrl: event.target.value.trim() }); }}
-                        />
-                      </label>
-                      {translation.engine === "openai" && (
-                        <label className="settings-row">
-                          <span>{t("Model")}</span>
-                          <input
-                            value={translation.model}
-                            placeholder="gpt-4o-mini"
-                            onChange={(event) => { setTranslationSaved(false); setTranslation({ ...translation, model: event.target.value.trim() }); }}
-                          />
-                        </label>
+                      {translation.engine === "google" ? (
+                        <p>{t("Google Translate uses the public translate.googleapis.com endpoint and needs no key. Only the page text is sent: no URLs, cookies or sign-ins.")}</p>
+                      ) : (
+                        <>
+                          <label className="settings-row">
+                            <span>{t("Engine URL")}</span>
+                            <input
+                              value={translation.baseUrl}
+                              placeholder={translation.engine === "deepl" ? t("Leave blank for api-free.deepl.com") : "https://api.openai.com/v1"}
+                              onChange={(event) => { setTranslationSaved(false); setTranslation({ ...translation, baseUrl: event.target.value.trim() }); }}
+                            />
+                          </label>
+                          {translation.engine === "openai" && (
+                            <label className="settings-row">
+                              <span>{t("Model")}</span>
+                              <input
+                                value={translation.model}
+                                placeholder="gpt-4o-mini"
+                                onChange={(event) => { setTranslationSaved(false); setTranslation({ ...translation, model: event.target.value.trim() }); }}
+                              />
+                            </label>
+                          )}
+                        </>
                       )}
                       <label className="settings-row">
                         <span>{t("Translate into")}</span>
@@ -4721,6 +4732,7 @@ function App() {
                       <p>{t("Automatic translation starts when a page is not already in the target language. Right-click a page or selection to translate on demand.")}</p>
                     </div>
                   </section>
+                  {translation.engine !== "google" && (
                   <section className="settings-card">
                     <header><Icon name="lock" className="sm" /><h2>{t("Engine key")}</h2></header>
                     <div className="card-body">
@@ -4735,12 +4747,15 @@ function App() {
                         />
                       </label>
                       <p>{t("The key is kept in this computer's credential store and handed to the environment only when a page asks for a translation. It is never written into the environment, exports or logs.")}</p>
+                      {!translationKeyPresent && <p role="alert">{t("This engine needs an API key; translation fails until one is filled in.")}</p>}
                       {translationKeyPresent && (
                         <button className="btn" type="button" disabled={translationBusy} onClick={() => void clearTranslationKey()}>{t("Remove key")}</button>
                       )}
                     </div>
                   </section>
+                  )}
                   <p>{t("Translation requests run inside the environment's browser, so they follow its proxy. Only the page text is sent, and only to the engine configured here.")}</p>
+                  <p>{t("If the translation service is unreachable or rate-limited, the page shows why: switch engines above and try again.")}</p>
                   <p>{t("Settings apply the next time an environment starts.")}</p>
                   {translationSaved && <p role="status">{t("Translation settings saved.")}</p>}
                   <div className="update-actions">

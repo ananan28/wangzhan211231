@@ -14,6 +14,22 @@ import {
 import { handleUiRequest } from "./ui.ts";
 import type { NanfuCredentialStore } from "./nanfu-account.ts";
 import { fetchNanfuState, fetchNanfuEnvironments, nanfuAuthAction, NanfuApiError, isNanfuSignInRequired } from "./web/api.ts";
+import {
+  BAD_RESPONSE_ERROR,
+  DEFAULT_TRANSLATION_SETTINGS,
+  GOOGLE_TRANSLATE_URL,
+  MISSING_KEY_ERROR,
+  TRANSLATION_ENGINES,
+  assertEngineKey,
+  buildEngineRequest,
+  engineRequiresKey,
+  googleTarget,
+  googleTextParts,
+  normalizeTranslationSettings,
+  parseEngineResponse,
+  parseGoogleResponse,
+  type TranslationSettings,
+} from "./translation-core.ts";
 
 function serviceRoleJwt(): string {
   const payload = Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url");
@@ -527,4 +543,86 @@ test("a refused window write points the dashboard at Nanfu sign-in", async () =>
     expect(isNanfuSignInRequired(null)).toBe(false);
     expect(isNanfuSignInRequired("nanfu_signin_required")).toBe(false);
   } finally { f.close(); }
+});
+
+describe("Translation engines", () => {
+  const settings = (overrides: Partial<TranslationSettings> = {}): TranslationSettings =>
+    normalizeTranslationSettings({ ...DEFAULT_TRANSLATION_SETTINGS, enabled: true, ...overrides });
+
+  test("google is the default engine and translation stays off until the operator turns it on", () => {
+    expect(DEFAULT_TRANSLATION_SETTINGS.engine).toBe("google");
+    expect(DEFAULT_TRANSLATION_SETTINGS.enabled).toBe(false);
+    expect(TRANSLATION_ENGINES).toEqual(["google", "openai", "deepl", "custom"]);
+    expect(settings().engine).toBe("google");
+    expect(settings({ engine: "google", baseUrl: "" }).baseUrl).toBe("");
+    expect(settings({ engine: "deepl", baseUrl: "" }).engine).toBe("deepl");
+    expect(() => normalizeTranslationSettings({ ...DEFAULT_TRANSLATION_SETTINGS, engine: "bing" })).toThrow(/engine/i);
+    expect(() => normalizeTranslationSettings({ ...DEFAULT_TRANSLATION_SETTINGS, mode: "side-by-side" })).toThrow(/mode/i);
+  });
+
+  test("google needs no key while every other engine refuses to run without one", () => {
+    expect(engineRequiresKey("google")).toBe(false);
+    for (const engine of ["openai", "deepl", "custom"] as const) expect(engineRequiresKey(engine)).toBe(true);
+    expect(() => assertEngineKey("google", "")).not.toThrow();
+    for (const engine of ["openai", "deepl", "custom"] as const) {
+      expect(() => assertEngineKey(engine, "   ")).toThrow(MISSING_KEY_ERROR);
+      expect(() => assertEngineKey(engine, "   ")).toThrow(/密钥/);
+      expect(() => buildEngineRequest(settings({ engine }), ["hello"], "")).toThrow(MISSING_KEY_ERROR);
+      expect(() => buildEngineRequest(settings({ engine, baseUrl: "https://api.example.com/v1" }), ["hello"], "k")).not.toThrow();
+    }
+    // The google request is built with an empty key and never carries one.
+    expect(() => buildEngineRequest(settings({ engine: "google" }), ["hello"], "")).not.toThrow();
+  });
+
+  test("a google request carries only the page text and the fixed endpoint", () => {
+    const built = buildEngineRequest(settings({ engine: "google", targetLanguage: "zh-TW" }), ["Hello world"], "sk-must-not-appear");
+    expect(built.method).toBe("GET");
+    const url = new URL(built.url);
+    expect(`${url.origin}${url.pathname}`).toBe(GOOGLE_TRANSLATE_URL);
+    expect(GOOGLE_TRANSLATE_URL).toBe("https://translate.googleapis.com/translate_a/single");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      client: "gtx", sl: "auto", tl: "zh-TW", dt: "t", q: "Hello world",
+    });
+    expect(built.headers).toEqual({});
+    expect(built.body).toBe("");
+    expect(built.url).not.toContain("sk-must-not-appear");
+    expect(built.url).not.toMatch(/cookie|referer|https?:\/\/[^/]*\/page/i);
+    expect(() => buildEngineRequest(settings({ engine: "google" }), ["a", "b"], "")).toThrow(/一段文本/);
+  });
+
+  test("google takes bare language codes with Chinese split by script", () => {
+    expect(googleTarget("zh-CN")).toBe("zh-CN");
+    expect(googleTarget("zh-TW")).toBe("zh-TW");
+    expect(googleTarget("zh-Hant")).toBe("zh-TW");
+    expect(googleTarget("zh-Hans")).toBe("zh-CN");
+    expect(googleTarget("en-GB")).toBe("en");
+    expect(googleTarget("pt-PT")).toBe("pt-PT");
+    expect(googleTarget("pt-BR")).toBe("pt-BR");
+    expect(googleTarget("ja-JP")).toBe("ja");
+    expect(googleTarget("nb-NO")).toBe("no");
+  });
+
+  test("google segments are joined and an empty answer is a failure, not the source text", () => {
+    expect(parseGoogleResponse([[["你好，", "Hello, ", null, null, 10], ["世界", "world", null, null, 10]]])).toBe("你好，世界");
+    expect(parseGoogleResponse([[["你好", "Hello"], ["", null], [null, "  "]]])).toBe("你好");
+    expect(parseEngineResponse("google", [[["译文", "source"]]], 1)).toEqual(["译文"]);
+    expect(() => parseGoogleResponse([[], null, "en"])).toThrow(BAD_RESPONSE_ERROR);
+    expect(() => parseGoogleResponse([null, null, "en"])).toThrow(BAD_RESPONSE_ERROR);
+    expect(() => parseGoogleResponse({ sentences: [{ trans: "x" }] })).toThrow(BAD_RESPONSE_ERROR);
+    expect(() => parseGoogleResponse([[["", "Hello"], [null, "world"]]])).toThrow(BAD_RESPONSE_ERROR);
+    expect(() => parseGoogleResponse([[["   ", null]]])).toThrow(BAD_RESPONSE_ERROR);
+    expect(() => parseEngineResponse("google", [[["译文"]]], 2)).toThrow(/一段文本/);
+    expect(BAD_RESPONSE_ERROR).toContain("响应格式异常");
+  });
+
+  test("long google text is split into ordered parts that rejoin to the original", () => {
+    const long = "第一句话。".repeat(400);
+    const parts = googleTextParts(long, 500);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.every((part) => part.length <= 500)).toBe(true);
+    expect(parts.join("")).toBe(long);
+    expect(googleTextParts(`${"字".repeat(499)}。尾`, 500)).toEqual([`${"字".repeat(499)}。`, "尾"]);
+    expect(googleTextParts("短")).toEqual(["短"]);
+    expect(googleTextParts("")).toEqual([]);
+  });
 });
