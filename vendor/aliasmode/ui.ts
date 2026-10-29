@@ -2481,6 +2481,10 @@ export async function handleUiRequest(
   const action = pathname.match(/^\/ui\/api\/profiles\/([^/]+)\/(open|close|clear-cache)$/);
   if (action && req.method === "POST") {
     const id = decodeURIComponent(action[1]!);
+    // Favorite-site shortcuts pass ?url=…; only https is accepted, and only for open.
+    const requestedUrl = new URL(req.url).searchParams.get("url");
+    let launchUrl: string | null = null;
+    if (action[2] === "open" && requestedUrl && /^https:\/\//i.test(requestedUrl)) launchUrl = requestedUrl;
     if (options.cloudBrowser) {
       try {
         if (action[2] === "open") {
@@ -2504,7 +2508,7 @@ export async function handleUiRequest(
           const profile = remote.getProfile
             ? await remote.getProfile(id).catch(() => null)
             : null;
-          const r = await remote.open(id, [], force);
+          const r = await remote.open(id, launchUrl ? [launchUrl] : [], force);
           if (r.ok) return openResponse(profile, r);
           return Response.json(
             { ok: false, error: r.lockedBy ? `in use by ${r.lockedBy}` : (r.error ?? "open failed"), lockedBy: r.lockedBy },
@@ -2526,7 +2530,7 @@ export async function handleUiRequest(
     try {
       if (action[2] === "open") {
         const home = /^https?:\/\//i.test((profile.platform ?? "").trim()) ? platformHomeUrl(profile.platform) : null;
-        const r = await launcher.start(id, home ? [home] : []);
+        const r = await launcher.start(id, launchUrl ? [launchUrl] : home ? [home] : []);
         return openResponse(profile, r);
       }
       if (action[2] === "close") {

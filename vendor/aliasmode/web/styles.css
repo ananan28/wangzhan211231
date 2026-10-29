@@ -747,6 +747,29 @@ button.newgroup:disabled { color: var(--faint); border-color: var(--line); backg
 .filterbar .group-filter { width: 168px; flex: 0 0 auto; }
 .filterbar .searchfield { max-width: 420px; }
 
+/* 常用站点快捷入口（仅本机保存） */
+.sites-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 0 0 auto;
+  padding: 8px 14px; border-bottom: 1px solid var(--line-soft);
+}
+.sites-label { font-size: 11px; letter-spacing: .06em; color: var(--muted); margin-right: 2px; }
+.site-chip {
+  display: inline-flex; align-items: center; overflow: hidden;
+  border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--surface);
+}
+.site-chip .btn { border: 0; border-radius: 0; }
+.site-remove {
+  display: inline-flex; align-items: center; justify-content: center; align-self: stretch;
+  width: 22px; border: 0; border-left: 1px solid var(--line-soft);
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.site-remove:hover { color: var(--danger-ink); background: var(--danger-soft); }
+.site-add { display: inline-flex; align-items: center; gap: 6px; }
+.site-add .input { width: 120px; height: 26px; }
+.site-add .input + .input { width: 240px; }
+.site-err { font-size: 11.5px; color: var(--danger-ink); }
+.fld-warn { color: var(--danger-ink); font-size: 11.5px; }
+
 .toolbar {
   display: flex; align-items: center; gap: 6px; flex: 0 0 auto; flex-wrap: wrap;
   padding: 9px 14px; border-bottom: 1px solid var(--line-soft);
