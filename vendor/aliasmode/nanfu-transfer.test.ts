@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,17 @@ import {
   writeNanfuEnvFiles,
 } from "./nanfu-env-package.ts";
 import { exportNanfuEnvironment } from "./nanfu-sync.ts";
+import {
+  NANFU_CLOUD_TRANSFER_FORMAT,
+  NanfuCloudTransferError,
+  buildCloudTransferPayload,
+  createTransferIdentity,
+  hasLoginState,
+  loadOrCreateTransferIdentity,
+  openTransferPayload,
+  parseCloudTransferPayload,
+  sealTransferPayload,
+} from "./nanfu-cloud-transfer.ts";
 import {
   NANFU_KERNEL_VERSION,
   NanfuTransferError,
@@ -392,4 +404,113 @@ test("extension directories round-trip through a package into a fresh directory"
 test("environment package file names stay slugged and dated", () => {
   expect(nanfuEnvPackageFileName("Work / Mail #2", "2026-10-29T02:00:00.000Z")).toBe("nanfu-work-mail-2-2026-10-29.nanfu-env");
   expect(nanfuEnvPackageFileName("邮箱", "2026-10-29T02:00:00.000Z")).toBe("nanfu-environment-2026-10-29.nanfu-env");
+});
+
+const cloudArchiveBytes = Buffer.from('{"manifest_version":3,"name":"Demo"}');
+const cloudArchive = {
+  name: "Demo",
+  files: [{
+    path: "manifest.json",
+    size: cloudArchiveBytes.length,
+    sha256: createHash("sha256").update(cloudArchiveBytes).digest("hex"),
+    data: cloudArchiveBytes.toString("base64"),
+  }],
+};
+
+function cloudPayload() {
+  return buildCloudTransferPayload({
+    environment,
+    session: rawSession,
+    extensionNames: ["Demo"],
+    createdAt: "2026-10-30T01:00:00.000Z",
+  });
+}
+
+test("a sealed payload opens only for the addressed key and the addressed transfer", () => {
+  const recipient = createTransferIdentity();
+  const stranger = createTransferIdentity();
+  const id = "0b8f0a9e-4b1f-4c0a-9d78-7a4c1b2e3f40";
+  const sealed = sealTransferPayload(recipient.publicKey, "hello", id);
+  expect(sealed).not.toContain("hello");
+  expect(openTransferPayload(recipient, sealed, id)).toBe("hello");
+  expect(() => openTransferPayload(stranger, sealed, id)).toThrow(NanfuCloudTransferError);
+  expect(() => openTransferPayload(recipient, sealed, "another-transfer")).toThrow(NanfuCloudTransferError);
+});
+
+test("a tampered or foreign sealed payload is rejected", () => {
+  const recipient = createTransferIdentity();
+  const id = "0b8f0a9e-4b1f-4c0a-9d78-7a4c1b2e3f40";
+  const sealed = sealTransferPayload(recipient.publicKey, JSON.stringify(cloudPayload()), id);
+  const parsed = JSON.parse(sealed);
+  const bytes = Buffer.from(parsed.ct, "base64");
+  bytes[0] = bytes[0]! ^ 0x01;
+  parsed.ct = bytes.toString("base64");
+  expect(() => openTransferPayload(recipient, JSON.stringify(parsed), id)).toThrow(NanfuCloudTransferError);
+  expect(() => openTransferPayload(recipient, "not json", id)).toThrow(NanfuCloudTransferError);
+});
+
+test("the cloud payload carries configuration and login state without the password", () => {
+  const built = cloudPayload();
+  expect(built.format).toBe(NANFU_CLOUD_TRANSFER_FORMAT);
+  expect(built.package.header.format).toBe("nanfu-env");
+  expect(built.transfer.session.cookies).toHaveLength(2);
+  expect(built.transfer.session.cookies[0]?.httpOnly).toBe(true);
+  expect(built.transfer.environment.id).toBe("k1abc");
+  expect(hasLoginState(built)).toBe(true);
+  const telegram = built.transfer.session.origins.find((origin) => origin.origin === "https://web.telegram.org");
+  expect((telegram?.indexedDB as any[]).map((db) => db.name)).toEqual(["tweb-common"]);
+  expect(JSON.stringify(built)).not.toContain("account-pass");
+  expect(JSON.stringify(built)).not.toContain("chat");
+});
+
+test("a decrypted payload is validated before anything is imported", () => {
+  const built = cloudPayload();
+  const parsed = parseCloudTransferPayload(JSON.stringify(built));
+  expect(parsed.package.environment.id).toBe("k1abc");
+  expect(parsed.transfer.session.origins.find((origin) => origin.origin === "https://mail.example.com")
+    ?.localStorage[0]?.value).toBe("local-secret");
+
+  const renamed = JSON.parse(JSON.stringify(built));
+  renamed.package.environment.name = "Renamed";
+  expect(() => parseCloudTransferPayload(JSON.stringify(renamed))).toThrow();
+
+  const drifted = JSON.parse(JSON.stringify(built));
+  drifted.version = 99;
+  expect(() => parseCloudTransferPayload(JSON.stringify(drifted))).toThrow(/版本/);
+
+  const mismatched = JSON.parse(JSON.stringify(built));
+  mismatched.transfer.environment.id = "k1other";
+  expect(() => parseCloudTransferPayload(JSON.stringify(mismatched))).toThrow(/编号/);
+});
+
+test("an environment with no login state says so instead of pretending", () => {
+  const built = buildCloudTransferPayload({ environment, session: {} });
+  expect(hasLoginState(built)).toBe(false);
+  expect(built.transfer.session.cookies).toEqual([]);
+  expect(built.transfer.session.origins).toEqual([]);
+});
+
+test("the device identity is created once and reused from the state directory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nanfu-cloud-key-"));
+  try {
+    const first = loadOrCreateTransferIdentity(root);
+    const second = loadOrCreateTransferIdentity(root);
+    expect(second.publicKey).toBe(first.publicKey);
+    expect(second.privateKey).toBe(first.privateKey);
+    const file = JSON.parse(await readFile(join(root, "nanfu-transfer-key.json"), "utf8"));
+    expect(file.publicKey).toBe(first.publicKey);
+    expect(() => openTransferPayload({ publicKey: first.publicKey, privateKey: "broken" }, "{}", "x"))
+      .toThrow(NanfuCloudTransferError);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("extension archives travel with the payload and survive a round trip", () => {
+  const built = buildCloudTransferPayload({
+    environment, session: rawSession, extensionNames: ["Demo"], extensionArchives: [cloudArchive],
+  });
+  expect(built.package.extensionArchives[0]?.files[0]?.path).toBe("manifest.json");
+  const parsed = parseCloudTransferPayload(JSON.stringify(built));
+  expect(parsed.package.extensionArchives[0]?.name).toBe("Demo");
 });

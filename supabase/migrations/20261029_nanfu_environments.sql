@@ -268,13 +268,55 @@ begin
    where id = p_id;
 
   return query
-    select row.environment_id, row.environment_name, row.payload, row.sender_email, row.accepted_at;
+    -- `row` was read before the update, so its accepted_at is still null.
+    select row.environment_id, row.environment_name, row.payload, row.sender_email, now();
 end;
 $$;
 
 revoke all on function public.nanfu_accept_transfer(uuid) from public;
 revoke all on function public.nanfu_accept_transfer(uuid) from anon;
 grant execute on function public.nanfu_accept_transfer(uuid) to authenticated;
+
+-- A transfer may carry configuration plus extension files, so the sealed
+-- envelope needs more room than the first cut allowed. 28M characters leaves
+-- about 19 MB of plaintext after sealing and base64.
+alter table public.nanfu_transfers drop constraint if exists nanfu_transfers_payload_check;
+alter table public.nanfu_transfers
+  add constraint nanfu_transfers_payload_check check (char_length(payload) between 1 and 28000000);
+
+-- ---------------------------------------------------------------------------
+-- 2b. Recipient transfer keys (X25519, public half only)
+-- ---------------------------------------------------------------------------
+-- A sender seals the package to the recipient's published key, so the service
+-- stores ciphertext it cannot open and the recipient needs no shared password.
+-- Public keys are public by definition; only the owner may write their row.
+
+create table if not exists public.nanfu_transfer_keys (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  public_key text not null check (char_length(public_key) between 40 and 200),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.nanfu_transfer_keys enable row level security;
+
+revoke all on table public.nanfu_transfer_keys from anon;
+grant select, insert, update, delete on table public.nanfu_transfer_keys to authenticated;
+
+drop policy if exists nanfu_transfer_keys_select on public.nanfu_transfer_keys;
+create policy nanfu_transfer_keys_select
+  on public.nanfu_transfer_keys for select to authenticated
+  using (true);
+
+drop policy if exists nanfu_transfer_keys_insert on public.nanfu_transfer_keys;
+create policy nanfu_transfer_keys_insert
+  on public.nanfu_transfer_keys for insert to authenticated
+  with check (user_id = auth.uid());
+
+drop policy if exists nanfu_transfer_keys_update on public.nanfu_transfer_keys;
+create policy nanfu_transfer_keys_update
+  on public.nanfu_transfer_keys for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
 
 -- ---------------------------------------------------------------------------
 -- 3. Organizations: identity, role templates, groups, member grants

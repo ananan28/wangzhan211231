@@ -106,6 +106,25 @@ export interface NanfuTransferMember {
   locked: boolean;
 }
 
+export interface NanfuCloudTransferRow {
+  id: string;
+  environmentId: string;
+  environmentName: string;
+  senderEmail: string;
+  recipientEmail: string;
+  status: "pending" | "accepted" | "revoked" | string;
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+}
+
+export interface NanfuCloudTransferInbox {
+  keyPublished: boolean;
+  inbox: NanfuCloudTransferRow[];
+  sent: NanfuCloudTransferRow[];
+  error?: string;
+}
+
 export interface NanfuTransferInbox {
   userId: string;
   organization: NanfuOrganization;
@@ -113,6 +132,30 @@ export interface NanfuTransferInbox {
   visibleEnvironments: NanfuVisibleEnvironment[];
   inbox: NanfuTransferRow[];
   sent: NanfuTransferRow[];
+  packages?: NanfuCloudTransferInbox;
+}
+
+export interface NanfuCloudSendResult {
+  id: string;
+  environmentName: string;
+  hasLoginState: boolean;
+  cookies: number;
+  origins: number;
+  extensions: number;
+  recipientEmail: string;
+}
+
+export interface NanfuCloudAcceptResult {
+  profileId: string;
+  name: string;
+  renamed: boolean;
+  environmentName: string;
+  environmentId: string;
+  hasLoginState: boolean;
+  cookies: number;
+  origins: number;
+  extensions: number;
+  senderEmail: string;
 }
 
 export interface NanfuEnvExportResult {
@@ -175,6 +218,21 @@ export function nanfuRespondEnvironmentTransfer(
   signal?: AbortSignal,
 ): Promise<{ status: "accepted" | "rejected" }> {
   return nanfuTransferPost("respond", input, signal);
+}
+
+export function nanfuSendCloudEnvironment(
+  input: { environmentId: string; toUserId: string },
+  signal?: AbortSignal,
+): Promise<NanfuCloudSendResult> {
+  return nanfuTransferPost("package-send", input, signal);
+}
+
+export function nanfuAcceptCloudEnvironment(id: string, signal?: AbortSignal): Promise<NanfuCloudAcceptResult> {
+  return nanfuTransferPost("package-accept", { id }, signal);
+}
+
+export function nanfuRevokeCloudEnvironment(id: string, signal?: AbortSignal): Promise<{ ok: true }> {
+  return nanfuTransferPost("package-revoke", { id }, signal);
 }
 
 export function nanfuExportEnvironment(environmentId: string, signal?: AbortSignal): Promise<NanfuEnvExportResult> {

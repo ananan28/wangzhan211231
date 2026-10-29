@@ -22,6 +22,7 @@ import { NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, is
 import { NanfuSyncError } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
 import { NANFU_TRANSFER_ROUTE_PREFIX, handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
+import { loadOrCreateTransferIdentity } from "./nanfu-cloud-transfer.ts";
 import type { CloudConnectionRuntime } from "./cloud-connection.ts";
 import type {
   CloudBrowserCloseResult,
@@ -624,7 +625,7 @@ export async function handleUiRequest(
   // Transfers and `.nanfu-env` packages keep their own prefix so the account
   // and organization handlers below stay untouched.
   if (pathname.startsWith(NANFU_TRANSFER_ROUTE_PREFIX)) {
-    return handleNanfuTransferRequest(req, { nanfu: options.nanfu, store, paths: options.paths });
+    return handleNanfuTransferRequest(req, { nanfu: options.nanfu, store, paths: options.paths, launcher });
   }
 
   if (pathname.startsWith("/ui/api/nanfu/")) {
@@ -664,6 +665,15 @@ export async function handleUiRequest(
         return { ok: false, error: "加入默认组织失败，可稍后重试" };
       }
     };
+    // Publish this device's transfer key as soon as an account is signed in, so
+    // an administrator can address a sealed cloud transfer without asking the
+    // recipient to visit a page first. Failure only delays that, never the login.
+    const publishTransferKey = (): void => {
+      const paths = options.paths;
+      const userId = account.state().userId;
+      if (!paths || !userId) return;
+      void client.publishTransferKey(userId, loadOrCreateTransferIdentity(paths.root).publicKey).catch(() => {});
+    };
     try {
       if (action === "state" && req.method === "GET") {
         return noStoreJson({ ok: true, state: account.state(), persistent });
@@ -677,6 +687,7 @@ export async function handleUiRequest(
         if (action === "restore") {
           const state = await account.restore();
           const selfJoin = state.authenticated ? await joinOrganization() : { ok: true };
+          if (state.authenticated) publishTransferKey();
           return noStoreJson({ ok: true, state, persistent, selfJoin });
         }
         const body = await req.json().catch(() => null) as { email?: unknown; password?: unknown; invite?: unknown } | null;
@@ -696,6 +707,7 @@ export async function handleUiRequest(
         const selfJoin = invite
           ? await redeemIntoOrganization(invite, req.signal)
           : await joinOrganization();
+        publishTransferKey();
         return noStoreJson({ ok: true, state, persistent, selfJoin });
       }
       if (req.method === "POST" && action === "self-join") {

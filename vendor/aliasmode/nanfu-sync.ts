@@ -232,6 +232,36 @@ export interface NanfuEnvTransfer {
   forced: boolean; note: string; createdAt: string; resolvedAt: string | null;
 }
 
+/** Sealed cloud packages: the database column allows 28M characters. */
+export const NANFU_CLOUD_PAYLOAD_MAX = 28_000_000;
+const NANFU_CLOUD_TIMEOUT_MS = 180_000;
+
+export interface NanfuCloudTransferRow {
+  id: string;
+  environmentId: string;
+  environmentName: string;
+  senderEmail: string;
+  recipientEmail: string;
+  status: "pending" | "accepted" | "revoked" | string;
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+}
+
+function cloudTransferRow(row: any): NanfuCloudTransferRow {
+  return {
+    id: String(row.id),
+    environmentId: String(row.environment_id ?? ""),
+    environmentName: String(row.environment_name ?? ""),
+    senderEmail: String(row.sender_email ?? ""),
+    recipientEmail: String(row.recipient_email ?? ""),
+    status: String(row.status ?? "pending"),
+    createdAt: String(row.created_at ?? ""),
+    expiresAt: String(row.expires_at ?? ""),
+    acceptedAt: typeof row.accepted_at === "string" ? row.accepted_at : null,
+  };
+}
+
 export const NANFU_TRANSFER_MAX_BATCH = 200;
 export const NANFU_TRANSFER_NOTE_MAX = 500;
 export const NANFU_ENVIRONMENT_ID_MAX = 128;
@@ -373,6 +403,130 @@ export class NanfuSyncClient {
     return rows.map(row => ({ id: String(row.id), environmentId: String(row.environment_id), fromUserId: String(row.from_user_id),
       toUserId: String(row.to_user_id), status: String(row.status), forced: row.forced === true, note: String(row.note ?? ""),
       createdAt: String(row.created_at), resolvedAt: typeof row.resolved_at === "string" ? row.resolved_at : null }));
+  }
+
+  /** Register this device's public transfer key so others can seal packages to it. */
+  async publishTransferKey(userId: string, publicKey: string, signal?: AbortSignal): Promise<void> {
+    if (!isNanfuUuid(userId)) throw new NanfuSyncError("账号编号无效", 400);
+    if (typeof publicKey !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(publicKey)) {
+      throw new NanfuSyncError("转移公钥无效", 400);
+    }
+    await this.request("/nanfu_transfer_keys?on_conflict=user_id", {
+      method: "POST",
+      headers: { prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify([{ user_id: userId, public_key: publicKey }]),
+      signal,
+    });
+  }
+
+  /** The recipient's published transfer key, or null when they never opened the app. */
+  async transferPublicKey(userId: string, signal?: AbortSignal): Promise<string | null> {
+    if (!isNanfuUuid(userId)) throw new NanfuSyncError("接收成员编号无效", 400);
+    const query = new URLSearchParams({ select: "public_key", user_id: `eq.${userId}` });
+    const rows = await this.request(`/nanfu_transfer_keys?${query}`, { method: "GET", signal });
+    if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid transfer key response", 502);
+    const key = rows[0]?.public_key;
+    return typeof key === "string" && key ? key : null;
+  }
+
+  /** Store one sealed package for a recipient; the payload is already ciphertext. */
+  async sendCloudTransfer(input: {
+    id: string; senderId: string; senderEmail: string; recipientEmail: string;
+    environmentId: string; environmentName: string; payload: string;
+  }, signal?: AbortSignal): Promise<string> {
+    if (!isNanfuUuid(input.id)) throw new NanfuSyncError("转移编号无效", 400);
+    if (!isNanfuUuid(input.senderId)) throw new NanfuSyncError("发送账号编号无效", 400);
+    const email = typeof input.recipientEmail === "string" ? input.recipientEmail.trim().toLowerCase() : "";
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 320) {
+      throw new NanfuSyncError("接收成员没有可用邮箱，无法定向发送", 400);
+    }
+    if (!input.payload || input.payload.length > NANFU_CLOUD_PAYLOAD_MAX) {
+      throw new NanfuSyncError("转移数据超过云端上限，请移除较大的扩展后再发送", 413);
+    }
+    const rows = await this.request("/nanfu_transfers", {
+      method: "POST",
+      headers: { prefer: "return=representation" },
+      body: JSON.stringify([{
+        id: input.id,
+        sender_id: input.senderId,
+        sender_email: input.senderEmail.slice(0, 320),
+        recipient_email: email,
+        environment_id: normalizeNanfuEnvironmentId(input.environmentId),
+        environment_name: input.environmentName.slice(0, 200),
+        payload: input.payload,
+      }]),
+      signal,
+    }, NANFU_CLOUD_TIMEOUT_MS);
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    if (!row || typeof row.id !== "string") throw new NanfuSyncError("南孚服务没有返回转移记录", 502);
+    return row.id;
+  }
+
+  /** Pending packages addressed to this account. */
+  async incomingCloudTransfers(signal?: AbortSignal): Promise<NanfuCloudTransferRow[]> {
+    const query = new URLSearchParams({
+      select: "id,environment_id,environment_name,sender_email,status,created_at,expires_at,accepted_at",
+      status: "eq.pending", order: "created_at.desc", limit: "100",
+    });
+    const rows = await this.request(`/nanfu_transfers?${query}`, { method: "GET", signal });
+    if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid transfer list response", 502);
+    return rows.map(cloudTransferRow);
+  }
+
+  /** Every package this account sent, with its current status. */
+  async sentCloudTransfers(userId: string, signal?: AbortSignal): Promise<NanfuCloudTransferRow[]> {
+    const query = new URLSearchParams({
+      select: "id,environment_id,environment_name,recipient_email,status,created_at,expires_at,accepted_at",
+      sender_id: `eq.${userId}`, order: "created_at.desc", limit: "100",
+    });
+    const rows = await this.request(`/nanfu_transfers?${query}`, { method: "GET", signal });
+    if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid transfer list response", 502);
+    return rows.map(cloudTransferRow);
+  }
+
+  /** The sealed payload of one pending package addressed to this account. */
+  async cloudTransferPayload(id: string, signal?: AbortSignal): Promise<{ row: NanfuCloudTransferRow; payload: string }> {
+    if (!isNanfuUuid(id)) throw new NanfuSyncError("转移编号无效", 400);
+    const query = new URLSearchParams({
+      select: "id,environment_id,environment_name,sender_email,status,created_at,expires_at,accepted_at,payload",
+      id: `eq.${id}`,
+    });
+    const rows = await this.request(`/nanfu_transfers?${query}`, { method: "GET", signal }, NANFU_CLOUD_TIMEOUT_MS);
+    if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid transfer response", 502);
+    const row = rows[0];
+    if (!row) throw new NanfuSyncError("this transfer no longer exists", 404, false, "P0002");
+    if (typeof row.payload !== "string" || !row.payload) throw new NanfuSyncError("Invalid transfer payload", 502);
+    return { row: cloudTransferRow(row), payload: row.payload };
+  }
+
+  /** Accept through the database function: the only path that pins the recipient. */
+  async acceptCloudTransfer(id: string, signal?: AbortSignal): Promise<NanfuCloudTransferRow> {
+    if (!isNanfuUuid(id)) throw new NanfuSyncError("转移编号无效", 400);
+    const rows = await this.request("/rpc/nanfu_accept_transfer", {
+      method: "POST", body: JSON.stringify({ p_id: id }), signal,
+    }, NANFU_CLOUD_TIMEOUT_MS);
+    if (!Array.isArray(rows) || !rows[0]) throw new NanfuSyncError("Invalid transfer response", 502);
+    const row = rows[0];
+    return cloudTransferRow({
+      id,
+      environment_id: row.environment_id,
+      environment_name: row.environment_name,
+      sender_email: row.sender_email,
+      status: "accepted",
+      created_at: row.accepted_at,
+      expires_at: row.accepted_at,
+      accepted_at: row.accepted_at,
+    });
+  }
+
+  async revokeCloudTransfer(id: string, signal?: AbortSignal): Promise<void> {
+    if (!isNanfuUuid(id)) throw new NanfuSyncError("转移编号无效", 400);
+    await this.request(`/nanfu_transfers?id=eq.${id}`, {
+      method: "PATCH",
+      headers: { prefer: "return=minimal" },
+      body: JSON.stringify({ status: "revoked" }),
+      signal,
+    });
   }
 
   createRole(name: string, permissions: string[], signal?: AbortSignal): Promise<string> {
@@ -559,7 +713,7 @@ export class NanfuSyncClient {
     await this.request(`/${this.table}?${query}`, { method: "DELETE" });
   }
 
-  private async request(path: string, init: RequestInit): Promise<any> {
+  private async request(path: string, init: RequestInit, timeoutMs = this.requestTimeoutMs): Promise<any> {
     const token = await this.options.accessToken();
     if (!token) throw new NanfuSyncError("Sign in before syncing", 401);
     const headers = new Headers(init.headers);
@@ -570,7 +724,7 @@ export class NanfuSyncClient {
     const cancel = () => controller.abort();
     if (init.signal?.aborted) controller.abort();
     init.signal?.addEventListener("abort", cancel, { once: true });
-    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     if (typeof timer === "object" && "unref" in timer) timer.unref();
     try {
       if (controller.signal.aborted) throw new NanfuSyncError("Request cancelled", 0);

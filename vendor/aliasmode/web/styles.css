@@ -1,5 +1,10 @@
 .nanfu-account-page[hidden], .nanfu-staff-page[hidden] { display: none; }
 .nanfu-transfer-page[hidden] { display: none; }
+/* Secondary transfer cards stay collapsed so the cloud flow is the only thing in view. */
+.nanfu-advanced > summary { cursor: pointer; padding: 12px 14px; color: var(--ink); font-size: 12.5px; font-weight: 600; }
+.nanfu-advanced > summary::marker { color: var(--muted); }
+.nanfu-advanced[open] > summary { border-bottom: 1px solid var(--line); }
+.nanfu-advanced > .card-body { padding: 13px; }
 .nanfu-auth-form, .nanfu-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
 .nanfu-auth-form .fld, .nanfu-filters .fld { flex: 1 1 220px; min-width: 0; }
 .nanfu-account-page .settingspage { overflow: auto; }

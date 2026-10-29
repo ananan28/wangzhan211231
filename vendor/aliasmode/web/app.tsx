@@ -185,7 +185,7 @@ const PAGE_TITLES: Record<"profiles" | "scripts" | "settings" | "extensions" | "
   trash: "Trash",
   nanfu: "南孚账号与组织",
   "nanfu-staff": "员工管理",
-  "nanfu-transfer": "环境转移与导入导出",
+  "nanfu-transfer": "环境转移",
 };
 
 const SETTINGS_TABS = [
@@ -3762,8 +3762,8 @@ function App() {
           <button type="button" className={`navitem${view === "nanfu-staff" ? " active" : ""}`} title="员工管理：添加员工与管理员" onClick={() => setView("nanfu-staff")}>
             <Icon name="profiles" /><span className="navlabel">员工管理</span>
           </button>
-          <button type="button" className={`navitem${view === "nanfu-transfer" ? " active" : ""}`} title="环境转移与导入导出" onClick={() => setView("nanfu-transfer")}>
-            <Icon name="import" /><span className="navlabel">环境转移与导入导出</span>
+          <button type="button" className={`navitem${view === "nanfu-transfer" ? " active" : ""}`} title="环境转移：把整个环境连同登录态搬到对方电脑" onClick={() => setView("nanfu-transfer")}>
+            <Icon name="import" /><span className="navlabel">环境转移</span>
           </button>
           <a
             className="navitem"

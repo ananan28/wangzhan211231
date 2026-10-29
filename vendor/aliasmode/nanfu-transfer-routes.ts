@@ -11,12 +11,24 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
+  NanfuCloudTransferError,
+  NANFU_CLOUD_MAX_PLAINTEXT,
+  buildCloudTransferPayload,
+  hasLoginState,
+  loadOrCreateTransferIdentity,
+  openTransferPayload,
+  parseCloudTransferPayload,
+  sealTransferPayload,
+} from "./nanfu-cloud-transfer.ts";
+import {
   NanfuSyncError,
   exportNanfuEnvironment,
   normalizeNanfuEnvironmentId,
   normalizeNanfuEnvironmentIds,
+  isNanfuUuid,
   normalizeNanfuRecipient,
   normalizeNanfuTransferNote,
+  type NanfuEnvironmentConfig,
   type NanfuOrganization,
   type NanfuSyncClient,
   type NanfuVisibleEnvironment,
@@ -43,6 +55,8 @@ export interface NanfuTransferRouteContext {
   nanfu?: NanfuRuntime;
   store: ProfileStore;
   paths?: StatePaths;
+  /** Only used to snapshot a running browser before sending its login state. */
+  launcher?: { captureLocalSession(profileId: string): Promise<boolean> };
 }
 
 class NanfuTransferHttpError extends Error {
@@ -65,6 +79,7 @@ function failure(error: unknown): Response {
     const status = error.code === "limit" ? 413 : error.code === "signature" ? 422 : 400;
     return reply({ ok: false, error: error.message, code: error.code }, status);
   }
+  if (error instanceof NanfuCloudTransferError) return reply({ ok: false, error: error.message }, 422);
   if (error instanceof NanfuSyncError) return syncFailure(error);
   const message = error instanceof Error ? error.message : "转移操作失败，请重试";
   return reply({ ok: false, error: message, retryable: true }, 502);
@@ -204,6 +219,26 @@ function environmentName(pkg: NanfuEnvPackage): string {
   return pkg.environment.name;
 }
 
+async function extensionArchives(
+  store: ProfileStore,
+  profile: Profile,
+): Promise<Array<{ name: string; files: NanfuEnvFile[] }>> {
+  const archives: Array<{ name: string; files: NanfuEnvFile[] }> = [];
+  for (const extensionId of profile.extensions ?? []) {
+    const extension = store.getExtension(extensionId);
+    if (!extension) continue;
+    let files: NanfuEnvFile[];
+    try {
+      files = await collectNanfuEnvFiles(extension.loadDir);
+    } catch (error) {
+      if (error instanceof NanfuEnvPackageError) throw error;
+      throw new NanfuTransferHttpError(404, `扩展“${extension.name}”的文件不在本机，无法带走该环境。`);
+    }
+    archives.push({ name: extension.name, files });
+  }
+  return archives;
+}
+
 async function exportEnvironment(
   store: ProfileStore,
   environmentId: string,
@@ -214,21 +249,85 @@ async function exportEnvironment(
   const names = new Map<string, string>();
   for (const extension of store.listExtensions()) names.set(extension.id, extension.name);
   const environment = exportNanfuEnvironment(profile, names, new Date().toISOString());
-  const archives: Array<{ name: string; files: NanfuEnvFile[] }> = [];
-  for (const extensionId of profile.extensions ?? []) {
-    const extension = store.getExtension(extensionId);
-    if (!extension) continue;
-    let files: NanfuEnvFile[];
-    try {
-      files = await collectNanfuEnvFiles(extension.loadDir);
-    } catch (error) {
-      if (error instanceof NanfuEnvPackageError) throw error;
-      throw new NanfuTransferHttpError(404, `扩展“${extension.name}”的文件不在本机，无法导出该环境。`);
-    }
-    archives.push({ name: extension.name, files });
-  }
-  const pkg = createNanfuEnvPackage({ environment, extensionArchives: archives });
+  const pkg = createNanfuEnvPackage({ environment, extensionArchives: await extensionArchives(store, profile) });
   return { fileName: nanfuEnvPackageFileName(profile.name, pkg.header.createdAt), package: pkg };
+}
+
+function importedProfile(
+  environment: NanfuEnvironmentConfig,
+  id: string,
+  name: string,
+  extensionIds: string[],
+): Profile {
+  return {
+    id,
+    engine: "chromium",
+    accId: "",
+    name,
+    group: environment.group,
+    platform: environment.platform,
+    username: "",
+    password: "",
+    twofa: "",
+    proxy: environment.proxy
+      ? {
+          type: environment.proxy.type as ProxyType,
+          host: environment.proxy.host, port: environment.proxy.port,
+          user: environment.proxy.user, pass: environment.proxy.pass,
+        }
+      : null,
+    extensions: extensionIds,
+    tags: [...environment.tags],
+    ua: environment.ua,
+    timezone: environment.timezone,
+    locale: environment.locale,
+    screenWidth: environment.screen.width,
+    screenHeight: environment.screen.height,
+    fingerprintSeed: environment.fingerprint.seed,
+    ...(environment.fingerprint.platformOs ? { platformOs: environment.fingerprint.platformOs } : {}),
+    ...(environment.fingerprint.hardwareCores ? { hardware: { cores: environment.fingerprint.hardwareCores } } : {}),
+    cookies: [],
+    seeded: false,
+  };
+}
+
+async function installArchives(
+  store: ProfileStore,
+  paths: StatePaths,
+  archives: ReadonlyArray<{ name: string; files: NanfuEnvFile[] }>,
+): Promise<{ extensionIds: string[]; installed: Array<{ id: string; dir: string }> }> {
+  await mkdir(paths.extensions, { recursive: true });
+  const installed: Array<{ id: string; dir: string }> = [];
+  const extensionIds: string[] = [];
+  try {
+    for (const archive of archives) {
+      const id = `ext${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+      const dir = resolve(paths.extensions, id);
+      await writeNanfuEnvFiles(dir, archive.files);
+      installed.push({ id, dir });
+      store.addExtension({ id, name: archive.name, loadDir: dir });
+      extensionIds.push(id);
+    }
+    return { extensionIds, installed };
+  } catch (error) {
+    await removeArchives(store, installed);
+    throw error;
+  }
+}
+
+async function removeArchives(store: ProfileStore, installed: ReadonlyArray<{ id: string; dir: string }>): Promise<void> {
+  for (const extension of installed) {
+    store.deleteExtension(extension.id);
+    await rm(extension.dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+function importPlan(store: ProfileStore, pkg: NanfuEnvPackage) {
+  const profiles = store.listProfiles();
+  return planNanfuEnvImport(pkg, {
+    takenIds: [...profiles.map((profile) => profile.id), ...store.listTrashed().map((row) => row.id)],
+    takenNames: [...profiles.map((profile) => profile.name), ...store.listTrashed().map((row) => row.name)],
+  });
 }
 
 async function importEnvironment(
@@ -238,62 +337,38 @@ async function importEnvironment(
 ): Promise<{ profileId: string; name: string; renamed: boolean }> {
   const environment = pkg.environment;
   if (environment.engine !== "chromium") throw new NanfuTransferHttpError(400, "当前版本只支持导入 Chromium 环境配置。");
-  const profiles = store.listProfiles();
-  const plan = planNanfuEnvImport(pkg, {
-    takenIds: [...profiles.map((profile) => profile.id), ...store.listTrashed().map((row) => row.id)],
-    takenNames: [...profiles.map((profile) => profile.name), ...store.listTrashed().map((row) => row.name)],
-  });
-  await mkdir(paths.extensions, { recursive: true });
-  const installed: Array<{ id: string; dir: string }> = [];
-  const extensionIds: string[] = [];
+  const plan = importPlan(store, pkg);
+  const { extensionIds, installed } = await installArchives(store, paths, pkg.extensionArchives);
   try {
-    for (const archive of pkg.extensionArchives) {
-      const id = `ext${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-      const dir = resolve(paths.extensions, id);
-      await writeNanfuEnvFiles(dir, archive.files);
-      installed.push({ id, dir });
-      store.addExtension({ id, name: archive.name, loadDir: dir });
-      extensionIds.push(id);
-    }
-    const profile: Profile = {
-      id: plan.id,
-      engine: "chromium",
-      accId: "",
-      name: plan.name,
-      group: environment.group,
-      platform: environment.platform,
-      username: "",
-      password: "",
-      twofa: "",
-      proxy: environment.proxy
-        ? {
-            type: environment.proxy.type as ProxyType,
-            host: environment.proxy.host, port: environment.proxy.port,
-            user: environment.proxy.user, pass: environment.proxy.pass,
-          }
-        : null,
-      extensions: extensionIds,
-      tags: [...environment.tags],
-      ua: environment.ua,
-      timezone: environment.timezone,
-      locale: environment.locale,
-      screenWidth: environment.screen.width,
-      screenHeight: environment.screen.height,
-      fingerprintSeed: environment.fingerprint.seed,
-      ...(environment.fingerprint.platformOs ? { platformOs: environment.fingerprint.platformOs } : {}),
-      ...(environment.fingerprint.hardwareCores ? { hardware: { cores: environment.fingerprint.hardwareCores } } : {}),
-      cookies: [],
-      seeded: false,
-    };
-    store.upsertProfile(profile);
+    store.upsertProfile(importedProfile(environment, plan.id, plan.name, extensionIds));
     return { profileId: plan.id, name: plan.name, renamed: plan.renamed };
   } catch (error) {
-    for (const extension of installed) {
-      store.deleteExtension(extension.id);
-      await rm(extension.dir, { recursive: true, force: true }).catch(() => {});
-    }
+    await removeArchives(store, installed);
     throw error;
   }
+}
+
+function requireStateRoot(context: NanfuTransferRouteContext): StatePaths {
+  if (!context.paths) throw new NanfuTransferHttpError(503, "当前运行模式没有本机状态目录，无法进行云端转移。");
+  return context.paths;
+}
+
+function requireRecipient(rows: readonly RecipientRow[], userId: string): RecipientRow {
+  const row = rows.find((item) => item.userId === userId);
+  if (!row) throw new NanfuTransferHttpError(400, "接收成员不在当前组织中，或已停用。");
+  if (!row.email) throw new NanfuTransferHttpError(400, "接收成员没有邮箱，无法定向发送；请让管理员补全成员邮箱。");
+  return row;
+}
+
+function sessionBundleOf(session: {
+  cookies: unknown[]; origins: unknown[]; tabs?: string[]; telegramClient?: string;
+}): string {
+  return JSON.stringify({
+    cookies: session.cookies,
+    origins: session.origins,
+    tabs: session.tabs ?? [],
+    ...(session.telegramClient ? { telegramClient: session.telegramClient } : {}),
+  });
 }
 
 export async function handleNanfuTransferRequest(
@@ -324,11 +399,147 @@ export async function handleNanfuTransferRequest(
         fromEmail: byId.get(transfer.fromUserId)?.email ?? "",
         toEmail: byId.get(transfer.toUserId)?.email ?? "",
       }));
+      // Publishing the device key here keeps one page load enough to become a
+      // reachable recipient; a failure is reported instead of breaking the page.
+      let keyPublished = false;
+      if (context.paths) {
+        keyPublished = await client
+          .publishTransferKey(userId, loadOrCreateTransferIdentity(context.paths.root).publicKey, signal)
+          .then(() => true).catch(() => false);
+      }
+      const [packageInbox, packageSent] = await Promise.all([
+        client.incomingCloudTransfers(signal).catch(() => null),
+        client.sentCloudTransfers(userId, signal).catch(() => null),
+      ]);
       return reply({
         ok: true, userId, organization, members, visibleEnvironments: visible,
         inbox: rows.filter((row) => row.toUserId === userId),
         sent: rows.filter((row) => row.fromUserId === userId),
+        packages: {
+          keyPublished,
+          inbox: packageInbox ?? [],
+          sent: packageSent ?? [],
+          ...(packageInbox && packageSent ? {} : { error: "云端转移列表暂时读取失败，请刷新重试。" }),
+        },
       });
+    }
+
+    if (req.method === "POST" && action === "package-send") {
+      const body = await bodyOf(req);
+      const environmentId = normalizeNanfuEnvironmentId(body.environmentId);
+      const toUserId = normalizeNanfuRecipient(body.toUserId);
+      const paths = requireStateRoot(context);
+      const profile = context.store.getProfile(environmentId);
+      if (!profile) throw new NanfuTransferHttpError(404, "该环境不在本机；只能转移本机已有的环境。");
+      if (profile.engine === "firefox") {
+        throw new NanfuTransferHttpError(400, "当前版本只支持云端转移 Chromium 环境。");
+      }
+      const organization = await requireOrganization(client, signal);
+      const visible = await client.visibleEnvironments(organization.orgId, signal);
+      const environment = requireVisible(visibleMap(visible), environmentId);
+      if (environment.ownerUserId !== userId) {
+        throw new NanfuTransferHttpError(403, "只能云端转移你自己拥有的环境。");
+      }
+      const member = requireRecipient(await recipientDirectory(client, organization, visible, signal), toUserId);
+      const recipientKey = await client.transferPublicKey(toUserId, signal);
+      if (!recipientKey) {
+        throw new NanfuTransferHttpError(409,
+          "对方还没有启用云端转移：请让对方用南孚账号登录并打开一次「环境转移」页面，然后再发送。");
+      }
+      // A live browser is snapshotted first so the package carries the session as
+      // it is right now; a closed one already has its last saved bundle.
+      if (context.launcher) await context.launcher.captureLocalSession(environmentId).catch(() => false);
+      let session: unknown = {};
+      const bundle = context.store.getSessionBundle(environmentId);
+      if (bundle) {
+        try { session = JSON.parse(bundle); } catch { session = {}; }
+      }
+      const names = new Map<string, string>();
+      for (const extension of context.store.listExtensions()) names.set(extension.id, extension.name);
+      const payload = buildCloudTransferPayload({
+        environment: exportNanfuEnvironment(profile, names, new Date().toISOString()),
+        session,
+        extensionNames: (profile.extensions ?? [])
+          .map((extensionId) => names.get(extensionId))
+          .filter((name): name is string => !!name),
+        extensionArchives: await extensionArchives(context.store, profile),
+      });
+      const plaintext = JSON.stringify(payload);
+      if (plaintext.length > NANFU_CLOUD_MAX_PLAINTEXT) {
+        const megabytes = (plaintext.length / 1_048_576).toFixed(1);
+        throw new NanfuTransferHttpError(413,
+          `环境数据约 ${megabytes} MB，超过云端转移上限（约 19 MB）。请先移除较大的扩展再发送。`);
+      }
+      const id = randomUUID();
+      const sealed = sealTransferPayload(recipientKey, plaintext, id);
+      await client.sendCloudTransfer({
+        id, senderId: userId, senderEmail: account.state().email ?? "",
+        recipientEmail: member.email, environmentId,
+        environmentName: payload.package.environment.name, payload: sealed,
+      }, signal);
+      const transfer = payload.transfer;
+      return reply({
+        ok: true, id, environmentName: payload.package.environment.name,
+        hasLoginState: hasLoginState(payload),
+        cookies: transfer.session.cookies.length,
+        origins: transfer.session.origins.length,
+        extensions: payload.package.extensionArchives.length,
+        recipientEmail: member.email,
+      });
+    }
+
+    if (req.method === "POST" && action === "package-accept") {
+      const body = await bodyOf(req);
+      const id = typeof body.id === "string" ? body.id.trim() : "";
+      if (!isNanfuUuid(id)) throw new NanfuTransferHttpError(400, "转移编号无效。");
+      const paths = requireStateRoot(context);
+      const identity = loadOrCreateTransferIdentity(paths.root);
+      const { payload: sealed } = await client.cloudTransferPayload(id, signal);
+      // Decrypt and validate before accepting: an accepted row is no longer
+      // readable by the recipient, so a broken package must fail first.
+      const text = openTransferPayload(identity, sealed, id);
+      const payload = parseCloudTransferPayload(text);
+      if (payload.package.environment.engine !== "chromium") {
+        throw new NanfuTransferHttpError(400, "当前版本只支持导入 Chromium 环境。");
+      }
+      const accepted = await client.acceptCloudTransfer(id, signal);
+      const plan = importPlan(context.store, payload.package);
+      const { extensionIds, installed } = await installArchives(context.store, paths, payload.package.extensionArchives);
+      const transfer = payload.transfer;
+      const sessions = new Map<string, string>();
+      if (transfer.session.cookies.length || transfer.session.origins.length) {
+        sessions.set(plan.id, sessionBundleOf(transfer.session));
+      }
+      try {
+        context.store.upsertProfiles(
+          [importedProfile(payload.package.environment, plan.id, plan.name, extensionIds)],
+          sessions,
+        );
+      } catch (error) {
+        await removeArchives(context.store, installed);
+        throw error;
+      }
+      return reply({
+        ok: true,
+        profileId: plan.id,
+        name: plan.name,
+        renamed: plan.renamed,
+        environmentName: payload.package.environment.name,
+        environmentId: payload.package.environment.id,
+        hasLoginState: hasLoginState(payload),
+        cookies: transfer.session.cookies.length,
+        origins: transfer.session.origins.length,
+        extensions: payload.package.extensionArchives.length,
+        senderEmail: accepted.senderEmail,
+      });
+    }
+
+    if (req.method === "POST" && action === "package-revoke") {
+      const body = await bodyOf(req);
+      const id = typeof body.id === "string" ? body.id.trim() : "";
+      if (!isNanfuUuid(id)) throw new NanfuTransferHttpError(400, "转移编号无效。");
+      await client.revokeCloudTransfer(id, signal);
+      return reply({ ok: true });
     }
 
     if (req.method === "POST" && action === "request") {
