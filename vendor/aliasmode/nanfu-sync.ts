@@ -217,6 +217,8 @@ export interface NanfuVisibleEnvironment {
 export interface NanfuMember {
   userId: string; email: string; identity: string; roleId: string | null; roleName: string | null;
   managerUserId: string | null; quota: number; used: number; status: string; locked: boolean;
+  /** The name the organization calls this person; null means "use the login". */
+  displayName: string | null;
 }
 
 export interface NanfuOrgOverview {
@@ -313,6 +315,10 @@ export function normalizeNanfuEnvironmentIds(value: unknown): string[] {
 export interface NanfuMemberInput {
   userId: string; identity?: "admin" | "manager" | "member"; roleId?: string;
   managerUserId?: string; status?: "active" | "disabled"; locked?: boolean;
+  /** Empty string clears the name; omitted leaves it unchanged. */
+  name?: string;
+  /** Disabling an employee also hands their windows to the owner. */
+  reclaim?: boolean;
 }
 
 export interface NanfuInviteInput {
@@ -334,6 +340,8 @@ export interface NanfuAccountInput {
   roleId?: string;
   /** Window groups the account may see; omitted or empty means none. */
   groupIds?: string[];
+  /** Display name; omitted means the roster shows the login. */
+  name?: string;
 }
 
 export interface NanfuCreatedAccount {
@@ -412,6 +420,7 @@ export class NanfuSyncClient {
         userId: String(row.user_id), email: String(row.email ?? ""), identity: String(row.identity),
         roleId: typeof row.role_id === "string" ? row.role_id : null, roleName: typeof row.role_name === "string" ? row.role_name : null,
         managerUserId: typeof row.manager_user_id === "string" ? row.manager_user_id : null,
+        displayName: typeof row.display_name === "string" && row.display_name ? row.display_name : null,
         quota: Number(row.env_quota), used: Number(row.used), status: String(row.status), locked: row.locked === true,
       })),
       roles: roles.map(row => ({ id: String(row.id), name: String(row.name), permissions: Array.isArray(row.permissions) ? row.permissions.filter((p: unknown) => typeof p === "string") : [] })),
@@ -560,6 +569,7 @@ export class NanfuSyncClient {
     await this.visibleRequest("/rpc/nanfu_org_set_member", { method: "POST", signal, body: JSON.stringify({
       p_user: input.userId, p_identity: input.identity ?? null, p_role: input.roleId ?? null,
       p_manager: input.managerUserId ?? null, p_status: input.status ?? null, p_locked: input.locked ?? null,
+      p_name: input.name ?? null, p_reclaim: input.reclaim === true,
     }) });
   }
 
@@ -586,6 +596,7 @@ export class NanfuSyncClient {
         p_parent: input.managerUserId ?? null,
         p_role: input.roleId ?? null,
         p_groups: input.groupIds?.length ? input.groupIds : null,
+        p_name: input.name?.trim() || null,
       }),
       signal,
     });
@@ -691,13 +702,24 @@ export class NanfuSyncClient {
   }
 
   async visibleEnvironments(orgId: string, signal?: AbortSignal): Promise<NanfuVisibleEnvironment[]> {
+    return this.readEnvironments(orgId, { order: "environment_id.asc,owner_user_id.asc" }, signal);
+  }
+
+  /** One employee's windows. Row-level security still decides what the caller may see. */
+  async memberEnvironments(orgId: string, userId: string, signal?: AbortSignal): Promise<NanfuVisibleEnvironment[]> {
+    if (!isNanfuUuid(userId)) throw new NanfuSyncError("账号编号无效", 400);
+    return this.readEnvironments(orgId, { ownerUserId: userId, order: "environment_id.asc" }, signal);
+  }
+
+  private async readEnvironments(orgId: string, filter: { ownerUserId?: string; order: string }, signal?: AbortSignal): Promise<NanfuVisibleEnvironment[]> {
     const result: NanfuVisibleEnvironment[] = [];
     for (let offset = 0; ; offset += 500) {
       const query = new URLSearchParams({
         select: "environment_id,owner_user_id,org_id,group_id,version,updated_at",
-        org_id: `eq.${orgId}`, deleted: "eq.false", order: "environment_id.asc,owner_user_id.asc",
+        org_id: `eq.${orgId}`, deleted: "eq.false", order: filter.order,
         limit: "500", offset: String(offset),
       });
+      if (filter.ownerUserId) query.set("owner_user_id", `eq.${filter.ownerUserId}`);
       const rows = await this.visibleRequest(`/${this.table}?${query}`, { method: "GET", signal });
       if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid environment response", 502);
       for (const row of rows) {

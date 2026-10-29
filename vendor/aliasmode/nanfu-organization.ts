@@ -135,9 +135,15 @@ export async function mutateNanfuOrganization(
           nextIdentity: identity,
         });
       }
+      const rawName = body.name;
+      if (rawName !== undefined && (typeof rawName !== "string" || Array.from(rawName.trim()).length > 60)) {
+        throw new NanfuInputError("姓名最多 60 个字符");
+      }
       await client.setMember({ userId, identity, roleId: uuid("roleId", true), managerUserId: uuid("managerUserId", true),
         status: choice("status", ["active", "disabled"], true),
-        locked: body.locked === undefined ? undefined : boolean("locked") }, signal);
+        locked: body.locked === undefined ? undefined : boolean("locked"),
+        name: typeof rawName === "string" ? rawName.trim() : undefined,
+        reclaim: body.reclaim === undefined ? undefined : boolean("reclaim") }, signal);
       return {};
     }
     case "set-quota": {
@@ -211,11 +217,16 @@ export async function mutateNanfuOrganization(
           }
         }
       }
+      const rawName = body.name;
+      if (rawName !== undefined && (typeof rawName !== "string" || Array.from(rawName.trim()).length > 60)) {
+        throw new NanfuInputError("姓名最多 60 个字符");
+      }
       return await client.createAccount({
         email: login, password, identity, quota,
         managerUserId: uuid("managerUserId", true),
         roleId,
         groupIds: groupIds as string[],
+        name: typeof rawName === "string" ? rawName.trim() : undefined,
       }, signal);
     }
     case "set-groups": {
@@ -251,6 +262,7 @@ export function nanfuOrganizationError(error: NanfuSyncError): { status: number;
     NANFU_ORG_QUOTA: "组织窗口总配额不足，操作被拒绝。",
     NANFU_ENV_QUOTA: "目标成员窗口配额不足，操作被拒绝。",
     NANFU_MEMBER_INACTIVE: "成员已锁定或停用，不能写入或接收环境。",
+    NANFU_ENV_HELD: "该账号名下还有窗口：先转移，或勾选“回收窗口”后再停用/移除。",
     NANFU_GROUP_INVALID: "分组或成员不属于当前组织。",
     NANFU_FORBIDDEN: "当前账号无权执行此操作，请联系组织所有者或管理员。",
     ORG_ALREADY_MEMBER: "当前账号已属于组织，不能重复创建或加入组织。",
@@ -271,6 +283,7 @@ export function nanfuOrganizationError(error: NanfuSyncError): { status: number;
     "42501": 403, NANFU_FORBIDDEN: 403, ORG_ALREADY_MEMBER: 403, NANFU_MEMBER_INACTIVE: 403,
     NANFU_EMAIL_INVALID: 400, NANFU_PASSWORD_INVALID: 400, NANFU_PARENT_INVALID: 400, NANFU_INPUT: 400,
     NANFU_EMAIL_TAKEN: 409, NANFU_ROLE_INVALID: 409, NANFU_ORG_QUOTA: 409, NANFU_ENV_QUOTA: 409, NANFU_GROUP_INVALID: 409,
+    NANFU_ENV_HELD: 409,
     "23505": 409, INVITE_EXPIRED: 409, INVITE_USED: 409, TRANSFER_EXPIRED: 409, "P0002": 409,
   };
   const message = error.code && messages[error.code];

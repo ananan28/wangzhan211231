@@ -29,7 +29,8 @@ export function NanfuStaffPage({ active }: { active: boolean }) {
       setUserId(result.userId);
       setOrganization(result.organization);
       const org = result.organization;
-      if (org && !org.locked && org.status === "active" && ["owner", "admin"].includes(org.identity)) {
+      if (org && !org.locked && org.status === "active"
+        && (["owner", "admin"].includes(org.identity) || org.permissions.includes("member.manage"))) {
         const detail = await fetchNanfuOverview();
         if (token !== generation.current) return;
         setOverview(detail.result);
@@ -77,14 +78,15 @@ export function NanfuStaffPage({ active }: { active: boolean }) {
     return () => { generation.current++; };
   }, [active]);
 
-  const canManage = !!organization && ["owner", "admin"].includes(organization.identity)
+  const canManage = !!organization
+    && (["owner", "admin"].includes(organization.identity) || organization.permissions.includes("member.manage"))
     && !organization.locked && organization.status === "active";
 
   return (
     <section className="workspace nanfu-staff-page" hidden={!active} aria-label="员工管理">
       <div className="settingspage">
         <h2 className="sect-title">员工管理</h2>
-        <p>账号分四层：所有者 → 管理员 → 成员 → 子账号。管理员由所有者添加、可以管理全部成员；子账号挂在某个成员或管理员名下，用登录名直接登录。每个账号可以单独设置角色、授权分组和窗口配额，也可以重置密码、停用或移除。</p>
+        <p>账号分四层：所有者 → 管理员 → 成员 → 子账号。管理员由所有者添加、可以管理全部成员；拥有「管理成员」权限的成员只能管理自己名下的子账号。子账号用登录名直接登录。每个账号可以单独设置姓名、角色、授权分组和窗口配额，也可以重置密码、停用或移除。</p>
         {busy && <p role="status">正在读取组织成员…</p>}
         {notice && <p role="status">{notice}</p>}
         {error && <p className="modal-err" role="alert">{error}</p>}
@@ -93,7 +95,7 @@ export function NanfuStaffPage({ active }: { active: boolean }) {
         )}
         {organization && !canManage && (
           <p className="modal-err" role="alert">
-            只有组织所有者或管理员可以添加和管理员工；当前身份：{nanfuIdentityName(organization.identity)}。如需子账号，请联系管理员。
+            当前账号的角色没有「管理成员」权限，不能添加或管理员工。当前身份：{nanfuIdentityName(organization.identity)}。如需子账号，请联系组织所有者或管理员。
           </p>
         )}
         {organization && canManage && overview && (
@@ -107,7 +109,7 @@ export function NanfuStaffPage({ active }: { active: boolean }) {
           />
         )}
         {organization && canManage && !overview && !busy && !error && (
-          <p className="modal-err" role="alert">读取不到成员列表。请确认账号仍是组织所有者或管理员，然后刷新。</p>
+          <p className="modal-err" role="alert">读取不到成员列表。请确认账号仍拥有「管理成员」权限，然后刷新。</p>
         )}
       </div>
     </section>

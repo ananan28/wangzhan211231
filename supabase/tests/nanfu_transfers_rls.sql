@@ -1120,6 +1120,36 @@ commit;
 drop table if exists public.nanfu_test_codes;
 
 -- ---------------------------------------------------------------------------
+-- Stopping an employee who still holds windows is refused until the windows
+-- are reclaimed; the reclaim moves them to the owner and the name sticks.
+-- ---------------------------------------------------------------------------
+begin;
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","email":"owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare blocked boolean := false; held bigint; label text;
+begin
+  begin
+    perform public.nanfu_org_set_member('55555555-5555-5555-5555-555555555555', null, null, null, 'disabled', null);
+  exception when others then
+    if sqlerrm not like 'NANFU_ENV_HELD:%' then raise; end if;
+    blocked := true;
+  end;
+  if not blocked then raise exception 'an employee holding windows was disabled without reclaiming'; end if;
+  perform public.nanfu_org_set_member('55555555-5555-5555-5555-555555555555', null, null, null, 'disabled', null, '仓库管理员', true);
+  select count(*) into held from public.nanfu_environments
+   where owner_user_id = '44444444-4444-4444-4444-444444444444'
+     and environment_id in ('env-g', 'env-x');
+  if held <> 2 then raise exception 'reclaiming on disable moved % windows', held; end if;
+  select display_name into label from public.nanfu_org_overview()
+   where user_id = '55555555-5555-5555-5555-555555555555';
+  if label is distinct from '仓库管理员' then raise exception 'display name did not stick: %', label; end if;
+end $$;
+commit;
+
+
+-- ---------------------------------------------------------------------------
 -- Releases: anonymous cannot read the table; the service role can. Downloads
 -- are only issued as signed URLs by the nanfu-release Edge Function.
 -- ---------------------------------------------------------------------------

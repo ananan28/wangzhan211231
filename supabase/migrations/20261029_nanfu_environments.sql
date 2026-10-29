@@ -386,6 +386,13 @@ create table if not exists public.nanfu_org_members (
   unique (user_id)
 );
 
+-- The name a person is known by inside the organization; the login stays the
+-- email, so a sub-account can be "张三" without owning an inbox.
+alter table public.nanfu_org_members add column if not exists display_name text;
+alter table public.nanfu_org_members drop constraint if exists nanfu_org_members_display_name_check;
+alter table public.nanfu_org_members add constraint nanfu_org_members_display_name_check
+  check (display_name is null or char_length(display_name) <= 60);
+
 create table if not exists public.nanfu_org_group_grants (
   group_id uuid not null references public.nanfu_org_groups (id) on delete cascade,
   user_id uuid not null references auth.users (id) on delete cascade,
@@ -541,6 +548,38 @@ as $$
   ), false);
 $$;
 
+-- Permission bit on the caller's role. Owner and admin hold every bit, and a
+-- locked/disabled member holds none, which keeps the tests below simple.
+create or replace function public.nanfu_org_has_permission(p_me public.nanfu_org_members, p_perm text)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public, pg_temp
+as $$
+  select p_me.status = 'active'
+     and not p_me.locked
+     and (
+       p_me.identity in ('owner', 'admin')
+       or coalesce((select p_perm = any (r.permissions) from public.nanfu_org_roles r where r.id = p_me.role_id), false)
+     );
+$$;
+
+create or replace function public.nanfu_org_member_has(p_org uuid, p_user uuid, p_perm text)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public, pg_temp
+as $$
+  select coalesce((
+    select public.nanfu_org_has_permission(m, p_perm)
+      from public.nanfu_org_members m
+     where m.org_id = p_org and m.user_id = p_user
+     limit 1
+  ), false);
+$$;
+
 create or replace function public.nanfu_org_can_view_member(p_org uuid, p_caller uuid, p_target uuid)
 returns boolean
 language sql
@@ -552,8 +591,7 @@ as $$
     when p_caller is null then false
     when p_caller = p_target then true
     when public.nanfu_org_can_admin(p_org, p_caller) then true
-    when public.nanfu_org_identity(p_org, p_caller) = 'manager'
-         and public.nanfu_org_is_active(p_org, p_caller)
+    when public.nanfu_org_member_has(p_org, p_caller, 'member.manage')
       then exists (select 1 from public.nanfu_org_subtree(p_org, p_caller) s where s.user_id = p_target)
     else false
   end;
@@ -584,7 +622,7 @@ begin
   if me.status <> 'active' or me.locked then return false; end if;
   if p_caller = p_owner then return true; end if;
   if me.identity in ('owner', 'admin') then return true; end if;
-  if me.identity = 'manager' then
+  if public.nanfu_org_has_permission(me, 'member.manage') then
     return exists (select 1 from public.nanfu_org_subtree(p_org, p_caller) s where s.user_id = p_owner);
   end if;
   if p_group is null then return false; end if;
@@ -656,7 +694,7 @@ set search_path = public, pg_temp
 as $$
 begin
   if p_me.identity in ('owner', 'admin') then return; end if;
-  if p_me.identity = 'manager'
+  if public.nanfu_org_has_permission(p_me, 'member.manage')
      and exists (select 1 from public.nanfu_org_subtree(p_me.org_id, p_me.user_id) s where s.user_id = p_target) then
     return;
   end if;
@@ -873,7 +911,7 @@ begin
   values (oid, me, coalesce(auth.jwt() ->> 'email', ''), 'owner', 0);
   insert into public.nanfu_org_roles (org_id, name, permissions, is_system) values
     (oid, '管理员', array['env.create', 'env.delete', 'env.transfer', 'member.view', 'member.manage', 'member.quota', 'group.manage'], true),
-    (oid, '经理', array['env.create', 'env.delete', 'env.transfer', 'member.view', 'member.quota'], true),
+    (oid, '经理', array['env.create', 'env.delete', 'env.transfer', 'member.view', 'member.manage', 'member.quota'], true),
     (oid, '成员', array['env.create', 'env.delete', 'env.transfer'], true);
   insert into public.nanfu_org_groups (org_id, name) values (oid, '默认分组');
   return oid;
@@ -921,10 +959,13 @@ begin
 end;
 $$;
 
+drop function if exists public.nanfu_org_overview();
+
 create or replace function public.nanfu_org_overview()
 returns table (
   user_id uuid,
   email text,
+  display_name text,
   identity text,
   role_id uuid,
   role_name text,
@@ -947,6 +988,7 @@ begin
   return query
     select m.user_id,
            m.email,
+           m.display_name,
            m.identity,
            m.role_id,
            r.name,
@@ -963,7 +1005,7 @@ begin
        and (
          me.identity in ('owner', 'admin')
          or m.user_id = me.user_id
-         or (me.identity = 'manager'
+         or (public.nanfu_org_has_permission(me, 'member.manage')
              and exists (select 1 from public.nanfu_org_subtree(me.org_id, me.user_id) s where s.user_id = m.user_id))
        )
      order by m.identity, m.email;
@@ -991,13 +1033,17 @@ begin
 end;
 $$;
 
+drop function if exists public.nanfu_org_set_member(uuid, text, uuid, uuid, text, boolean);
+
 create or replace function public.nanfu_org_set_member(
   p_user uuid,
   p_identity text default null,
   p_role uuid default null,
   p_manager uuid default null,
   p_status text default null,
-  p_locked boolean default null
+  p_locked boolean default null,
+  p_name text default null,
+  p_reclaim boolean default false
 )
 returns void
 language plpgsql
@@ -1011,6 +1057,8 @@ declare
   -- cannot otherwise be told apart from "leave unchanged".
   clear_role boolean := p_role = '00000000-0000-0000-0000-000000000000'::uuid;
   clear_manager boolean := p_manager = '00000000-0000-0000-0000-000000000000'::uuid;
+  env_id text;
+  org_owner uuid;
 begin
   me := public.nanfu_org_require('member.manage');
   select m.* into target from public.nanfu_org_members m
@@ -1052,12 +1100,44 @@ begin
   if p_status is not null and p_status not in ('active', 'disabled') then
     raise exception 'unknown status %', p_status using errcode = 'P0001';
   end if;
+  if p_name is not null and char_length(btrim(p_name)) > 60 then
+    raise exception 'NANFU_INPUT: 姓名最多 60 个字符' using errcode = 'P0001';
+  end if;
+
+  -- A disabled account can no longer reach its windows, so it must not keep
+  -- any: either the caller reclaims them (they go to the owner) or the whole
+  -- change is refused, instead of leaving windows nobody can open.
+  if coalesce(p_status, target.status) = 'disabled' then
+    select o.owner_user_id into org_owner from public.nanfu_orgs o where o.id = me.org_id;
+    if coalesce(p_reclaim, false) then
+      for env_id in
+        select e.environment_id from public.nanfu_environments e
+         where e.org_id = me.org_id and e.owner_user_id = p_user and not e.deleted
+         for update
+      loop
+        update public.nanfu_environments e
+           set owner_user_id = org_owner
+         where e.org_id = me.org_id and e.environment_id = env_id;
+        insert into public.nanfu_env_transfers
+          (org_id, environment_id, from_user_id, to_user_id, requested_by, status, forced, note, resolved_at)
+        values
+          (me.org_id, env_id, p_user, org_owner, auth.uid(), 'accepted', true, '成员停用，窗口回收', now());
+      end loop;
+    elsif exists (
+      select 1 from public.nanfu_environments e
+       where e.org_id = me.org_id and e.owner_user_id = p_user and not e.deleted
+    ) then
+      raise exception 'NANFU_ENV_HELD: 该账号还有窗口，请先转移或勾选“回收窗口”再停用' using errcode = 'P0001';
+    end if;
+  end if;
+
   update public.nanfu_org_members m
      set identity = coalesce(p_identity, m.identity),
          role_id = case when clear_role then null else coalesce(p_role, m.role_id) end,
          manager_user_id = case when clear_manager then null else coalesce(p_manager, m.manager_user_id) end,
          status = coalesce(p_status, m.status),
-         locked = coalesce(p_locked, m.locked)
+         locked = coalesce(p_locked, m.locked),
+         display_name = case when p_name is null then m.display_name else nullif(btrim(p_name), '') end
    where m.org_id = me.org_id and m.user_id = p_user;
 end;
 $$;
@@ -1268,6 +1348,15 @@ begin
   perform public.nanfu_org_assert_target(me, p_user);
   select o.owner_user_id into org_owner from public.nanfu_orgs o where o.id = me.org_id;
 
+  -- Dropping the account while its windows leave the organization would hand
+  -- nobody those windows; reclaim first, then remove.
+  if not coalesce(p_reclaim, true) and exists (
+    select 1 from public.nanfu_environments e
+     where e.org_id = me.org_id and e.owner_user_id = p_user and not e.deleted
+  ) then
+    raise exception 'NANFU_ENV_HELD: 该账号还有窗口，请先回收窗口再移除' using errcode = 'P0001';
+  end if;
+
   if coalesce(p_reclaim, true) then
     for env_id in
       select e.environment_id from public.nanfu_environments e
@@ -1474,6 +1563,7 @@ $$;
 -- deleting and recreating the account.
 
 drop function if exists public.nanfu_org_create_account(text, text, text, integer, uuid);
+drop function if exists public.nanfu_org_create_account(text, text, text, integer, uuid, uuid, uuid[]);
 
 create or replace function public.nanfu_org_create_account(
   p_email text,
@@ -1482,7 +1572,8 @@ create or replace function public.nanfu_org_create_account(
   p_quota integer default 0,
   p_parent uuid default null,
   p_role uuid default null,
-  p_groups uuid[] default null
+  p_groups uuid[] default null,
+  p_name text default null
 )
 returns table (user_id uuid, email text, identity text)
 language plpgsql
@@ -1513,6 +1604,9 @@ begin
     raise exception 'NANFU_INPUT: 账号类型只能是管理员或成员' using errcode = 'P0001';
   end if;
   if me.identity not in ('owner', 'admin') then
+    if not public.nanfu_org_has_permission(me, 'member.manage') then
+      raise exception 'NANFU_FORBIDDEN: 当前角色没有添加子账号的权限' using errcode = '42501';
+    end if;
     if p_identity <> 'member' then
       raise exception 'NANFU_FORBIDDEN: 成员只能添加子账号' using errcode = '42501';
     end if;
@@ -1574,6 +1668,9 @@ begin
   ) then
     raise exception 'NANFU_GROUP_INVALID: 分组不属于当前组织' using errcode = 'P0001';
   end if;
+  if p_name is not null and char_length(btrim(p_name)) > 60 then
+    raise exception 'NANFU_INPUT: 姓名最多 60 个字符' using errcode = 'P0001';
+  end if;
 
   insert into auth.users (
     instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -1595,8 +1692,8 @@ begin
     'email', new_id::text, null, now(), now()
   );
 
-  insert into public.nanfu_org_members (org_id, user_id, email, identity, role_id, manager_user_id, env_quota)
-  values (me.org_id, new_id, mail, p_identity, p_role, parent, p_quota);
+  insert into public.nanfu_org_members (org_id, user_id, email, display_name, identity, role_id, manager_user_id, env_quota)
+  values (me.org_id, new_id, mail, nullif(btrim(coalesce(p_name, '')), ''), p_identity, p_role, parent, p_quota);
 
   if p_groups is not null then
     insert into public.nanfu_org_group_grants (group_id, user_id, org_id, granted_by)
@@ -1608,8 +1705,8 @@ begin
 end;
 $$;
 
-revoke all on function public.nanfu_org_create_account(text, text, text, integer, uuid, uuid, uuid[]) from public, anon;
-grant execute on function public.nanfu_org_create_account(text, text, text, integer, uuid, uuid, uuid[]) to authenticated;
+revoke all on function public.nanfu_org_create_account(text, text, text, integer, uuid, uuid, uuid[], text) from public, anon;
+grant execute on function public.nanfu_org_create_account(text, text, text, integer, uuid, uuid, uuid[], text) to authenticated;
 
 create or replace function public.nanfu_org_reset_password(p_user uuid, p_password text)
 returns void
@@ -1710,7 +1807,7 @@ revoke all on function public.nanfu_org_create(text) from public, anon;
 revoke all on function public.nanfu_org_me() from public, anon;
 revoke all on function public.nanfu_org_overview() from public, anon;
 revoke all on function public.nanfu_org_create_role(text, text[]) from public, anon;
-revoke all on function public.nanfu_org_set_member(uuid, text, uuid, uuid, text, boolean) from public, anon;
+revoke all on function public.nanfu_org_set_member(uuid, text, uuid, uuid, text, boolean, text, boolean) from public, anon;
 revoke all on function public.nanfu_org_set_quota(uuid, integer) from public, anon;
 revoke all on function public.nanfu_org_create_group(text) from public, anon;
 revoke all on function public.nanfu_org_grant_group(uuid, uuid, boolean) from public, anon;
@@ -1737,7 +1834,7 @@ grant execute on function public.nanfu_org_create(text) to authenticated;
 grant execute on function public.nanfu_org_me() to authenticated;
 grant execute on function public.nanfu_org_overview() to authenticated;
 grant execute on function public.nanfu_org_create_role(text, text[]) to authenticated;
-grant execute on function public.nanfu_org_set_member(uuid, text, uuid, uuid, text, boolean) to authenticated;
+grant execute on function public.nanfu_org_set_member(uuid, text, uuid, uuid, text, boolean, text, boolean) to authenticated;
 grant execute on function public.nanfu_org_set_quota(uuid, integer) to authenticated;
 grant execute on function public.nanfu_org_create_group(text) to authenticated;
 grant execute on function public.nanfu_org_grant_group(uuid, uuid, boolean) to authenticated;

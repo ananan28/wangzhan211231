@@ -312,6 +312,30 @@ test("visible metadata pages across owners without expanding personal sync", asy
   expect(requests.at(-1)!.searchParams.get("select")).toContain("payload");
 });
 
+test("one employee's windows are read with an owner filter and reject a bad id", async () => {
+  const requests: URL[] = [];
+  const memberId = "11111111-1111-4111-8111-111111111111";
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async url => {
+      const query = new URL(String(url));
+      requests.push(query);
+      return Response.json([{
+        environment_id: "env-1", owner_user_id: memberId, org_id: "org-1", group_id: "granted",
+        version: 3, updated_at: "2026-10-29T00:00:00Z", payload: "must-not-be-returned",
+      }]);
+    },
+  });
+  const windows = await client.memberEnvironments("org-1", memberId);
+  expect(windows).toEqual([{
+    id: "env-1", ownerUserId: memberId, orgId: "org-1", groupId: "granted", version: 3, updatedAt: "2026-10-29T00:00:00Z",
+  }]);
+  expect(requests[0].searchParams.get("owner_user_id")).toBe(`eq.${memberId}`);
+  expect(requests[0].searchParams.get("org_id")).toBe("eq.org-1");
+  expect(requests[0].searchParams.get("select")).not.toContain("payload");
+  await expect(client.memberEnvironments("org-1", "not-a-uuid")).rejects.toBeInstanceOf(NanfuSyncError);
+});
+
 test("organization queries preserve quota and lock metadata without fetching a disabled organization", async () => {
   const requests: string[] = [];
   const client = new NanfuSyncClient({
@@ -365,7 +389,7 @@ test("organization overview only asks for columns the service actually exposes",
       const query = new URL(String(url));
       requests.push(query);
       if (query.pathname === "/rest/v1/rpc/nanfu_org_overview") {
-        return Response.json([{ user_id: "user-1", email: "owner@fixture.test", identity: "owner", role_id: null, role_name: null,
+        return Response.json([{ user_id: "user-1", email: "owner@fixture.test", display_name: "张老板", identity: "owner", role_id: null, role_name: null,
           env_quota: 0, used: 3, status: "active", locked: false, manager_user_id: null }]);
       }
       if (query.pathname === "/rest/v1/nanfu_org_roles") return Response.json([{ id: "role-1", name: "运营", permissions: ["env.create", 7] }]);
@@ -376,7 +400,7 @@ test("organization overview only asks for columns the service actually exposes",
     },
   });
   const overview = await client.orgOverview("org-1");
-  expect(overview.members).toEqual([{ userId: "user-1", email: "owner@fixture.test", identity: "owner", roleId: null, roleName: null,
+  expect(overview.members).toEqual([{ userId: "user-1", email: "owner@fixture.test", displayName: "张老板", identity: "owner", roleId: null, roleName: null,
     managerUserId: null, quota: 0, used: 3, status: "active", locked: false }]);
   expect(overview.roles[0]?.permissions).toEqual(["env.create"]);
   expect(overview.invites).toEqual([{ code: "AAAA", identity: "member", expiresAt: "2026-11-01T00:00:00Z", redeemedBy: null }]);

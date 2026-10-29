@@ -89,6 +89,7 @@ function accountFixture() {
   let joinFails = false;
   let offline = false;
   let rejectRefresh = false;
+  let canViewMembers = false;
   let pauseEnvironments: (() => Promise<void>) | undefined;
   const requests: URL[] = [];
   const credentials: NanfuCredentialStore = {
@@ -122,7 +123,7 @@ function accountFixture() {
       const id = req.headers.get("authorization")?.replace("Bearer synthetic-access-", "");
       if (!id || id.startsWith("Bearer")) return Response.json({}, { status: 401 });
       if (url.pathname === "/rest/v1/rpc/nanfu_org_me") return Response.json(emptyOrg ? [] : [{
-        org_id: "org-1", identity: "member", role_name: "成员", permissions: ["env.create"],
+        org_id: "org-1", identity: "member", role_name: "成员", permissions: canViewMembers ? ["env.create", "member.view"] : ["env.create"],
         env_quota: 2, used: 1, status: disabled ? "disabled" : "active", locked,
       }]);
       if (url.pathname === "/rest/v1/rpc/nanfu_org_self_join") {
@@ -189,6 +190,7 @@ function accountFixture() {
     failJoin: (value: boolean) => { joinFails = value; },
     disable: () => { disabled = true; }, verifyEmail: () => { verificationRequired = true; },
     offline: (value: boolean) => { offline = value; }, rejectRefresh: () => { rejectRefresh = true; },
+    viewMembers: () => { canViewMembers = true; },
     pause: (fn: () => Promise<void>) => { pauseEnvironments = fn; },
     close: () => { ui.stop(true); supabase.stop(true); },
   };
@@ -362,6 +364,26 @@ test("organization management routes need a session, validate input and map refu
     expect(missing.body.error).toBe("服务端拒绝操作，请检查参数、目标状态或联系管理员。");
     await f.call("signout", {});
     expect((await f.call("organization-overview")).status).toBe(401);
+  } finally { f.close(); }
+});
+
+test("an employee's windows are readable only with member.view and stay owner-filtered", async () => {
+  const f = accountFixture();
+  const memberId = "11111111-1111-4111-8111-111111111111";
+  try {
+    expect((await f.call(`member-environments?userId=${memberId}`)).status).toBe(401);
+    await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" });
+    expect((await f.call(`member-environments?userId=${memberId}`)).status).toBe(403);
+    f.viewMembers();
+    expect((await f.call("member-environments?userId=not-a-uuid")).status).toBe(400);
+    const list = await f.call(`member-environments?userId=${memberId}`);
+    expect(list.status).toBe(200);
+    expect(list.body.environments[0]).toMatchObject({ id: "visible-a", ownerUserId: "group-owner" });
+    expect(JSON.stringify(list.body)).not.toContain("must-not-reach");
+    const query = f.requests.filter(url => url.pathname.endsWith("/nanfu_environments")).at(-1)!;
+    expect(query.searchParams.get("owner_user_id")).toBe(`eq.${memberId}`);
+    expect(query.searchParams.get("org_id")).toBe("eq.org-1");
+    expect(query.searchParams.get("select")).not.toContain("payload");
   } finally { f.close(); }
 });
 

@@ -37,6 +37,13 @@
 .nanfu-row-actions h5:first-of-type { margin-top: 8px; }
 .nanfu-row-form { margin: 10px 0 0; }
 .nanfu-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+
+/* Per-row window peek: collapsed by default, opens inline under the quota count. */
+.nanfu-windows { margin: 6px 0 0; }
+.nanfu-windows > summary { cursor: pointer; font-size: 12px; color: var(--ink-soft); }
+.nanfu-windows > p { margin: 6px 0 0; font-size: 12px; }
+.nanfu-windows .nanfu-invites { margin: 6px 0 0; padding-left: 16px; font-size: 12px; }
+.nanfu-windows .nanfu-invites li { margin: 4px 0; }
 .nanfu-add-account .nanfu-groups, .nanfu-row-form .nanfu-groups { flex: 1 1 100%; }
 .nanfu-groups legend { font-size: 12px; padding: 0 4px; }
 .nanfu-groups .nanfu-permissions { margin-top: 4px; }

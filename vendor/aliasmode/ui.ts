@@ -19,7 +19,7 @@ import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import type { NanfuRuntime } from "./nanfu-service.ts";
 import { NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword, normalizeNanfuLogin } from "./nanfu-account.ts";
-import { NanfuSyncError } from "./nanfu-sync.ts";
+import { NanfuSyncError, isNanfuUuid } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
 import { NANFU_TRANSFER_ROUTE_PREFIX, handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
 import { loadOrCreateTransferIdentity } from "./nanfu-cloud-transfer.ts";
@@ -742,6 +742,22 @@ export async function handleUiRequest(
         const result = action === "organization-overview" ? await client.orgOverview(organization.orgId, req.signal) : await client.transfers(organization.orgId, req.signal);
         account.assertCurrent(revision);
         return noStoreJson({ ok: true, result, userId: account.state().userId });
+      }
+      if (req.method === "GET" && action === "member-environments") {
+        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
+        const revision = account.revision();
+        const organization = await client.orgMe(req.signal);
+        account.assertCurrent(revision);
+        if (!organization) return noStoreJson({ ok: false, error: "当前账号尚未加入组织" }, 403);
+        if (organization.locked || organization.status !== "active") return noStoreJson({ ok: false, error: "账号已锁定或停用，暂不能查看员工窗口。" }, 403);
+        const mayView = organization.identity === "owner" || organization.identity === "admin"
+          || organization.permissions.includes("member.view") || organization.permissions.includes("member.manage");
+        if (!mayView) return noStoreJson({ ok: false, error: "当前账号无权查看员工窗口，请联系组织所有者或管理员。" }, 403);
+        const memberId = new URL(req.url).searchParams.get("userId") ?? "";
+        if (!isNanfuUuid(memberId)) return noStoreJson({ ok: false, error: "账号编号无效" }, 400);
+        const environments = await client.memberEnvironments(organization.orgId, memberId, req.signal);
+        account.assertCurrent(revision);
+        return noStoreJson({ ok: true, environments, userId: account.state().userId });
       }
       if (req.method === "GET" && ["organization", "environments"].includes(action)) {
         if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);

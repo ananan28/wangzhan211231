@@ -107,6 +107,13 @@ export function fetchNanfuOverview(signal?: AbortSignal): Promise<{ userId: stri
   return nanfuJson("organization-overview", { signal });
 }
 
+/** One employee's windows; the server enforces member.view. */
+export function fetchNanfuMemberEnvironments(
+  userId: string, signal?: AbortSignal,
+): Promise<{ userId: string; environments: NanfuVisibleEnvironment[] }> {
+  return nanfuJson(`member-environments?userId=${encodeURIComponent(userId)}`, { signal });
+}
+
 export function fetchNanfuTransfers(signal?: AbortSignal): Promise<{ userId: string; result: NanfuEnvTransfer[] }> {
   return nanfuJson("transfers", { signal });
 }
