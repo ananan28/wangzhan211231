@@ -26,20 +26,22 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
   const [ownedOnly, setOwnedOnly] = useState(false);
   const request = useRef({ generation: 0, controller: new AbortController() });
 
-  const begin = () => {
+  const begin = (clear = true) => {
     request.current.controller.abort();
     const next = { generation: request.current.generation + 1, controller: new AbortController() };
     request.current = next;
     setBusy(true);
     setError(null);
     setRetry(null);
-    setOrganization(null);
-    setOrganizationLoaded(false);
-    setOverview(null);
-    setEnvironments([]);
-    setQuery("");
-    setGroup("all");
-    setOwnedOnly(false);
+    if (clear) {
+      setOrganization(null);
+      setOrganizationLoaded(false);
+      setOverview(null);
+      setEnvironments([]);
+      setQuery("");
+      setGroup("all");
+      setOwnedOnly(false);
+    }
     return next;
   };
   const current = (generation: number) => request.current.generation === generation && !request.current.controller.signal.aborted;
@@ -121,7 +123,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
   const mutate = async <K extends keyof NanfuMutations,>(action: K, input: NanfuMutations[K]["input"]): Promise<void> => {
     if (!account.userId || busy) return;
     const userId = account.userId;
-    const { generation, controller } = begin();
+    const { generation, controller } = begin(false);
     setNotice(null);
     let confirmed = false;
     try {
@@ -206,7 +208,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
           </>}
         </>}
       </div></section>}
-      {account.authenticated && organization && overview && <NanfuManagement organization={organization} overview={overview} busy={busy} onMutate={mutate} />}
+      {account.authenticated && organization && overview && <NanfuManagement organization={organization} overview={overview} currentUserId={account.userId ?? ""} busy={busy} onMutate={mutate} onRefresh={() => void refresh()} />}
     </div>
   </section>;
 }
