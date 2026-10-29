@@ -200,37 +200,18 @@ async function handleDownload(
     );
   }
 
-  const signRes = await fetch(
-    `${url}/storage/v1/object/sign/${BUCKET}/${storagePath(release.object_key)}`,
-    {
-      method: "POST",
-      headers: serviceHeaders(serviceKey),
-      body: JSON.stringify({ expiresIn: SIGNED_URL_SECONDS }),
-    },
-  );
-  if (!signRes.ok) return unavailable(origin);
-
-  let signed: { signedURL?: string } | null = null;
-  try {
-    signed = await signRes.json();
-  } catch {
-    signed = null;
-  }
-  if (!signed?.signedURL) return unavailable(origin);
-
-  const signedUrl = signed.signedURL.startsWith("http")
-    ? signed.signedURL
-    : `${url}/storage/v1${signed.signedURL}`;
+  const publicBase = (Deno.env.get("NANFU_RELEASE_PUBLIC_BASE") ?? "https://dl.xzckfn.eu.cc").replace(/\/+$/, "");
+  const publicUrl = `${publicBase}/${storagePath(release.object_key)}`;
 
   return json({
     ok: true,
     version: release.version,
     platform: release.platform,
     fileName: release.file_name,
-    url: signedUrl,
+    url: publicUrl,
     sha256: release.sha256,
     size: release.byte_size,
-    expiresIn: SIGNED_URL_SECONDS,
+    expiresIn: 0,
   }, 200, origin);
 }
 
