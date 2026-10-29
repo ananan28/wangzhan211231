@@ -2,10 +2,14 @@
 //
 // Download: POST {"action":"download","platform":"win-x64"} with a signed-in
 // user's access token. The function verifies the token, requires an active
-// organization membership, and returns a one-hour signed storage URL.
+// organization membership, and returns the installer URL on the public
+// download domain.
 //
-// Publish: multipart/form-data with version, platform, sha256 and file, plus
-// the x-nanfu-upload-token header. Used by the Windows build workflow.
+// Register: POST {"action":"register",...} with the x-nanfu-upload-token
+// header. The Windows build workflow uploads the installer to object storage
+// itself and then registers it here; the function confirms the object is
+// actually downloadable before advertising it, so a broken upload never
+// becomes the latest release.
 //
 // verify_jwt is disabled in supabase/config.toml because the two callers
 // authenticate differently; every request is checked below. The service-role
@@ -20,9 +24,7 @@ const ALLOWED_ORIGINS = [
 const PLATFORMS = ["win-x64", "mac-arm", "mac-intel"] as const;
 const VERSION_RE = /^\d+\.\d+\.\d+(-[a-z0-9.]+)?$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
-const MAX_FILE_BYTES = 300 * 1024 * 1024;
-const SIGNED_URL_SECONDS = 3600;
-const BUCKET = "nanfu-releases";
+const MAX_RELEASE_BYTES = 2 * 1024 * 1024 * 1024;
 
 type Platform = (typeof PLATFORMS)[number];
 
@@ -87,6 +89,13 @@ function storagePath(objectKey: string): string {
 
 function supabaseUrl(): string {
   return env("SUPABASE_URL").replace(/\/+$/, "");
+}
+
+function publicBase(): string {
+  return (env("NANFU_RELEASE_PUBLIC_BASE") || "https://dl.xzckfn.eu.cc").replace(
+    /\/+$/,
+    "",
+  );
 }
 
 function unavailable(origin: string | null): Response {
@@ -200,22 +209,19 @@ async function handleDownload(
     );
   }
 
-  const publicBase = (Deno.env.get("NANFU_RELEASE_PUBLIC_BASE") ?? "https://dl.xzckfn.eu.cc").replace(/\/+$/, "");
-  const publicUrl = `${publicBase}/${storagePath(release.object_key)}`;
-
   return json({
     ok: true,
     version: release.version,
     platform: release.platform,
     fileName: release.file_name,
-    url: publicUrl,
+    url: `${publicBase()}/${storagePath(release.object_key)}`,
     sha256: release.sha256,
     size: release.byte_size,
     expiresIn: 0,
   }, 200, origin);
 }
 
-async function handleUpload(
+async function handleRegister(
   req: Request,
   origin: string | null,
 ): Promise<Response> {
@@ -229,17 +235,28 @@ async function handleUpload(
   const url = supabaseUrl();
   if (!url || !serviceKey) return unavailable(origin);
 
-  let form: FormData;
+  let body: {
+    action?: string;
+    version?: unknown;
+    platform?: unknown;
+    fileName?: unknown;
+    sha256?: unknown;
+    size?: unknown;
+  };
   try {
-    form = await req.formData();
+    body = await req.json();
   } catch {
-    return json({ ok: false, error: "上传请求格式不正确。" }, 400, origin);
+    return json({ ok: false, error: "请求格式不正确。" }, 400, origin);
+  }
+  if (body?.action !== "register") {
+    return json({ ok: false, error: "不支持的请求。" }, 400, origin);
   }
 
-  const version = String(form.get("version") ?? "").trim();
-  const platform = String(form.get("platform") ?? "").trim();
-  const sha256 = String(form.get("sha256") ?? "").trim();
-  const file = form.get("file");
+  const version = String(body.version ?? "").trim();
+  const platform = String(body.platform ?? "").trim();
+  const fileName = String(body.fileName ?? "").trim();
+  const sha256 = String(body.sha256 ?? "").trim().toLowerCase();
+  const size = Number(body.size);
 
   if (!VERSION_RE.test(version)) {
     return json({ ok: false, error: "版本号格式不正确。" }, 400, origin);
@@ -250,49 +267,44 @@ async function handleUpload(
   if (!SHA256_RE.test(sha256)) {
     return json({ ok: false, error: "SHA256 格式不正确。" }, 400, origin);
   }
-  if (!(file instanceof File) || file.size <= 0) {
-    return json({ ok: false, error: "缺少安装包文件。" }, 400, origin);
-  }
-  if (file.size > MAX_FILE_BYTES) {
-    return json({ ok: false, error: "安装包超过 300MB 限制。" }, 400, origin);
-  }
-
-  const fileName = (file.name || "").split(/[\\/]/).pop()?.trim() ?? "";
   if (
-    !fileName || fileName === "." || fileName === ".." || fileName.length > 200
+    !Number.isFinite(size) || size <= 0 || size > MAX_RELEASE_BYTES ||
+    !Number.isInteger(size)
+  ) {
+    return json({ ok: false, error: "安装包大小不正确。" }, 400, origin);
+  }
+  if (
+    !fileName || fileName.length > 200 || fileName === "." ||
+    fileName === ".." || /[\\/\u0000-\u001f]/.test(fileName)
   ) {
     return json({ ok: false, error: "文件名不正确。" }, 400, origin);
   }
 
-  const objectKey = `releases/${version}/${platform}/${fileName}`;
-  const uploadBody = new FormData();
-  uploadBody.append("file", file, fileName);
-  const uploadRes = await fetch(
-    `${url}/storage/v1/object/${BUCKET}/${storagePath(objectKey)}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${serviceKey}`,
-        apikey: serviceKey,
-        "x-upsert": "true",
-      },
-      body: uploadBody,
-    },
+  const prefix = (env("NANFU_RELEASE_OBJECT_PREFIX") || "nanfu").replace(
+    /^\/+|\/+$/g,
+    "",
   );
-  if (!uploadRes.ok) {
-    console.error("nanfu-release storage upload failed", uploadRes.status);
-    return unavailable(origin);
+  const objectKey = `${prefix}/${version}/${platform}/${fileName}`;
+  const publicUrl = `${publicBase()}/${storagePath(objectKey)}`;
+
+  // Only advertise what the public domain can actually serve right now.
+  const head = await fetch(publicUrl, { method: "HEAD" });
+  if (!head.ok) {
+    return json(
+      { ok: false, error: "安装包尚未上传完成。", code: "object_missing" },
+      409,
+      origin,
+    );
+  }
+  const servedSize = Number(head.headers.get("content-length"));
+  if (Number.isFinite(servedSize) && servedSize > 0 && servedSize !== size) {
+    return json(
+      { ok: false, error: "安装包大小与登记信息不一致。", code: "size_mismatch" },
+      409,
+      origin,
+    );
   }
 
-  const row = {
-    version,
-    platform,
-    file_name: fileName,
-    object_key: objectKey,
-    byte_size: file.size,
-    sha256,
-    published_at: new Date().toISOString(),
-  };
   const insertRes = await fetch(
     `${url}/rest/v1/nanfu_releases?on_conflict=object_key`,
     {
@@ -301,21 +313,23 @@ async function handleUpload(
         ...serviceHeaders(serviceKey),
         Prefer: "resolution=merge-duplicates,return=minimal",
       },
-      body: JSON.stringify(row),
+      body: JSON.stringify({
+        version,
+        platform,
+        file_name: fileName,
+        object_key: objectKey,
+        byte_size: size,
+        sha256,
+        published_at: new Date().toISOString(),
+      }),
     },
   );
   if (!insertRes.ok) {
     console.error("nanfu-release metadata insert failed", insertRes.status);
-    // Do not leave an unreferenced object behind.
-    await fetch(`${url}/storage/v1/object/${BUCKET}`, {
-      method: "DELETE",
-      headers: serviceHeaders(serviceKey),
-      body: JSON.stringify({ prefixes: [objectKey] }),
-    }).catch(() => {});
     return unavailable(origin);
   }
 
-  return json({ ok: true, objectKey, size: file.size }, 200, origin);
+  return json({ ok: true, objectKey, url: publicUrl, version, size }, 200, origin);
 }
 
 Deno.serve(async (req: Request) => {
@@ -329,11 +343,8 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const contentType = (req.headers.get("content-type") ?? "").toLowerCase();
-    const isUpload = req.headers.has("x-nanfu-upload-token") ||
-      contentType.includes("multipart/form-data");
-    return isUpload
-      ? await handleUpload(req, origin)
+    return req.headers.has("x-nanfu-upload-token")
+      ? await handleRegister(req, origin)
       : await handleDownload(req, origin);
   } catch (error) {
     console.error(
