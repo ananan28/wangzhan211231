@@ -436,3 +436,94 @@ test("organization failures become fixed copy that never repeats the service tex
     .toEqual({ status: 503, body: { ok: false, error: expect.stringContaining("操作结果未确认"), retryable: true } });
   expect(JSON.stringify(nanfuOrganizationError(new NanfuSyncError("upstream detail", 500, false)))).not.toContain("upstream detail");
 });
+
+test("transfer RPCs normalise their input and call the documented functions", async () => {
+  const target = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const transferId = "11111111-2222-3333-4444-555555555555";
+  const calls: Array<{ path: string; body: unknown }> = [];
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async (url, init) => {
+      const path = String(url).replace("https://nanfu.test/rest/v1", "");
+      calls.push({ path, body: JSON.parse(String(init?.body ?? "null")) });
+      if (path === "/rpc/nanfu_env_transfer_request") return Response.json(transferId);
+      if (path === "/rpc/nanfu_env_transfer_respond") {
+        return Response.json(JSON.parse(String(init?.body)).p_accept ? "accepted" : "rejected");
+      }
+      if (path === "/rpc/nanfu_env_transfer_batch") return Response.json(3);
+      if (path === "/rpc/nanfu_env_transfer_force") return Response.json(1);
+      throw new Error(`unexpected ${path}`);
+    },
+  });
+  expect(await client.requestTransfer("  env-1  ", target)).toBe(transferId);
+  expect(await client.respondTransfer(transferId, true)).toBe("accepted");
+  expect(await client.respondTransfer(transferId, false)).toBe("rejected");
+  expect(await client.batchTransfer(["env-1", "env-1", " env-2 "], target, "交接")).toBe(3);
+  expect(await client.forceTransfer("env-2", target, "管理员调整")).toBe(1);
+  expect(calls).toEqual([
+    { path: "/rpc/nanfu_env_transfer_request", body: { p_environment_id: "env-1", p_to: target } },
+    { path: "/rpc/nanfu_env_transfer_respond", body: { p_id: transferId, p_accept: true } },
+    { path: "/rpc/nanfu_env_transfer_respond", body: { p_id: transferId, p_accept: false } },
+    { path: "/rpc/nanfu_env_transfer_batch", body: { p_environment_ids: ["env-1", "env-2"], p_to: target, p_note: "交接" } },
+    { path: "/rpc/nanfu_env_transfer_force", body: { p_environment_id: "env-2", p_to: target, p_note: "管理员调整" } },
+  ]);
+});
+
+test("transfer requests reject bad identifiers before touching the network", async () => {
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async () => { throw new Error("must not be called"); },
+  });
+  const target = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  await expect(client.requestTransfer("", target)).rejects.toBeInstanceOf(NanfuSyncError);
+  await expect(client.requestTransfer("env", "not-a-uuid")).rejects.toThrow("接收成员编号无效");
+  await expect(client.respondTransfer("nope", true)).rejects.toThrow("转移记录编号无效");
+  await expect(client.batchTransfer([], target)).rejects.toThrow("请选择要转移的环境");
+  await expect(client.batchTransfer(Array.from({ length: 201 }, (_, index) => `env-${index}`), target))
+    .rejects.toThrow("一次最多转移200个环境");
+  await expect(client.forceTransfer("env", target, "x".repeat(501))).rejects.toThrow("备注最多500个字符");
+});
+
+test("a forbidden transfer surfaces the server code and never retries", async () => {
+  let calls = 0;
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async () => {
+      calls += 1;
+      return Response.json(
+        { code: "42501", message: "NANFU_FORBIDDEN: only the owner or an administrator can force a transfer" },
+        { status: 403 },
+      );
+    },
+  });
+  const failure = client.forceTransfer("env-1", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "");
+  await expect(failure).rejects.toBeInstanceOf(NanfuSyncError);
+  await failure.catch((error: NanfuSyncError) => {
+    expect(error.status).toBe(403);
+    expect(error.code).toBe("NANFU_FORBIDDEN");
+    expect(error.unauthorized).toBe(true);
+  });
+  expect(calls).toBe(1);
+});
+
+test("the transfer inbox query selects metadata only and keeps the resolution time", async () => {
+  const urls: URL[] = [];
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async (url) => {
+      urls.push(new URL(String(url)));
+      return Response.json([{
+        id: "t1", environment_id: "env-1", from_user_id: "u1", to_user_id: "u2", status: "accepted",
+        forced: true, note: "handover", created_at: "2026-10-29T00:00:00Z", resolved_at: "2026-10-29T01:00:00Z",
+      }]);
+    },
+  });
+  expect(await client.transfers("org-1")).toEqual([{
+    id: "t1", environmentId: "env-1", fromUserId: "u1", toUserId: "u2", status: "accepted",
+    forced: true, note: "handover", createdAt: "2026-10-29T00:00:00Z", resolvedAt: "2026-10-29T01:00:00Z",
+  }]);
+  expect(urls[0]?.pathname).toBe("/rest/v1/nanfu_env_transfers");
+  expect(urls[0]?.searchParams.get("select")).toContain("resolved_at");
+  expect(urls[0]?.searchParams.get("select")).not.toContain("payload");
+  expect(urls[0]?.searchParams.get("org_id")).toBe("eq.org-1");
+});

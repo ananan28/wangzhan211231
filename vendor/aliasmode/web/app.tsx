@@ -99,6 +99,7 @@ import {
   sendTranslationKey,
 } from "./api.ts";
 import { NanfuAccountPage } from "./nanfu-account.tsx";
+import { NanfuTransferPage } from "./nanfu-transfer.tsx";
 
 /** Run async tasks with bounded concurrency (so "Open 50" isn't 50 at once). */
 async function runPool<T>(items: T[], n: number, fn: (item: T) => Promise<void>): Promise<void> {
@@ -152,7 +153,7 @@ const REFRESH_MS = 3000;
 const PROFILE_PAGE_SIZE = 50;
 const PAGE_SIZES = [25, 50, 100, 200];
 
-const PAGE_TITLES: Record<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "nanfu", string> = {
+const PAGE_TITLES: Record<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "nanfu" | "nanfu-transfer", string> = {
   profiles: "Profiles",
   scripts: "Scripts",
   settings: "Settings",
@@ -160,6 +161,7 @@ const PAGE_TITLES: Record<"profiles" | "scripts" | "settings" | "extensions" | "
   proxies: "Proxies",
   trash: "Trash",
   nanfu: "南孚账号与组织",
+  "nanfu-transfer": "环境转移与导入导出",
 };
 
 const SETTINGS_TABS = [
@@ -1270,7 +1272,7 @@ function App() {
   // "profiles" is the roster; "settings" replaces it in the same content area
   // rather than opening a dialog — Settings outgrew a modal. New profile and
   // Edit stay dialogs: short forms, and a page felt like too much ceremony.
-  const [view, setView] = useState<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "nanfu">("profiles");
+  const [view, setView] = useState<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "nanfu" | "nanfu-transfer">("profiles");
   const [scriptRunOpen, setScriptRunOpen] = useState(false);
   const [scriptRunProfiles, setScriptRunProfiles] = useState<UiProfile[]>([]);
   const [showCreate, setShowCreate] = useState(false);
@@ -3679,6 +3681,9 @@ function App() {
           <button type="button" className={`navitem${view === "nanfu" ? " active" : ""}`} title="南孚账号与组织" onClick={() => setView("nanfu")}>
             <Icon name="user" /><span className="navlabel">南孚账号与组织</span>
           </button>
+          <button type="button" className={`navitem${view === "nanfu-transfer" ? " active" : ""}`} title="环境转移与导入导出" onClick={() => setView("nanfu-transfer")}>
+            <Icon name="import" /><span className="navlabel">环境转移与导入导出</span>
+          </button>
           <a
             className="navitem"
             href="https://aliasmode.com/support/"
@@ -3870,6 +3875,7 @@ function App() {
 
       {!appMode?.legacyRemote && <>
         <NanfuAccountPage active={view === "nanfu"} localCount={!isCloudMode && !appMode?.legacyRemote ? profiles.length : null} onLocal={() => selectFolder("all")} />
+        <NanfuTransferPage active={view === "nanfu-transfer"} />
         <ProxiesPage profilesWithoutProxy={profilesWithoutProxy} key={`proxies:${appMode?.mode}:${cloudAuth?.user?.id ?? ""}:${cloudAuth?.workspace?.id ?? ""}`}
           active={view === "proxies"} groups={[...(isCloudMode ? [] : [""]), ...groups.slice(1)]} folders={folders} onChanged={load} />
         <TrashPage key={`trash:${appMode?.mode}:${cloudAuth?.user?.id ?? ""}:${cloudAuth?.workspace?.id ?? ""}`}

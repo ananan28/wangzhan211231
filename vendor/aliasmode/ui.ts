@@ -21,6 +21,7 @@ import type { NanfuRuntime } from "./nanfu-service.ts";
 import { NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword } from "./nanfu-account.ts";
 import { NanfuSyncError } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
+import { NANFU_TRANSFER_ROUTE_PREFIX, handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
 import type { CloudConnectionRuntime } from "./cloud-connection.ts";
 import type {
   CloudBrowserCloseResult,
@@ -608,6 +609,12 @@ export async function handleUiRequest(
 ): Promise<Response | null> {
   const { pathname } = new URL(req.url);
   if (!pathname.startsWith("/ui/api/")) return null;
+
+  // Transfers and `.nanfu-env` packages keep their own prefix so the account
+  // and organization handlers below stay untouched.
+  if (pathname.startsWith(NANFU_TRANSFER_ROUTE_PREFIX)) {
+    return handleNanfuTransferRequest(req, { nanfu: options.nanfu, store, paths: options.paths });
+  }
 
   if (pathname.startsWith("/ui/api/nanfu/")) {
     const nanfu = options.nanfu;
