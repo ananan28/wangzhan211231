@@ -18,7 +18,7 @@ import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from
 import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import type { NanfuRuntime } from "./nanfu-service.ts";
-import { NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword } from "./nanfu-account.ts";
+import { NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword, normalizeNanfuLogin } from "./nanfu-account.ts";
 import { NanfuSyncError } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
 import { NANFU_TRANSFER_ROUTE_PREFIX, handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
@@ -691,16 +691,19 @@ export async function handleUiRequest(
           return noStoreJson({ ok: true, state, persistent, selfJoin });
         }
         const body = await req.json().catch(() => null) as { email?: unknown; password?: unknown; invite?: unknown } | null;
-        if (!body || typeof body.email !== "string" || !isValidNanfuEmail(body.email) || typeof body.password !== "string" || !isValidNanfuPassword(body.password)) {
+        if (!body || typeof body.email !== "string" || typeof body.password !== "string" || !isValidNanfuPassword(body.password)) {
           return noStoreJson({ ok: false, error: "请输入有效邮箱及至少6位密码" }, 400);
         }
         if (action === "signup") {
+          if (!isValidNanfuEmail(body.email)) return noStoreJson({ ok: false, error: "请输入有效邮箱及至少6位密码" }, 400);
           const revision = account.revision();
           const result = await account.signUp(body.email, body.password);
           account.assertCurrent(revision);
           return noStoreJson({ ok: true, email: result.email, verificationRequired: result.verificationRequired });
         }
-        const state = await account.signIn(body.email, body.password);
+        const login = normalizeNanfuLogin(body.email);
+        if (!isValidNanfuEmail(login)) return noStoreJson({ ok: false, error: "请输入有效的邮箱或登录名" }, 400);
+        const state = await account.signIn(login, body.password);
         // An invite code taken at sign-in is redeemed instead of claiming the
         // default seat, otherwise the invitation could never be used again.
         const invite = typeof body.invite === "string" ? body.invite.trim() : "";
@@ -767,7 +770,7 @@ export async function handleUiRequest(
         const message = code === "email_not_confirmed" ? "请先通过邮件确认邮箱，再登录"
           : retryable ? "南孚账号服务暂时不可用，凭据已保留，请重试"
           : alreadySignedIn ? "请先退出当前南孚账号"
-          : credentialsRejected ? "邮箱或密码不正确。"
+          : credentialsRejected ? "登录名或密码不正确。"
           : "登录状态已失效，请重新登录";
         return noStoreJson({ ok: false, error: message, retryable, code, alreadySignedIn, state: account.state() },
           retryable ? 503 : alreadySignedIn ? 409 : 401);

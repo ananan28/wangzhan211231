@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import type { NanfuMember, NanfuOrgOverview, NanfuOrganization, NanfuMutations } from "./api.ts";
+import { nanfuLoginName, type NanfuMember, type NanfuOrgOverview, type NanfuOrganization, type NanfuMutations } from "./api.ts";
 
 export type NanfuMutationHandler = <K extends keyof NanfuMutations>(action: K, input: NanfuMutations[K]["input"]) => Promise<void>;
 
@@ -27,10 +27,15 @@ const groupOrder: NanfuAccountGroup[] = ["owner", "admin", "member", "sub"];
 
 const dataOf = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); return new FormData(event.currentTarget); };
 const text = (data: FormData, key: string) => String(data.get(key) ?? "").trim();
-const memberLabel = (member: NanfuMember) => member.email || member.userId;
+const memberLabel = (member: NanfuMember) => nanfuLoginName(member.email) || member.userId;
+const memberGroupNames = (overview: NanfuOrgOverview, userId: string) => overview.grants
+  .filter(grant => grant.userId === userId)
+  .map(grant => overview.groups.find(group => group.id === grant.groupId)?.name || grant.groupId);
+const memberGroupIds = (overview: NanfuOrgOverview, userId: string) => overview.grants
+  .filter(grant => grant.userId === userId).map(grant => grant.groupId);
 
-function AddAccount({ members, owner, currentUserId, busy, onMutate }: {
-  members: NanfuMember[]; owner: boolean; currentUserId: string; busy: boolean; onMutate: NanfuMutationHandler;
+function AddAccount({ members, overview, owner, currentUserId, busy, onMutate }: {
+  members: NanfuMember[]; overview: NanfuOrgOverview; owner: boolean; currentUserId: string; busy: boolean; onMutate: NanfuMutationHandler;
 }) {
   const [kind, setKind] = useState<"member" | "sub" | "admin">("member");
   const self = members.find(member => member.userId === currentUserId);
@@ -44,9 +49,11 @@ function AddAccount({ members, owner, currentUserId, busy, onMutate }: {
       identity: kind === "admin" ? "admin" : "member",
       quota: Math.max(0, Math.trunc(Number(text(data, "quota") || "0")) || 0),
       managerUserId: kind === "sub" ? parent || undefined : undefined,
+      roleId: text(data, "roleId") || undefined,
+      groupIds: data.getAll("groupIds").map(String).filter(Boolean),
     });
   }}>
-    <label className="fld"><span>邮箱</span><input name="email" type="email" autoComplete="off" maxLength={320} required placeholder="对方用来登录的邮箱" /></label>
+    <label className="fld"><span>登录名</span><input name="email" type="text" autoComplete="off" maxLength={320} required placeholder="用户名，或带 @ 的完整邮箱" /></label>
     <label className="fld"><span>密码</span><input name="password" type="password" autoComplete="new-password" minLength={6} maxLength={72} required placeholder="至少 6 位，直接告诉对方" /></label>
     <label className="fld"><span>账号类型</span><select value={kind} onChange={event => setKind(event.target.value as "member" | "sub" | "admin")} disabled={busy}>
       <option value="member">成员</option>
@@ -59,9 +66,19 @@ function AddAccount({ members, owner, currentUserId, busy, onMutate }: {
         {memberLabel(member)} · {nanfuIdentityName(member.identity)}{member.userId === currentUserId ? "（我）" : ""}
       </option>)}
     </select></label>}
+    <label className="fld"><span>角色</span><select name="roleId" disabled={busy}>
+      <option value="">默认权限</option>
+      {overview.roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
+    </select></label>
     <label className="fld"><span>窗口配额（0 不限）</span><input name="quota" type="number" min="0" step="1" defaultValue={0} disabled={busy} /></label>
+    {!!overview.groups.length && <fieldset className="nanfu-controls nanfu-groups" disabled={busy}>
+      <legend>授权分组</legend>
+      <div className="nanfu-permissions">{overview.groups.map(group => <label key={group.id} className="nanfu-check">
+        <input type="checkbox" name="groupIds" value={group.id} />{group.name}
+      </label>)}</div>
+    </fieldset>}
     <button className="btn primary" type="submit" disabled={busy || (kind === "sub" && !parent)}>添加账号</button>
-    <p className="nanfu-hint">添加后对方用这个邮箱和密码登录即可，账号已激活、不需要邮箱验证；密码只保存加密结果，之后无法查看。</p>
+    <p className="nanfu-hint">添加后对方用这个登录名和密码登录即可，账号已激活、不需要邮箱验证；授权分组决定对方在云端能看到哪些窗口，不勾选只能看到自己的窗口。</p>
   </form>;
 }
 
@@ -72,20 +89,27 @@ function MemberRow({ member, overview, owner, currentUserId, busy, onMutate }: {
   const parent = overview.members.find(item => item.userId === member.managerUserId);
   const group = nanfuAccountGroup(member);
   const quotaFull = member.quota > 0 && member.used >= member.quota;
+  const granted = memberGroupNames(overview, member.userId);
+  const grantedIds = memberGroupIds(overview, member.userId);
+  const editable = group !== "owner" && !self;
   return <tr>
     <td>
       {memberLabel(member)}{self && <span className="nanfu-tag">我</span>}
       {group === "sub" && <><br /><small>所属：{parent ? memberLabel(parent) : member.managerUserId}</small></>}
     </td>
+    <td>{member.roleName ?? <small>{group === "owner" ? "全部权限" : "默认权限"}</small>}</td>
+    <td>{granted.length ? granted.join("、") : <small>{group === "owner" || group === "admin" ? "全部窗口" : "未授权"}</small>}</td>
     <td className={quotaFull ? "modal-err" : ""}>{member.used} / {member.quota === 0 ? "不限" : member.quota}{quotaFull && <small> · 已满</small>}</td>
     <td>{member.status === "active" ? "启用" : "停用"}{member.locked ? " · 已锁定" : ""}</td>
-    <td>{group === "owner" ? <small>受保护，不可移除</small> : self ? <small>本人</small> : <details className="nanfu-row-actions">
+    <td>{!editable ? <small>{group === "owner" ? "受保护，不可移除" : "本人"}</small> : <details className="nanfu-row-actions">
       <summary>设置</summary>
+      <h5>身份与角色</h5>
       <form className="nanfu-form nanfu-row-form" aria-label={`设置 ${memberLabel(member)}`} onSubmit={event => {
         const data = dataOf(event);
         void onMutate("set-member", {
           userId: member.userId,
           identity: text(data, "identity") as "admin" | "member",
+          roleId: text(data, "roleId") || undefined,
           status: text(data, "status") as "active" | "disabled",
           locked: data.has("locked"),
           managerUserId: text(data, "managerUserId") || undefined,
@@ -95,8 +119,14 @@ function MemberRow({ member, overview, owner, currentUserId, busy, onMutate }: {
           {owner && <option value="admin">管理员</option>}
           <option value="member">成员 / 子账号</option>
         </select></label>
+        <label className="fld"><span>角色</span><select name="roleId" defaultValue={member.roleId ?? ""} disabled={busy}>
+          <option value="">保持不变</option>
+          <option value="00000000-0000-0000-0000-000000000000">无角色（清除）</option>
+          {overview.roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
+        </select></label>
         <label className="fld"><span>所属账号</span><select name="managerUserId" defaultValue={member.managerUserId ?? ""} disabled={busy}>
-          {!member.managerUserId && <option value="">无（作为成员）</option>}
+          <option value="">保持不变</option>
+          <option value="00000000-0000-0000-0000-000000000000">无（改为普通成员）</option>
           {overview.members.filter(item => item.identity !== "owner" && item.userId !== member.userId)
             .map(item => <option key={item.userId} value={item.userId}>{memberLabel(item)} · {nanfuIdentityName(item.identity)}</option>)}
         </select></label>
@@ -106,6 +136,31 @@ function MemberRow({ member, overview, owner, currentUserId, busy, onMutate }: {
         <label className="nanfu-check"><input type="checkbox" name="locked" defaultChecked={member.locked} disabled={busy} />锁定登录</label>
         <button className="btn" type="submit" disabled={busy}>保存</button>
       </form>
+      <h5>授权分组</h5>
+      <form className="nanfu-form nanfu-row-form" aria-label={`授权分组 ${memberLabel(member)}`} onSubmit={event => {
+        const data = dataOf(event);
+        void onMutate("set-groups", { userId: member.userId, groupIds: data.getAll("groupIds").map(String).filter(Boolean) });
+      }}>
+        {!overview.groups.length ? <p>还没有分组。在下方「高级：角色、分组与邀请码」里创建，再把窗口放进分组。</p> : <fieldset className="nanfu-controls nanfu-groups" disabled={busy}>
+          <legend>可查看的分组</legend>
+          <div className="nanfu-permissions">{overview.groups.map(item => <label key={item.id} className="nanfu-check">
+            <input type="checkbox" name="groupIds" value={item.id} defaultChecked={grantedIds.includes(item.id)} />{item.name}
+          </label>)}</div>
+        </fieldset>}
+        <button className="btn" type="submit" disabled={busy || !overview.groups.length}>保存分组</button>
+      </form>
+      <h5>重置登录密码</h5>
+      <form className="nanfu-form nanfu-row-form" aria-label={`重置密码 ${memberLabel(member)}`} onSubmit={event => {
+        const data = dataOf(event);
+        const password = String(data.get("password") ?? "");
+        if (password.length < 6) return;
+        event.currentTarget.reset();
+        void onMutate("reset-password", { userId: member.userId, password });
+      }}>
+        <label className="fld"><span>新密码</span><input name="password" type="password" autoComplete="new-password" minLength={6} maxLength={72} required placeholder="至少 6 位，改完告诉对方" disabled={busy} /></label>
+        <button className="btn" type="submit" disabled={busy}>重置密码</button>
+      </form>
+      <h5>窗口配额</h5>
       <form className="nanfu-form nanfu-row-form" aria-label={`配额 ${memberLabel(member)}`} onSubmit={event => {
         const data = dataOf(event);
         void onMutate("set-quota", { userId: member.userId, quota: Number(text(data, "quota")) });
@@ -113,6 +168,7 @@ function MemberRow({ member, overview, owner, currentUserId, busy, onMutate }: {
         <label className="fld"><span>窗口配额（0 不限）</span><input name="quota" type="number" min="0" max="2147483647" step="1" required defaultValue={member.quota} disabled={busy} /></label>
         <button className="btn" type="submit" disabled={busy}>保存配额</button>
       </form>
+      <h5>移除</h5>
       <form className="nanfu-form nanfu-row-form" aria-label={`移除 ${memberLabel(member)}`} onSubmit={event => {
         const data = dataOf(event);
         const reclaim = data.has("reclaim");
@@ -122,7 +178,7 @@ function MemberRow({ member, overview, owner, currentUserId, busy, onMutate }: {
         }
       }}>
         <label className="nanfu-check"><input type="checkbox" name="reclaim" defaultChecked disabled={busy} />回收环境给所有者</label>
-        <button className="btn danger" type="submit" disabled={busy}>移除成员</button>
+        <button className="btn danger" type="submit" disabled={busy}>移除账号</button>
       </form>
     </details>}</td>
   </tr>;
@@ -135,7 +191,7 @@ function MemberGroup({ group, members, ...rest }: {
   return <section className="nanfu-group" aria-label={groupNames[group]}>
     <h4>{groupNames[group]}<span className="nanfu-count">{members.length}</span></h4>
     {!members.length ? <p>暂无{groupNames[group]}。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table">
-      <thead><tr><th>账号</th><th>窗口</th><th>状态</th><th>操作</th></tr></thead>
+      <thead><tr><th>账号</th><th>角色</th><th>授权分组</th><th>窗口</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>{members.map(member => <MemberRow key={member.userId} member={member} {...rest} />)}</tbody>
     </table></div>}
   </section>;
@@ -165,8 +221,8 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
     <section className="settings-card" aria-label="添加账号">
       <header><h3>添加账号</h3>{onRefresh && <button type="button" className="btn" disabled={busy} onClick={onRefresh}>刷新成员</button>}</header>
       <div className="card-body">
-        <p>直接填邮箱和密码就能建号：不需要对方先注册，也不需要邀请码。</p>
-        <AddAccount key={overview.members.length} members={overview.members} owner={owner} currentUserId={currentUserId} busy={busy} onMutate={onMutate} />
+        <p>直接填登录名和密码就能建号：不需要对方先注册，也不需要邀请码。登录名用用户名或完整邮箱都可以。</p>
+        <AddAccount key={overview.members.length} members={overview.members} overview={overview} owner={owner} currentUserId={currentUserId} busy={busy} onMutate={onMutate} />
       </div>
     </section>
 
@@ -187,7 +243,7 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
     <details className="settings-card nanfu-advanced">
       <summary>高级：角色、分组与邀请码</summary>
       <div className="card-body">
-        <p>日常添加账号不需要这些。角色给成员附加细项权限；分组用于组织环境的可见范围；邀请码给需要自行注册的人。</p>
+        <p>角色给账号附加细项权限；分组决定成员在组织云端能看到哪些窗口；邀请码给需要自行注册的人。</p>
         <fieldset disabled={busy} className="nanfu-controls">
           <h4>角色权限</h4>
           <ul>{overview.roles.map(role => <li key={role.id}>{role.name}：{role.permissions.map(value => permissions.find(item => item[0] === value)?.[1] ?? value).join("、") || "无附加权限"}</li>)}</ul>
@@ -213,7 +269,12 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
             <label className="fld"><span>授权操作</span><select name="granted"><option value="true">授权可见</option><option value="false">撤销授权</option></select></label>
             <button className="btn" type="submit">保存分组授权</button>
           </form>
-          {!overview.grants.length ? <p>暂无显式分组授权。</p> : <ul>{overview.grants.map(grant => <li key={`${grant.groupId}:${grant.userId}`}>{overview.groups.find(group => group.id === grant.groupId)?.name || grant.groupId} → {overview.members.find(member => member.userId === grant.userId)?.email || grant.userId}</li>)}</ul>}
+          {!overview.grants.length ? <p>暂无显式分组授权。</p> : <ul>{overview.grants.map(grant => {
+            const member = overview.members.find(item => item.userId === grant.userId);
+            return <li key={`${grant.groupId}:${grant.userId}`}>
+              {overview.groups.find(group => group.id === grant.groupId)?.name || grant.groupId} → {member ? memberLabel(member) : grant.userId}
+            </li>;
+          })}</ul>}
 
           <h4>邀请码（给自行注册的人）</h4>
           <p>邀请码单次使用；对方先注册并确认邮箱，再在登录页填邀请码即可加入本组织。</p>

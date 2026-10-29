@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  nanfuAuthAction, nanfuSelfJoin, fetchNanfuEnvironments, nanfuOrganizationAction, NanfuApiError,
+  nanfuAuthAction, nanfuSelfJoin, fetchNanfuEnvironments, nanfuOrganizationAction, nanfuLoginName, normalizeNanfuLogin, NanfuApiError,
   type NanfuAccountState, type NanfuOrganization, type NanfuVisibleEnvironment, type NanfuMutations,
 } from "./api.ts";
 import { nanfuIdentityName } from "./nanfu-management.tsx";
@@ -61,7 +61,8 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
     setInviteCode("");
     let authenticated = false;
     try {
-      const credentials = { email, password };
+      // Sign-up needs a real inbox; sign-in also accepts a bare sub-account name.
+      const credentials = { email: action === "signin" ? normalizeNanfuLogin(email) : email.trim(), password };
       const result = await nanfuAuthAction(action, action === "signup" || action === "signin"
         ? (action === "signin" && signInInvite.trim() ? { ...credentials, invite: signInInvite.trim() } : credentials)
         : {}, controller.signal);
@@ -164,10 +165,10 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
         {error && <p className="modal-err" role="alert">{error}</p>}
         {retry && <button className="btn" disabled={busy} onClick={() => void authenticate(retry)}>{retry === "restore" ? "重试恢复登录" : "重试退出账号"}</button>}
         {account.authenticated ? <>
-          <p data-testid="nanfu-identity">已登录：{account.email ?? account.userId}</p>
+          <p data-testid="nanfu-identity">已登录：{account.email ? nanfuLoginName(account.email) : account.userId}</p>
           <button className="btn danger" onClick={() => void authenticate("signout")}>退出南孚账号 / 切换账号</button>
         </> : <form className="nanfu-auth-form" onSubmit={event => { event.preventDefault(); void authenticate(signup ? "signup" : "signin"); }}>
-          <label className="fld"><span>南孚邮箱</span><input type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} disabled={busy} /></label>
+          <label className="fld"><span>{signup ? "南孚邮箱" : "南孚邮箱或登录名"}</span><input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} required value={email} onChange={event => setEmail(event.target.value)} disabled={busy} /></label>
           <label className="fld"><span>南孚密码</span><input type="password" autoComplete={signup ? "new-password" : "current-password"} minLength={6} required value={password} onChange={event => setPassword(event.target.value)} disabled={busy} /></label>
           {!signup && <label className="fld"><span>邀请码（选填）</span><input maxLength={128} autoComplete="off" value={signInInvite} onChange={event => setSignInInvite(event.target.value)} disabled={busy} placeholder="填写管理员给的邀请码，登录时直接加入该组织" /></label>}
           <button className="btn primary" type="submit" disabled={busy}>{signup ? "注册南孚账号" : "登录南孚账号"}</button>

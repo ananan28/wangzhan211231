@@ -5,6 +5,7 @@ import {
   NanfuAuthError,
   NanfuEmailUnverifiedError,
   NanfuAccountChangedError,
+  normalizeNanfuLogin,
   type NanfuCredentialStore,
 } from "./nanfu-account.ts";
 import { DesktopCredentialBridge, DESKTOP_PROTOCOL } from "./desktop-runtime.ts";
@@ -381,8 +382,7 @@ test("Nanfu credential bridge reads, rotates and clears only its own key", async
   expect(output.map(line => JSON.parse(line).key)).toEqual(Array(3).fill("nanfu_refresh_token"));
 });
 
-test("Nanfu credential reads reject malformed acknowledgements without exposing secrets", async () => {
-  const nonce = "ab".repeat(32);
+test("Nanfu credential reads reject malformed acknowledgements without exposing secrets", async () => {  const nonce = "ab".repeat(32);
   const output: string[] = [];
   const bridge = new DesktopCredentialBridge(nonce, line => { output.push(line); });
   for (const secret of [null, { token: "synthetic-secret" }]) {
@@ -392,4 +392,10 @@ test("Nanfu credential reads reject malformed acknowledgements without exposing 
     if (secret === null) expect(await pending).toBeNull();
     else await expect(pending).rejects.toThrow("could not read the saved session");
   }
+});
+
+test("a bare login name becomes a local address so sub-accounts need no inbox", () => {
+  expect(normalizeNanfuLogin(" Z.Sub ")).toBe("z.sub@nanfu.local");
+  expect(normalizeNanfuLogin("xiaoli")).toBe("xiaoli@nanfu.local");
+  expect(normalizeNanfuLogin(" Owner@Example.com ")).toBe("owner@example.com");
 });

@@ -625,20 +625,23 @@ test("organization mutations enforce self and plan rules before calling the serv
   expect(calls).toEqual(["set-quota"]);
 });
 
-test("adding an account validates the form, guards the admin tier and submits once", async () => {
+test("adding an account validates the login, guards the admin tier and submits once", async () => {
   const calls: string[] = [];
   const base = {
     orgMe: async () => ({ orgId: "org-1", identity: "owner", planQuota: 0 }),
     orgOverview: async () => ({ members: [], roles: [], groups: [], grants: [], invites: [] }),
-    createAccount: async (input: { email: string; identity: string; quota: number; managerUserId?: string }) => {
-      calls.push(`${input.email}:${input.identity}:${input.quota}:${input.managerUserId ?? "-"}`);
+    createAccount: async (input: { email: string; identity: string; quota: number; managerUserId?: string; roleId?: string; groupIds?: string[] }) => {
+      calls.push(`${input.email}:${input.identity}:${input.quota}:${input.managerUserId ?? "-"}:${input.roleId ?? "-"}:${(input.groupIds ?? []).join(",")}`);
       return { userId: "u-1", email: input.email, identity: input.identity };
     },
   };
   const context = { callerUserId: "00000000-0000-4000-8000-000000000009" };
   const client = base as unknown as NanfuSyncClient;
   await expect(mutateNanfuOrganization(client, "create-account",
-    { email: "not-a-mail", password: "secret12", identity: "member", quota: 0 }, undefined, context))
+    { email: "bad name", password: "secret12", identity: "member", quota: 0 }, undefined, context))
+    .rejects.toThrow(/登录名/);
+  await expect(mutateNanfuOrganization(client, "create-account",
+    { email: "bad@mail", password: "secret12", identity: "member", quota: 0 }, undefined, context))
     .rejects.toThrow(/邮箱/);
   await expect(mutateNanfuOrganization(client, "create-account",
     { email: "a@fixture.test", password: "12345", identity: "member", quota: 0 }, undefined, context))
@@ -646,6 +649,9 @@ test("adding an account validates the form, guards the admin tier and submits on
   await expect(mutateNanfuOrganization(client, "create-account",
     { email: "a@fixture.test", password: "secret12", identity: "member", quota: -1 }, undefined, context))
     .rejects.toBeInstanceOf(NanfuInputError);
+  await expect(mutateNanfuOrganization(client, "create-account",
+    { email: "a@fixture.test", password: "secret12", identity: "member", quota: 0, groupIds: ["nope"] }, undefined, context))
+    .rejects.toThrow(/groupIds/);
   expect(calls).toEqual([]);
 
   const admin = { ...base, orgMe: async () => ({ orgId: "org-1", identity: "admin", planQuota: 0 }) } as unknown as NanfuSyncClient;
@@ -654,8 +660,35 @@ test("adding an account validates the form, guards the admin tier and submits on
     .rejects.toThrow(/只有组织所有者/);
 
   expect(await mutateNanfuOrganization(client, "create-account",
-    { email: " z@fixture.test ", password: "secret12", identity: "member", quota: 2,
-      managerUserId: "00000000-0000-4000-8000-000000000003" }, undefined, context))
-    .toEqual({ userId: "u-1", email: "z@fixture.test", identity: "member" });
-  expect(calls).toEqual(["z@fixture.test:member:2:00000000-0000-4000-8000-000000000003"]);
+    { email: " Z.Sub ", password: "secret12", identity: "member", quota: 2,
+      managerUserId: "00000000-0000-4000-8000-000000000003",
+      roleId: "00000000-0000-4000-8000-000000000004",
+      groupIds: ["00000000-0000-4000-8000-000000000005"] }, undefined, context))
+    .toEqual({ userId: "u-1", email: "z.sub", identity: "member" });
+  expect(calls).toEqual([
+    "z.sub:member:2:00000000-0000-4000-8000-000000000003:00000000-0000-4000-8000-000000000004:00000000-0000-4000-8000-000000000005",
+  ]);
+});
+
+test("employee settings change authorized groups and reset the password", async () => {
+  const calls: string[] = [];
+  const client = {
+    setMemberGroups: async (userId: string, groupIds: string[]) => { calls.push(`groups:${userId}:${groupIds.join(",")}`); },
+    resetMemberPassword: async (userId: string, password: string) => { calls.push(`password:${userId}:${password.length}`); },
+  } as unknown as NanfuSyncClient;
+  const me = "00000000-0000-4000-8000-000000000001";
+  const target = "00000000-0000-4000-8000-000000000002";
+  const group = "00000000-0000-4000-8000-000000000003";
+  await expect(mutateNanfuOrganization(client, "set-groups",
+    { userId: me, groupIds: [] }, undefined, { callerUserId: me })).rejects.toThrow(/不能修改自己的授权分组/);
+  await expect(mutateNanfuOrganization(client, "set-groups",
+    { userId: target, groupIds: ["nope"] })).rejects.toThrow(/分组/);
+  await expect(mutateNanfuOrganization(client, "reset-password",
+    { userId: target, password: "123" })).rejects.toThrow(/密码/);
+  expect(calls).toEqual([]);
+  expect(await mutateNanfuOrganization(client, "set-groups", { userId: target, groupIds: [group] })).toEqual({});
+  expect(await mutateNanfuOrganization(client, "reset-password", { userId: target, password: "newpass1" })).toEqual({});
+  expect(calls).toEqual([`groups:${target}:${group}`, `password:${target}:8`]);
+  expect(NANFU_ORGANIZATION_ACTIONS).toContain("set-groups");
+  expect(NANFU_ORGANIZATION_ACTIONS).toContain("reset-password");
 });

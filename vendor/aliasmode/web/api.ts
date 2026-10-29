@@ -26,6 +26,8 @@ export interface NanfuMutations {
   "grant-group": { input: { groupId: string; userId: string; granted: boolean }; result: Record<string, never> };
   "create-invite": { input: NanfuInviteInput; result: { code: string; uses: number } };
   "create-account": { input: NanfuAccountInput; result: { userId: string; email: string; identity: string } };
+  "set-groups": { input: { userId: string; groupIds: string[] }; result: Record<string, never> };
+  "reset-password": { input: { userId: string; password: string }; result: Record<string, never> };
   "redeem-invite": { input: { code: string }; result: { orgId: string } };
   "remove-member": { input: { userId: string; reclaim: boolean }; result: { reclaimed: number } };
   "request-transfer": { input: { environmentId: string; toUserId: string }; result: { transferId: string } };
@@ -43,6 +45,22 @@ export class NanfuApiError extends Error {
 /** The local server refused a write because no Nanfu account is signed in. */
 export function isNanfuSignInRequired(body: unknown): boolean {
   return !!body && typeof body === "object" && (body as { code?: unknown }).code === "nanfu_signin_required";
+}
+
+export const NANFU_LOGIN_SUFFIX = "@nanfu.local";
+
+/**
+ * Sub-accounts sign in with a bare name while the account service needs an
+ * address, so a name without "@" is expanded here and on the server.
+ */
+export function normalizeNanfuLogin(value: string): string {
+  const login = value.trim().toLowerCase();
+  return login.includes("@") ? login : `${login}${NANFU_LOGIN_SUFFIX}`;
+}
+
+/** The name people actually type: hides the internal @nanfu.local suffix. */
+export function nanfuLoginName(email: string): string {
+  return email.endsWith(NANFU_LOGIN_SUFFIX) ? email.slice(0, -NANFU_LOGIN_SUFFIX.length) : email;
 }
 
 async function nanfuJson(path: string, init?: RequestInit): Promise<any> {

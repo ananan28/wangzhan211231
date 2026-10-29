@@ -67,6 +67,17 @@ export function isValidNanfuEmail(value: string): boolean {
   return EMAIL_RE.test(value.trim());
 }
 
+export const NANFU_LOGIN_SUFFIX = "@nanfu.local";
+
+/**
+ * Sub-accounts sign in with a bare name while GoTrue needs an address, so a
+ * name without "@" is expanded to <name>@nanfu.local. Sign-up bypasses this.
+ */
+export function normalizeNanfuLogin(value: string): string {
+  const login = value.trim().toLowerCase();
+  return login.includes("@") ? login : `${login}${NANFU_LOGIN_SUFFIX}`;
+}
+
 /** Supabase requires at least six characters; keep the rule explicit for the UI. */
 export const NANFU_MIN_PASSWORD_LENGTH = 6;
 

@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { fetchNanfuState, nanfuAuthAction, nanfuSelfJoin, NanfuApiError, type NanfuAccountState } from "./api.ts";
+import { fetchNanfuState, nanfuAuthAction, nanfuSelfJoin, normalizeNanfuLogin, NanfuApiError, type NanfuAccountState } from "./api.ts";
 
 /**
  * Mandatory sign-in for the 南孚 build. The workspace stays local, while the
@@ -50,7 +50,7 @@ export function NanfuGate({ children }: { children: ReactNode }) {
     setNotice(null);
     try {
       const result = await nanfuAuthAction("signin", {
-        email: email.trim(),
+        email: normalizeNanfuLogin(email),
         password,
         ...(invite.trim() ? { invite: invite.trim() } : {}),
       });
@@ -106,7 +106,7 @@ export function NanfuGate({ children }: { children: ReactNode }) {
         <section className="onboarding-card" aria-labelledby="nanfu-gate-title">
           <div className="onboarding-brand">南孚浏览器</div>
           <h1 id="nanfu-gate-title">登录南孚账号</h1>
-          <p>账号由管理员分配。没有账号或忘记密码，请联系管理员。</p>
+          <p>账号由管理员分配；子账号直接用管理员给的登录名和密码登录。没有账号或忘记密码，请联系管理员。</p>
           <form
             className="auth-form"
             onSubmit={(event) => {
@@ -115,10 +115,12 @@ export function NanfuGate({ children }: { children: ReactNode }) {
             }}
           >
             <label>
-              邮箱
+              邮箱或登录名
               <input
-                type="email"
-                autoComplete="email"
+                type="text"
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
                 required
                 value={email}
                 disabled={busy}

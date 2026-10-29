@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  fetchNanfuEnvironments, fetchNanfuOverview, nanfuOrganizationAction, NanfuApiError,
+  fetchNanfuEnvironments, fetchNanfuOverview, nanfuLoginName, nanfuOrganizationAction, NanfuApiError,
   type NanfuOrganization, type NanfuOrgOverview, type NanfuMutations,
 } from "./api.ts";
 import { NanfuManagement, nanfuIdentityName } from "./nanfu-management.tsx";
 
 /**
  * 员工管理单独成页：所有者 / 管理员 / 成员 / 子账号四层，
- * 加人是「邮箱 + 密码 + 类型」一次提交，不需要邀请码。
+ * 加人是「登录名 + 密码 + 角色 + 授权分组」一次提交，不需要邀请码。
  */
 export function NanfuStaffPage({ active }: { active: boolean }) {
   const [userId, setUserId] = useState("");
@@ -56,7 +56,9 @@ export function NanfuStaffPage({ active }: { active: boolean }) {
       const response = await nanfuOrganizationAction(action, input);
       const result = response.result;
       setNotice(action === "create-account" && "email" in result
-        ? `已添加账号 ${result.email}：把邮箱和密码告诉对方，对方直接登录就能用。`
+        ? `已添加账号 ${nanfuLoginName(result.email)}：把登录名和密码告诉对方，对方直接登录就能用。`
+        : action === "reset-password" ? "密码已重置：旧密码立即失效，请把新密码告诉对方。"
+        : action === "set-groups" ? "授权分组已更新。"
         : "code" in result ? `邀请码已生成：${result.code}（单次使用，请复制发给对方）`
         : "reclaimed" in result ? `成员已移除，已回收 ${result.reclaimed} 个组织环境。`
         : "操作已成功，成员列表已刷新。");
@@ -82,7 +84,7 @@ export function NanfuStaffPage({ active }: { active: boolean }) {
     <section className="workspace nanfu-staff-page" hidden={!active} aria-label="员工管理">
       <div className="settingspage">
         <h2 className="sect-title">员工管理</h2>
-        <p>账号分四层：所有者 → 管理员 → 成员 → 子账号。管理员由所有者添加、可以管理全部成员；子账号挂在某个成员或管理员名下。</p>
+        <p>账号分四层：所有者 → 管理员 → 成员 → 子账号。管理员由所有者添加、可以管理全部成员；子账号挂在某个成员或管理员名下，用登录名直接登录。每个账号可以单独设置角色、授权分组和窗口配额，也可以重置密码、停用或移除。</p>
         {busy && <p role="status">正在读取组织成员…</p>}
         {notice && <p role="status">{notice}</p>}
         {error && <p className="modal-err" role="alert">{error}</p>}

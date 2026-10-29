@@ -33,8 +33,13 @@
 .nanfu-count { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-size: 11px; font-weight: 400; color: var(--muted); }
 .nanfu-tag { margin-left: 6px; border-radius: 999px; padding: 0 7px; font-size: 11px; background: var(--surface-hover); border: 1px solid var(--line); color: var(--muted); }
 .nanfu-row-actions > summary { cursor: pointer; color: var(--ink-soft); }
+.nanfu-row-actions h5 { margin: 16px 0 6px; font-size: 12px; color: var(--ink); }
+.nanfu-row-actions h5:first-of-type { margin-top: 8px; }
 .nanfu-row-form { margin: 10px 0 0; }
 .nanfu-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.nanfu-add-account .nanfu-groups, .nanfu-row-form .nanfu-groups { flex: 1 1 100%; }
+.nanfu-groups legend { font-size: 12px; padding: 0 4px; }
+.nanfu-groups .nanfu-permissions { margin-top: 4px; }
 
 /* ============================================================================
    Typeface

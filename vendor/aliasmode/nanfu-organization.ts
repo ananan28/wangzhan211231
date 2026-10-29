@@ -2,7 +2,8 @@ import { NanfuSyncClient, NanfuSyncError, type NanfuMember } from "./nanfu-sync.
 
 export const NANFU_ORGANIZATION_ACTIONS = [
   "create-organization", "create-role", "set-member", "set-quota", "create-group", "grant-group",
-  "create-invite", "create-account", "redeem-invite", "remove-member", "request-transfer", "respond-transfer", "force-transfer",
+  "create-invite", "create-account", "set-groups", "reset-password", "redeem-invite", "remove-member",
+  "request-transfer", "respond-transfer", "force-transfer",
 ] as const;
 export type NanfuOrganizationAction = typeof NANFU_ORGANIZATION_ACTIONS[number];
 
@@ -180,12 +181,24 @@ export async function mutateNanfuOrganization(
         quota, hours: integer("hours", 1, 8760) }, signal), uses: 1 };
     }
     case "create-account": {
-      const email = text("email", 320);
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new NanfuInputError("邮箱格式不正确，请输入完整邮箱");
+      // A bare name is a login (stored as <name>@nanfu.local); anything with
+      // "@" must be a complete address.
+      const login = text("email", 320).toLowerCase();
+      if (login.includes("@")) {
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(login)) throw new NanfuInputError("邮箱格式不正确，请输入完整邮箱");
+      } else if (!/^[a-z0-9][a-z0-9._-]{1,62}$/.test(login)) {
+        throw new NanfuInputError("登录名只能使用 2 至 63 位字母、数字、点、下划线和横线");
+      }
       const password = body.password;
       if (typeof password !== "string" || password.length < 6 || password.length > 72) throw new NanfuInputError("密码须为 6 至 72 个字符");
       const identity = choice("identity", ["admin", "member"])!;
       const quota = integer("quota");
+      const roleId = uuid("roleId", true);
+      const groupIds = body.groupIds === undefined || body.groupIds === null ? [] : body.groupIds;
+      if (!Array.isArray(groupIds) || groupIds.length > 200
+        || groupIds.some(value => typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value))) {
+        throw new NanfuInputError("groupIds 必须是分组编号列表");
+      }
       if (context.callerUserId) {
         const organization = await client.orgMe(signal);
         if (organization) {
@@ -199,8 +212,31 @@ export async function mutateNanfuOrganization(
         }
       }
       return await client.createAccount({
-        email, password, identity, quota, managerUserId: uuid("managerUserId", true),
+        email: login, password, identity, quota,
+        managerUserId: uuid("managerUserId", true),
+        roleId,
+        groupIds: groupIds as string[],
       }, signal);
+    }
+    case "set-groups": {
+      const userId = uuid("userId")!;
+      const groupIds = body.groupIds;
+      if (!Array.isArray(groupIds) || groupIds.length > 200
+        || groupIds.some(value => typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value))) {
+        throw new NanfuInputError("请选择有效的分组");
+      }
+      if (context.callerUserId === userId) {
+        throw new NanfuPolicyError("不能修改自己的授权分组；请联系组织所有者或管理员。", 403);
+      }
+      await client.setMemberGroups(userId, groupIds as string[], signal);
+      return {};
+    }
+    case "reset-password": {
+      const userId = uuid("userId")!;
+      const password = body.password;
+      if (typeof password !== "string" || password.length < 6 || password.length > 72) throw new NanfuInputError("密码须为 6 至 72 个字符");
+      await client.resetMemberPassword(userId, password, signal);
+      return {};
     }
     case "redeem-invite": return { orgId: await client.redeemInvite(text("code", 128), signal) };
     case "remove-member": return { reclaimed: await client.removeMember(uuid("userId")!, boolean("reclaim"), signal) };
@@ -218,10 +254,11 @@ export function nanfuOrganizationError(error: NanfuSyncError): { status: number;
     NANFU_GROUP_INVALID: "分组或成员不属于当前组织。",
     NANFU_FORBIDDEN: "当前账号无权执行此操作，请联系组织所有者或管理员。",
     ORG_ALREADY_MEMBER: "当前账号已属于组织，不能重复创建或加入组织。",
-    NANFU_EMAIL_TAKEN: "这个邮箱已经注册过南孚账号，请换一个邮箱，或让本人直接登录。",
-    NANFU_EMAIL_INVALID: "邮箱格式不正确，请检查后重试。",
+    NANFU_EMAIL_TAKEN: "这个登录名或邮箱已经注册过南孚账号，请换一个，或让本人直接登录。",
+    NANFU_EMAIL_INVALID: "登录名或邮箱格式不正确：登录名用 2 至 63 位字母、数字、点、下划线和横线，邮箱要带 @。",
     NANFU_PASSWORD_INVALID: "密码须为 6 至 72 个字符。",
     NANFU_PARENT_INVALID: "所选上级账号无效或不在本组织内。",
+    NANFU_ROLE_INVALID: "所选角色不属于当前组织，请刷新后重试。",
     NANFU_INPUT: "填写的信息不完整或格式不正确，请检查后重试。",
     "42501": "操作被拒绝（42501）：权限不足、账号已属于组织，或目标受保护，请刷新确认。",
     "23505": "记录已存在或发生冲突（23505），请刷新确认；角色或分组名称也可能已存在。",
@@ -233,7 +270,7 @@ export function nanfuOrganizationError(error: NanfuSyncError): { status: number;
   const statuses: Record<string, number> = {
     "42501": 403, NANFU_FORBIDDEN: 403, ORG_ALREADY_MEMBER: 403, NANFU_MEMBER_INACTIVE: 403,
     NANFU_EMAIL_INVALID: 400, NANFU_PASSWORD_INVALID: 400, NANFU_PARENT_INVALID: 400, NANFU_INPUT: 400,
-    NANFU_EMAIL_TAKEN: 409, NANFU_ORG_QUOTA: 409, NANFU_ENV_QUOTA: 409, NANFU_GROUP_INVALID: 409,
+    NANFU_EMAIL_TAKEN: 409, NANFU_ROLE_INVALID: 409, NANFU_ORG_QUOTA: 409, NANFU_ENV_QUOTA: 409, NANFU_GROUP_INVALID: 409,
     "23505": 409, INVITE_EXPIRED: 409, INVITE_USED: 409, TRANSFER_EXPIRED: 409, "P0002": 409,
   };
   const message = error.code && messages[error.code];

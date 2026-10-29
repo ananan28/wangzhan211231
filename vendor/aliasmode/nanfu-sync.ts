@@ -319,7 +319,10 @@ export interface NanfuInviteInput {
   identity: "admin" | "manager" | "member"; roleId?: string; managerUserId?: string; quota: number; hours: number;
 }
 
-/** A directly created account: the person signs in with email + password. */
+/**
+ * A directly created account. `email` also accepts a bare login name for
+ * sub-accounts; the database stores it as <name>@nanfu.local.
+ */
 export interface NanfuAccountInput {
   email: string;
   password: string;
@@ -327,6 +330,10 @@ export interface NanfuAccountInput {
   quota: number;
   /** Set for a sub-account: the member or administrator it belongs to. */
   managerUserId?: string;
+  /** Role permission set; omitted means the organization defaults. */
+  roleId?: string;
+  /** Window groups the account may see; omitted or empty means none. */
+  groupIds?: string[];
 }
 
 export interface NanfuCreatedAccount {
@@ -577,6 +584,8 @@ export class NanfuSyncClient {
         p_identity: input.identity,
         p_quota: input.quota,
         p_parent: input.managerUserId ?? null,
+        p_role: input.roleId ?? null,
+        p_groups: input.groupIds?.length ? input.groupIds : null,
       }),
       signal,
     });
@@ -585,6 +594,29 @@ export class NanfuSyncClient {
       throw new NanfuSyncError("Invalid account response", 502);
     }
     return { userId: row.user_id, email: row.email, identity: String(row.identity ?? input.identity) };
+  }
+
+  /** Replaces the employee's password; the old one stops working immediately. */
+  async resetMemberPassword(userId: string, password: string, signal?: AbortSignal): Promise<void> {
+    if (!isNanfuUuid(userId)) throw new NanfuSyncError("账号编号无效", 400);
+    if (typeof password !== "string" || password.length < 6 || password.length > 72) {
+      throw new NanfuSyncError("密码须为 6 至 72 个字符", 400);
+    }
+    await this.visibleRequest("/rpc/nanfu_org_reset_password", {
+      method: "POST", signal, body: JSON.stringify({ p_user: userId, p_password: password }),
+    });
+  }
+
+  /** Replaces the set of window groups the employee is authorized to see. */
+  async setMemberGroups(userId: string, groupIds: string[], signal?: AbortSignal): Promise<void> {
+    if (!isNanfuUuid(userId)) throw new NanfuSyncError("账号编号无效", 400);
+    if (!Array.isArray(groupIds) || groupIds.some(id => !isNanfuUuid(id))) {
+      throw new NanfuSyncError("分组编号无效", 400);
+    }
+    await this.visibleRequest("/rpc/nanfu_org_set_member_groups", {
+      method: "POST", signal,
+      body: JSON.stringify({ p_user: userId, p_groups: groupIds.length ? [...new Set(groupIds)] : null }),
+    });
   }
 
   createInvite(input: NanfuInviteInput, signal?: AbortSignal): Promise<string> {
