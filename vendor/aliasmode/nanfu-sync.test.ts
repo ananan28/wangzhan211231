@@ -330,9 +330,9 @@ test("one employee's windows are read with an owner filter and reject a bad id",
   expect(windows).toEqual([{
     id: "env-1", ownerUserId: memberId, orgId: "org-1", groupId: "granted", version: 3, updatedAt: "2026-10-29T00:00:00Z",
   }]);
-  expect(requests[0].searchParams.get("owner_user_id")).toBe(`eq.${memberId}`);
-  expect(requests[0].searchParams.get("org_id")).toBe("eq.org-1");
-  expect(requests[0].searchParams.get("select")).not.toContain("payload");
+  expect(requests[0]!.searchParams.get("owner_user_id")).toBe(`eq.${memberId}`);
+  expect(requests[0]!.searchParams.get("org_id")).toBe("eq.org-1");
+  expect(requests[0]!.searchParams.get("select")).not.toContain("payload");
   await expect(client.memberEnvironments("org-1", "not-a-uuid")).rejects.toBeInstanceOf(NanfuSyncError);
 });
 
