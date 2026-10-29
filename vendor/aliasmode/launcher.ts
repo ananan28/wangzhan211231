@@ -39,6 +39,9 @@ import type { AutofillBridge } from "./autofill-bridge.ts";
 import { AUTOFILL_EXTENSION_REVISION, autofillExtensionDir } from "./autofill-extension.ts";
 import type { TranslationBridge } from "./translation.ts";
 import { translationExtensionDir } from "./translation-extension.ts";
+import {
+  FINGERPRINT_EXTENSION, FINGERPRINT_EXTENSION_REVISION, fingerprintExtensionDir, installFingerprintExtension,
+} from "./fingerprint-extension.ts";
 import { allocatePort } from "./ports.ts";
 import {
   DEFAULT_WINDOW_HEIGHT_SCALE, DEFAULT_WINDOW_WIDTH_SCALE, deriveFingerprintFlags, isMobileUserAgent, launchWindowSize,
@@ -1205,6 +1208,9 @@ export class Launcher {
       id,
       loadDir: this.store.getExtension(id)?.loadDir ?? null,
     }));
+    // The JS layer rewrites what a page sees, so a survivor launched without it
+    // (or with an older revision of it) must not be reused.
+    const fingerprint = FINGERPRINT_EXTENSION && !!profile.chromiumRuntime;
     const serialized = JSON.stringify({
       schema: 2,
       ...(profile.engine === "firefox" ? { engine: "firefox", firefox: profile.firefox } : {}),
@@ -1226,6 +1232,7 @@ export class Launcher {
       ...(profile.hardware ? { hardware: profile.hardware } : {}),
       extensions,
       ...(autofill ? { autofill: AUTOFILL_EXTENSION_REVISION } : {}),
+      ...(fingerprint ? { fingerprint: FINGERPRINT_EXTENSION_REVISION } : {}),
       ...(this.translation?.enabled() ? { translation: this.translation.revision } : {}),
     });
     return createHash("sha256").update(serialized).digest("hex");
@@ -1412,8 +1419,19 @@ export class Launcher {
       );
     }
     const hasAssignedExtensions = extDirs.length > 0;
-    if (this.autofill) extDirs.unshift(autofillExtensionDir(userDataDir));
-    if (this.translation?.enabled()) extDirs.unshift(translationExtensionDir(userDataDir));
+    // Built-in helpers first, assigned ones after them, and never the same
+    // directory twice: a duplicate --load-extension entry loads a copy twice.
+    const loadHelper = (dir: string) => {
+      if (dir && !extDirs.includes(dir)) extDirs.unshift(dir);
+    };
+    if (this.autofill) loadHelper(autofillExtensionDir(userDataDir));
+    if (this.translation?.enabled()) loadHelper(translationExtensionDir(userDataDir));
+    // The JS fingerprint layer only exists inside the Chromium runtime, and only
+    // when this launch actually wrote it (see installFingerprintExtension).
+    if (FINGERPRINT_EXTENSION && profile.chromiumRuntime) {
+      const helper = fingerprintExtensionDir(userDataDir);
+      if (existsSync(join(helper, "manifest.json"))) loadHelper(helper);
+    }
     if (extDirs.length) {
       args.push(`--load-extension=${extDirs.join(",")}`);
       if (hasAssignedExtensions) args.push(`--disable-extensions-except=${extDirs.join(",")}`);
@@ -2011,6 +2029,18 @@ export class Launcher {
         relayPort = relay.port;
         this.log(`proxy relay ready for ${profileId}`);
         profile = this.requireUnchangedProfile(profileId, profileSnapshot, "proxy relay startup");
+      }
+      // Rewrite the JS helper before the argv is built and the process spawned:
+      // a copy left by an older revision must never be the one that loads.
+      if (FINGERPRINT_EXTENSION && profile.chromiumRuntime) {
+        try {
+          const helper = installFingerprintExtension(userDataDir, profile);
+          this.log(`${profileId}: fingerprint helper rev ${helper.revision} ${helper.rewritten ? "written" : "unchanged"}`);
+        } catch (error) {
+          // Losing the JS layer is not a reason to refuse a launch; the engine's
+          // own coverage still applies and the next launch retries the write.
+          this.log(`${profileId}: fingerprint helper unavailable (${error instanceof Error ? error.message : "write failed"}); launching without it`);
+        }
       }
       const args = this.buildArgs(
         profile, port, userDataDir, chromeArgs, relayPort, headless, restoreLastSession, webRtcIp, opts.keepAliveWithoutWindows,
