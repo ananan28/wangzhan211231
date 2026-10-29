@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>南孚指纹检测探针 · fingerprint-probe</title>
+<style>
+  :root{
+    --bg:#0f1217; --panel:#161b22; --panel2:#1c232c; --line:#2a3441;
+    --text:#e6edf3; --muted:#8b98a8; --accent:#39d353; --warn:#f0b429; --bad:#f85149;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.55}
+  header{padding:22px 24px 14px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#121821,#0f1217)}
+  h1{margin:0 0 4px;font-size:19px;letter-spacing:.2px}
+  .sub{color:var(--muted);font-size:12.5px}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px 24px 64px}
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 16px}
+  button{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:7px;
+    padding:8px 14px;font-size:13px;cursor:pointer}
+  button:hover{border-color:#3d4b5c;background:#212a35}
+  button:active{transform:translateY(1px)}
+  button.primary{background:#1f6f3f;border-color:#2b8a50}
+  button.primary:hover{background:#248048}
+  .hash{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--muted);word-break:break-all}
+  .hash b{color:var(--accent);font-weight:600}
+  .status{font-size:12.5px;color:var(--muted)}
+  .status.err{color:var(--bad)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:hidden}
+  .card h2{margin:0 0 10px;font-size:13px;color:#c9d5e1;text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+  table{width:100%;border-collapse:collapse;table-layout:fixed}
+  td{padding:4px 0;vertical-align:top;border-top:1px solid #1f2731;font-size:12.5px}
+  tr:first-child td{border-top:0}
+  td.k{width:44%;color:var(--muted);font-family:var(--mono);font-size:11.5px;word-break:break-word;padding-right:10px}
+  td.v{word-break:break-word}
+  code,.mono{font-family:var(--mono)}
+  .bool-true{color:var(--accent)} .bool-false{color:var(--muted)}
+  .err{color:var(--bad)}
+  .warn{color:var(--warn)}
+  .null{color:#5c6b7d}
+  .jsonbox{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .jsonbox .head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel2)}
+  .jsonbox .head span{font-size:12.5px;color:var(--muted)}
+  textarea{width:100%;height:420px;resize:vertical;background:#0b0e12;color:#cfe3d4;border:0;outline:0;
+    padding:14px;font-family:var(--mono);font-size:12px;line-height:1.5;white-space:pre}
+  .pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid var(--line);color:var(--muted)}
+  .pill.ok{color:var(--accent);border-color:#204a2c;background:#10241a}
+  .pill.warn{color:var(--warn);border-color:#4a3a10;background:#241d0c}
+  .pill.bad{color:var(--bad);border-color:#4a1a19;background:#241010}
+  footer{margin-top:22px;color:#5c6b7d;font-size:11.5px}
+  @media (max-width:560px){ .wrap{padding:14px} .hash{margin-left:0;width:100%} }
+</style>
+</head>
+<body>
+<header>
+  <h1>南孚指纹检测探针</h1>
+  <div class="sub">单文件 · 离线 · file:// 直接打开 · 无外链资源。采集浏览器可见信号，输出可复制 JSON 与稳定哈希。</div>
+</header>
+
+<div class="wrap">
+  <div class="bar">
+    <button class="primary" id="run">重新采集</button>
+    <button id="copy">复制 JSON</button>
+    <button id="download">下载 JSON</button>
+    <div class="status" id="status">准备中…</div>
+    <div class="hash" id="hashline">稳定哈希 <b id="hash">—</b></div>
+  </div>
+
+  <div class="grid" id="cards"></div>
+
+  <div class="jsonbox">
+    <div class="head">
+      <span>原始 JSON</span>
+      <span id="hashnote"></span>
+    </div>
+    <textarea id="json" spellcheck="false" readonly>采集中…</textarea>
+  </div>
+
+  <footer>
+    探针版本 <span class="mono" id="ver">—</span> · 所有计算在本页完成，不发任何网络请求。<br>
+    稳定哈希对排除项之外的信号做规范化 JSON 后 SHA-256；排除项见 JSON 的 <span class="mono">hashExcludes</span>。
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+const PROBE_VERSION = "1.0.0";
+
+/* ---------- 稳定哈希：纯 JS SHA-256（不依赖 crypto.subtle，file:// 也一致） ---------- */
+function sha256Binary(binary) {
+  function rrot(v, n) { return (v >>> n) | (v << (32 - n)); }
+  var maxWord = Math.pow(2, 32), result = "", words = [], asciiBitLength = binary.length * 8;
+  var hash = sha256Binary.h = sha256Binary.h || [];
+  var k = sha256Binary.k = sha256Binary.k || [];
+  var primeCounter = k.length, isComposite = {};
+  for (var candidate = 2; primeCounter < 64; candidate++) {
+    if (!isComposite[candidate]) {
+      for (var i = 0; i < 313; i += candidate) isComposite[i] = candidate;
+      hash[primeCounter] = (Math.pow(candidate, 0.5) * maxWord) | 0;
+      k[primeCounter++] = (Math.pow(candidate, 1 / 3) * maxWord) | 0;
+    }
+  }
+  binary += "\x80";
+  while (binary.length % 64 - 56) binary += "\x00";
+  for (i = 0; i < binary.length; i++) {
+    var j = binary.charCodeAt(i);
+    if (j >> 8) return ""; // 只接受字节串
+    words[i >> 2] |= j << (((3 - i) % 4) * 8);
+  }
+  words[words.length] = (asciiBitLength / maxWord) | 0;
+  words[words.length] = asciiBitLength;
+  for (j = 0; j < words.length;) {
+    var w = words.slice(j, j += 16), oldHash = hash;
+    hash = hash.slice(0, 8);
+    for (i = 0; i < 64; i++) {
+      var w15 = w[i - 15], w2 = w[i - 2];
+      var a = hash[0], e = hash[4];
+      var temp1 = hash[7] + (rrot(e, 6) ^ rrot(e, 11) ^ rrot(e, 25)) +
+        ((e & hash[5]) ^ ((~e) & hash[6])) + k[i] +
+        (w[i] = (i < 16) ? w[i] : (w[i - 16] +
+          (rrot(w15, 7) ^ rrot(w15, 18) ^ (w15 >>> 3)) + w[i - 7] +
+          (rrot(w2, 17) ^ rrot(w2, 19) ^ (w2 >>> 10))) | 0);
+      var temp2 = (rrot(a, 2) ^ rrot(a, 13) ^ rrot(a, 22)) +
+        ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+      hash = [(temp1 + temp2) | 0].concat(hash);
+      hash[4] = (hash[4] + temp1) | 0;
+    }
+    for (i = 0; i < 8; i++) hash[i] = (hash[i] + oldHash[i]) | 0;
+  }
+  for (i = 0; i < 8; i++) {
+    for (j = 3; j + 1; j--) {
+      var b = (hash[i] >> (j * 8)) & 255;
+      result += ((b < 16) ? "0" : "") + b.toString(16);
+    }
+  }
+  return result;
+}
+
+function toBinaryString(str) {
+  const bytes = new TextEncoder().encode(str);
+  let out = "", CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  }
+  return out;
+}
+function sha256Hex(str) { return sha256Binary(toBinaryString(str)); }
+function bytesToBinary(u8) {
+  let out = "", CH = 0x8000;
+  for (let i = 0; i < u8.length; i += CH) {
+    out += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+  }
+  return out;
+}
+
+/* ---------- 规范化 JSON：键排序、排除易变项 ---------- */
+const HASH_EXCLUDES = ["meta", "webrtc", "permissions", "storage", "notificationPermission", "webgpu"];
+function pickForHash(obj) {
+  const out = {};
+  for (const k of Object.keys(obj).sort()) {
+    if (HASH_EXCLUDES.indexOf(k) >= 0) continue;
+    out[k] = obj[k];
+  }
+  if (out.chrome) { out.chrome = Object.assign({}, out.chrome); delete out.chrome.runtimeId; }
+  return out;
+}
+function stableStringify(v) {
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return "[" + v.map(stableStringify).join(",") + "]";
+  const keys = Object.keys(v).sort();
+  return "{" + keys.map(k => JSON.stringify(k) + ":" + stableStringify(v[k])).join(",") + "}";
+}
+
+/* ---------- 小工具 ---------- */
+function safe(fn, fallback) {
+  try { return fn(); } catch (e) { return { error: (e && e.name ? e.name + ": " : "") + String(e && e.message || e) }; }
+}
+function settle(p) {
+  return Promise.resolve(p).then(v => v, e => ({ error: (e && e.name ? e.name + ": " : "") + String(e && e.message || e) }));
+}
+function bytesOfLength(n) { return n; }
+
+/* ---------- 各信号采集 ---------- */
+function metaSignal() {
+  return {
+    probeVersion: PROBE_VERSION,
+    collectedAt: new Date().toISOString(),
+    protocol: location.protocol,
+    secureContext: window.isSecureContext,
+    crossOriginIsolated: window.crossOriginIsolated,
+    referrer: document.referrer || ""
+  };
+}
+
+function navSignal() {
+  const n = navigator;
+  return {
+    webdriver: n.webdriver,
+    userAgent: n.userAgent,
+    appVersion: n.appVersion,
+    platform: n.platform,
+    vendor: n.vendor,
+    product: n.product,
+    productSub: n.productSub,
+    language: n.language,
+    languages: n.languages ? Array.from(n.languages) : null,
+    hardwareConcurrency: n.hardwareConcurrency,
+    deviceMemory: typeof n.deviceMemory === "undefined" ? null : n.deviceMemory,
+    maxTouchPoints: n.maxTouchPoints,
+    pdfViewerEnabled: typeof n.pdfViewerEnabled === "undefined" ? null : n.pdfViewerEnabled,
+    cookieEnabled: n.cookieEnabled,
+    doNotTrack: n.doNotTrack,
+    pluginsCount: n.plugins ? n.plugins.length : null,
+    pluginNames: n.plugins ? Array.from(n.plugins).map(p => p.name).slice(0, 12) : null,
+    mimeTypesCount: n.mimeTypes ? n.mimeTypes.length : null
+  };
+}
+
+async function uaDataSignal() {
+  const d = navigator.userAgentData;
+  if (!d) return { available: false };
+  const base = {
+    available: true,
+    brands: safe(() => Array.from(d.brands)),
+    mobile: d.mobile,
+    platform: d.platform
+  };
+  const high = await settle(d.getHighEntropyValues([
+    "architecture", "bitness", "model", "platformVersion", "uaFullVersion",
+    "fullVersionList", "wow64"
+  ]));
+  return Object.assign(base, { highEntropy: high });
+}
+
+function screenSignal() {
+  const s = window.screen, w = window;
+  return {
+    width: s.width, height: s.height,
+    availWidth: s.availWidth, availHeight: s.availHeight,
+    colorDepth: s.colorDepth, pixelDepth: s.pixelDepth,
+    devicePixelRatio: w.devicePixelRatio,
+    innerWidth: w.innerWidth, innerHeight: w.innerHeight,
+    outerWidth: w.outerWidth, outerHeight: w.outerHeight,
+    screenX: w.screenX, screenY: w.screenY,
+    orientation: s.orientation ? s.orientation.type : null
+  };
+}
+
+function intlSignal() {
+  const r = Intl.DateTimeFormat().resolvedOptions();
+  const d = new Date(2026, 9, 30, 13, 45, 6);
+  return {
+    timeZone: r.timeZone,
+    timeZoneOffsetMinutes: -d.getTimezoneOffset(),
+    locale: r.locale,
+    calendar: r.calendar,
+    numberingSystem: r.numberingSystem,
+    hourCycle: r.hourCycle || null,
+    dateSample: safe(() => new Intl.DateTimeFormat(undefined, {
+      dateStyle: "full", timeStyle: "long"
+    }).format(d)),
+    numberSample: safe(() => new Intl.NumberFormat(undefined, {
+      style: "currency", currency: "USD"
+    }).format(1234567.891)),
+    collation: safe(() => new Intl.Collator().resolvedOptions().collation),
+    pluralSample: safe(() => new Intl.PluralRules().select(2))
+  };
+}
+
+function canvasSignal() {
+  const c = document.createElement("canvas");
+  c.width = 280; c.height = 80;
+  const ctx = c.getContext("2d");
+  ctx.textBaseline = "top";
+  ctx.fillStyle = "#f60";
+  ctx.fillRect(0, 0, 280, 80);
+  ctx.font = '16px "Arial"';
+  ctx.fillStyle = "#069";
+  ctx.fillText("Nanfu probe 南孚 \u{1F510} abcXYZ 0123", 4, 8);
+  const g = ctx.createLinearGradient(0, 0, 280, 80);
+  g.addColorStop(0, "rgba(0,0,0,.65)");
+  g.addColorStop(1, "rgba(255,255,255,.35)");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(210, 42, 30, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(20,220,255,.8)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(12, 64); ctx.bezierCurveTo(80, 4, 160, 96, 268, 28);
+  ctx.stroke();
+  let url = "";
+  try { url = c.toDataURL(); } catch (e) { return { error: e.name }; }
+  return { hash: sha256Hex(url), dataURLLength: url.length };
+}
+
+function webglSignal() {
+  const c = document.createElement("canvas");
+  c.width = 256; c.height = 128;
+  const gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+  if (!gl) return { available: false };
+  const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+  const out = {
+    available: true,
+    vendor: safe(() => gl.getParameter(gl.VENDOR)),
+    renderer: safe(() => gl.getParameter(gl.RENDERER)),
+    unmaskedVendor: dbg ? safe(() => gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL)) : null,
+    unmaskedRenderer: dbg ? safe(() => gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : null,
+    version: safe(() => gl.getParameter(gl.VERSION)),
+    shadingLanguageVersion: safe(() => gl.getParameter(gl.SHADING_LANGUAGE_VERSION)),
+    maxTextureSize: safe(() => gl.getParameter(gl.MAX_TEXTURE_SIZE)),
+    maxVertexUniformVectors: safe(() => gl.getParameter(gl.MAX_VERTEX_UNIFORM_VECTORS)),
+    maxRenderbufferSize: safe(() => gl.getParameter(gl.MAX_RENDERBUFFER_SIZE)),
+    maxViewportDims: safe(() => Array.from(gl.getParameter(gl.MAX_VIEWPORT_DIMS) || [])),
+    aliasedLineWidthRange: safe(() => Array.from(gl.getParameter(gl.ALIASED_LINE_WIDTH_RANGE) || [])),
+    extensionsCount: safe(() => (gl.getSupportedExtensions() || []).length)
+  };
+  try {
+    gl.viewport(0, 0, 256, 128);
+    gl.clearColor(0.12, 0.34, 0.56, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const vs = "attribute vec2 p;void main(){gl_Position=vec4(p,0.0,1.0);}";
+    const fs = "precision highp float;void main(){gl_FragColor=vec4(0.3,0.7,0.9,1.0);}";
+    function sh(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s); return s;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs));
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -0.85, -0.7, 0.9, -0.55, 0.05, 0.85
+    ]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, "p");
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const px = new Uint8Array(256 * 128 * 4);
+    gl.readPixels(0, 0, 256, 128, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    out.hash = sha256Binary(bytesToBinary(px));
+    out.readbackLength = px.length;
+  } catch (e) {
+    out.hashError = (e && e.name) + ": " + (e && e.message);
+  }
+  return out;
+}
+
+async function webgpuSignal() {
+  if (!navigator.gpu) return { available: false };
+  const out = { available: true };
+  const adapter = await settle(navigator.gpu.requestAdapter());
+  if (!adapter) { out.adapter = null; return out; }
+  out.adapter = {
+    info: safe(() => {
+      const i = adapter.info || {};
+      return {
+        vendor: i.vendor, architecture: i.architecture, device: i.device,
+        description: i.description, subgroupMinSize: i.subgroupMinSize,
+        subgroupMaxSize: i.subgroupMaxSize
+      };
+    }),
+    features: safe(() => Array.from(adapter.features || [])),
+    limits: safe(() => {
+      const l = adapter.limits || {};
+      const keys = ["maxTextureDimension2D", "maxStorageBufferBindingSize",
+        "maxComputeWorkgroupStorageSize", "maxStorageBuffersPerShaderStage",
+        "maxUniformBufferBindingSize", "maxBindGroups"];
+      const o = {};
+      for (const k of keys) o[k] = l[k];
+      return o;
+    })
+  };
+  return out;
+}
+
+async function audioSignal() {
+  const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!Ctx) return { available: false };
+  const ctx = new Ctx(1, 44100, 44100);
+  const osc = ctx.createOscillator();
+  osc.type = "triangle";
+  osc.frequency.value = 10000;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -50;
+  comp.knee.value = 40;
+  comp.ratio.value = 12;
+  comp.attack.value = 0;
+  comp.release.value = 0.25;
+  osc.connect(comp);
+  comp.connect(ctx.destination);
+  osc.start(0);
+  const buf = await ctx.startRendering();
+  const data = buf.getChannelData(0);
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) sum += Math.abs(data[i]);
+  const slice = Array.from(data.subarray(4500, 4600)).map(v => v.toFixed(6)).join(",");
+  return {
+    available: true,
+    sampleRate: buf.sampleRate,
+    length: data.length,
+    absSum: sum.toFixed(6),
+    sliceHash: sha256Hex(slice)
+  };
+}
+
+function webrtcSignal() {
+  return new Promise(resolve => {
+    if (!window.RTCPeerConnection) return resolve({ available: false });
+    let pc, done = false, cands = [];
+    function finish() {
+      if (done) return;
+      done = true;
+      try { pc.close(); } catch (e) {}
+      const ips = [];
+      const addrs = [];
+      for (const c of cands) {
+        const parts = c.split(" ");
+        const addr = parts[4] || "";
+        const isV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(addr);
+        const isV6 = addr.indexOf(":") >= 0 && !/\.local$/i.test(addr);
+        if (isV4 || isV6) ips.push(addr);
+        addrs.push(parts.slice(4).join(" "));
+      }
+      const uniq = a => Array.from(new Set(a));
+      const uniqIps = uniq(ips);
+      resolve({
+        available: true,
+        count: cands.length,
+        localIP: uniqIps.length ? uniqIps[0] : null,
+        ips: uniqIps,
+        mdns: cands.some(c => /\.local\b/i.test(c)),
+        addresses: addrs.slice(0, 8),
+        candidates: cands.slice(0, 8)
+      });
+    }
+    try {
+      pc = new RTCPeerConnection({ iceServers: [] });
+      pc.onicecandidate = e => {
+        if (e.candidate && e.candidate.candidate) {
+          cands.push(e.candidate.candidate);
+          if (cands.length >= 8) finish();
+        } else {
+          finish();
+        }
+      };
+      pc.createDataChannel("probe");
+      pc.createOffer().then(o => pc.setLocalDescription(o)).catch(finish);
+    } catch (e) {
+      finish();
+    }
+    setTimeout(finish, 2500);
+  });
+}
+
+async function storageSignal() {
+  if (!navigator.storage || !navigator.storage.estimate) return { available: false };
+  const e = await navigator.storage.estimate();
+  let persisted = null;
+  try { persisted = navigator.storage.persisted ? await navigator.storage.persisted() : null; } catch (e) {}
+  return { available: true, quota: e.quota == null ? null : e.quota, usage: e.usage == null ? null : e.usage, persisted };
+}
+
+async function permissionState(name) {
+  try {
+    if (!navigator.permissions || !navigator.permissions.query) return "unsupported";
+    const p = await navigator.permissions.query({ name });
+    return p.state;
+  } catch (e) {
+    return "error:" + (e && e.name ? e.name : "Error");
+  }
+}
+async function permissionsSignal() {
+  const names = ["notifications", "geolocation", "camera", "microphone", "clipboard-read", "clipboard-write"];
+  const out = {};
+  for (const n of names) out[n] = await permissionState(n);
+  return out;
+}
+
+function notificationPermission() {
+  if (typeof Notification === "undefined") return "unsupported";
+  return Notification.permission;
+}
+
+function fontSignal() {
+  const families = ["Arial", "Calibri", "Segoe UI", "Tahoma", "Verdana", "Times New Roman",
+    "Courier New", "Georgia", "Helvetica Neue", "Menlo", "DejaVu Sans",
+    "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Segoe UI Variable"];
+  const bases = ["monospace", "sans-serif", "serif"];
+  const text = "mmmmmmmmmmlliWW@#0123";
+  const span = document.createElement("span");
+  span.style.cssText = "position:absolute;left:-99999px;top:0;font-size:72px;white-space:nowrap;visibility:hidden";
+  span.textContent = text;
+  document.body.appendChild(span);
+  const baseW = {};
+  for (const b of bases) { span.style.fontFamily = b; baseW[b] = span.getBoundingClientRect().width; }
+  const out = {};
+  for (const fam of families) {
+    let detected = false;
+    for (const b of bases) {
+      span.style.fontFamily = '"' + fam + '", ' + b;
+      const w = span.getBoundingClientRect().width;
+      if (Math.abs(w - baseW[b]) > 0.01) { detected = true; break; }
+    }
+    out[fam] = detected;
+  }
+  document.body.removeChild(span);
+  return out;
+}
+
+function chromeSignal() {
+  const c = window.chrome;
+  if (!c) return { present: false };
+  return {
+    present: true,
+    type: typeof c,
+    keys: Object.keys(c).slice(0, 24),
+    runtime: !!c.runtime,
+    runtimeId: c.runtime && c.runtime.id ? c.runtime.id : null,
+    loadTimes: typeof c.loadTimes,
+    csi: typeof c.csi,
+    app: !!c.app,
+    webstore: !!c.webstore
+  };
+}
+
+function automationSignal() {
+  const names = ["$cdc_asdjflasutopfhvcZLmcfl_", "__webdriver_evaluate", "__selenium_evaluate",
+    "__webdriver_script_function", "__webdriver_script_func", "__webdriver_script_fn",
+    "__fxdriver_evaluate", "__driver_evaluate", "__webdriver_unwrapped", "__driver_unwrapped",
+    "__selenium_unwrapped", "__fxdriver_unwrapped", "_phantom", "callPhantom",
+    "__nightmare", "__playwright", "__puppeteer_evaluation_script__", "__pw_manual"];
+  const present = names.filter(n => n in window);
+  return {
+    webdriver: navigator.webdriver,
+    documentWebdriverAttr: document.documentElement.getAttribute("webdriver"),
+    sentinelsPresent: present,
+    sentinelsChecked: names.length
+  };
+}
+
+/* ---------- 汇总 ---------- */
+async function collect() {
+  const signals = {
+    meta: metaSignal(),
+    navigator: navSignal(),
+    userAgentData: await uaDataSignal(),
+    screen: screenSignal(),
+    intl: intlSignal(),
+    canvas: safe(canvasSignal),
+    webgl: safe(webglSignal),
+    webgpu: await settle(webgpuSignal()),
+    audio: await settle(audioSignal()),
+    webrtc: await settle(webrtcSignal()),
+    storage: await settle(storageSignal()),
+    permissions: await settle(permissionsSignal()),
+    notificationPermission: safe(notificationPermission),
+    fonts: safe(fontSignal),
+    chrome: safe(chromeSignal),
+    automation: safe(automationSignal)
+  };
+  const hashInput = stableStringify(pickForHash(signals));
+  const stableHash = sha256Hex(hashInput);
+  return {
+    meta: signals.meta,
+    stableHash,
+    hashExcludes: HASH_EXCLUDES,
+    hashInputBytes: new TextEncoder().encode(hashInput).length,
+    signals
+  };
+}
+
+/* ---------- 渲染 ---------- */
+const LABELS = {
+  meta: "元信息", navigator: "Navigator", userAgentData: "UA-CH", screen: "屏幕与窗口",
+  intl: "时区与 Intl", canvas: "Canvas", webgl: "WebGL", webgpu: "WebGPU",
+  audio: "Audio", webrtc: "WebRTC", storage: "存储配额", permissions: "权限",
+  notificationPermission: "通知权限", fonts: "字体探测", chrome: "chrome 对象",
+  automation: "自动化痕迹"
+};
+
+function fmt(v) {
+  if (v === null) return '<span class="null">null</span>';
+  if (v === undefined) return '<span class="null">undefined</span>';
+  if (typeof v === "boolean") return '<span class="' + (v ? "bool-true" : "bool-false") + '">' + v + "</span>";
+  if (typeof v === "object") {
+    const s = JSON.stringify(v);
+    if (s === undefined) return '<span class="null">undefined</span>';
+    return '<code>' + esc(s.length > 220 ? s.slice(0, 220) + "…" : s) + "</code>";
+  }
+  return esc(String(v));
+}
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function render(result) {
+  const cards = document.getElementById("cards");
+  cards.innerHTML = "";
+  const order = ["meta", "navigator", "userAgentData", "screen", "intl", "canvas",
+    "webgl", "webgpu", "audio", "webrtc", "storage", "permissions",
+    "notificationPermission", "fonts", "chrome", "automation"];
+  for (const key of order) {
+    const val = result.signals[key];
+    const card = document.createElement("div");
+    card.className = "card";
+    const h = document.createElement("h2");
+    h.textContent = LABELS[key] || key;
+    card.appendChild(h);
+    const table = document.createElement("table");
+    if (val && typeof val === "object" && !Array.isArray(val)) {
+      for (const k of Object.keys(val)) {
+        const tr = document.createElement("tr");
+        const kd = document.createElement("td");
+        kd.className = "k";
+        kd.textContent = k;
+        const vd = document.createElement("td");
+        vd.className = "v";
+        vd.innerHTML = fmt(val[k]);
+        tr.appendChild(kd); tr.appendChild(vd);
+        table.appendChild(tr);
+      }
+    } else {
+      const tr = document.createElement("tr");
+      const vd = document.createElement("td");
+      vd.className = "v";
+      vd.innerHTML = fmt(val);
+      tr.appendChild(vd);
+      table.appendChild(tr);
+    }
+    card.appendChild(table);
+    cards.appendChild(card);
+  }
+  document.getElementById("json").value = JSON.stringify(result, null, 2);
+  document.getElementById("hash").textContent = result.stableHash;
+  document.getElementById("ver").textContent = PROBE_VERSION;
+  document.getElementById("hashnote").textContent =
+    "稳定哈希覆盖 " + result.hashInputBytes + " 字节；排除 " + result.hashExcludes.join(", ");
+  const status = document.getElementById("status");
+  status.textContent = "采集完成 · " + new Date().toLocaleTimeString();
+  status.className = "status";
+}
+
+async function run() {
+  const status = document.getElementById("status");
+  status.textContent = "采集中…（WebRTC 最长等待 2.5 秒）";
+  status.className = "status";
+  document.getElementById("hash").textContent = "…";
+  try {
+    const result = await collect();
+    render(result);
+    window.__NANFU_PROBE__ = result;
+  } catch (e) {
+    status.textContent = "采集失败：" + (e && e.message || e);
+    status.className = "status err";
+  }
+}
+
+/* ---------- 输出 ---------- */
+function currentJSON() {
+  return document.getElementById("json").value;
+}
+document.getElementById("run").addEventListener("click", run);
+
+document.getElementById("copy").addEventListener("click", async () => {
+  const text = currentJSON();
+  try {
+    await navigator.clipboard.writeText(text);
+    flash("已复制到剪贴板");
+  } catch (e) {
+    const ta = document.getElementById("json");
+    ta.removeAttribute("readonly");
+    ta.select();
+    try { document.execCommand("copy"); flash("已复制（execCommand）"); }
+    catch (e2) { flash("复制失败，请手动全选"); }
+    ta.setAttribute("readonly", "");
+  }
+});
+
+document.getElementById("download").addEventListener("click", () => {
+  const blob = new Blob([currentJSON()], { type: "application/json" });
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  a.href = URL.createObjectURL(blob);
+  a.download = "nanfu-fingerprint-" + stamp + ".json";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+});
+
+function flash(msg) {
+  const status = document.getElementById("status");
+  const old = status.textContent;
+  status.textContent = msg;
+  setTimeout(() => { if (status.textContent === msg) status.textContent = old; }, 1800);
+}
+
+run();
+</script>
+</body>
+</html>

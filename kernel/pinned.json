@@ -17,7 +17,8 @@
     "directory": "kernel/patches",
     "order": [
       "0001-add-webgl-vendor-renderer-switches.patch",
-      "0002-add-client-rects-jitter-seed.patch"
+      "0002-add-client-rects-jitter-seed.patch",
+      "0003-tls-enable-server-handshake-padding.patch"
     ]
   }
 }
