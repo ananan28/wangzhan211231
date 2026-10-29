@@ -1844,7 +1844,7 @@ set search_path = public, pg_temp
 as $$
 declare
   me uuid := auth.uid();
-  name text := lower(btrim(coalesce(p_name, '')));
+  chosen text := lower(btrim(coalesce(p_name, '')));
   mail text;
 begin
   if me is null then
@@ -1857,20 +1857,20 @@ begin
   if mail like '%@nanfu.local' then
     raise exception 'NANFU_LOGIN_MANAGED: 子账号的登录名由管理员分配，不能自己修改' using errcode = '42501';
   end if;
-  if name !~ '^[a-z0-9][a-z0-9._-]{1,62}$' then
+  if chosen !~ '^[a-z0-9][a-z0-9._-]{1,62}$' then
     raise exception 'NANFU_LOGIN_INVALID: 用户名只能使用 2 至 63 位字母、数字、点、下划线和横线' using errcode = 'P0001';
   end if;
-  if exists (select 1 from public.nanfu_login_names l where l.name = name and l.user_id <> me) then
+  if exists (select 1 from public.nanfu_login_names l where l.name = chosen and l.user_id <> me) then
     raise exception 'NANFU_LOGIN_TAKEN: 该用户名已被使用' using errcode = 'P0001';
   end if;
   -- An administrator-created login keeps its own namespace; a name that would
   -- shadow one must be refused here, or two people would answer to one name.
-  if exists (select 1 from auth.users u where lower(u.email) = name || '@nanfu.local') then
+  if exists (select 1 from auth.users u where lower(u.email) = chosen || '@nanfu.local') then
     raise exception 'NANFU_LOGIN_TAKEN: 该用户名已被使用' using errcode = 'P0001';
   end if;
-  insert into public.nanfu_login_names (user_id, name) values (me, name)
+  insert into public.nanfu_login_names (user_id, name) values (me, chosen)
   on conflict (user_id) do update set name = excluded.name, updated_at = now();
-  return name;
+  return chosen;
 end;
 $$;
 
@@ -1905,14 +1905,14 @@ stable
 set search_path = public, pg_temp
 as $$
 declare
-  name text := lower(btrim(coalesce(p_name, '')));
+  chosen text := lower(btrim(coalesce(p_name, '')));
   mail text;
 begin
-  if name !~ '^[a-z0-9][a-z0-9._-]{1,62}$' then return null; end if;
+  if chosen !~ '^[a-z0-9][a-z0-9._-]{1,62}$' then return null; end if;
   select lower(u.email) into mail
     from public.nanfu_login_names l
     join auth.users u on u.id = l.user_id
-   where l.name = name;
+   where l.name = chosen;
   return mail;
 end;
 $$;
