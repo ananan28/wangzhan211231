@@ -443,22 +443,30 @@ pub async fn launch_and_verify(
     let pid = child.pid();
     let ready = match timeout(STARTUP_TIMEOUT, async {
         loop {
+        // Startup faults only reach stderr, so keep a short tail for the error.
+        let mut stderr_tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
             match events.recv().await {
                 Some(CommandEvent::Stdout(line)) => {
                     if let Some(port) = parse_ready_line(&line, nonce, pid)? {
                         return Ok(port);
                     }
                 }
-                Some(CommandEvent::Stderr(_)) => {
-                    eprintln!("AliasMode sidecar startup emitted stderr");
+                Some(CommandEvent::Stderr(line)) => {
+                    eprintln!("AliasMode sidecar startup emitted stderr: {line}");
+                    if stderr_tail.len() == 40 {
+                        stderr_tail.pop_front();
+                    }
+                    stderr_tail.push_back(line);
                 }
                 Some(CommandEvent::Error(_)) => {
                     return Err("sidecar output channel failed during startup".to_owned())
                 }
                 Some(CommandEvent::Terminated(exit)) => {
+                    let tail = stderr_tail.iter().cloned().collect::<Vec<_>>().join(" | ");
                     return Err(format!(
-                        "sidecar exited during startup (code {:?})",
-                        exit.code
+                        "sidecar exited during startup (code {:?}){}",
+                        exit.code,
+                        if tail.is_empty() { String::new() } else { format!(": {tail}") }
                     ))
                 }
                 Some(_) => {}
