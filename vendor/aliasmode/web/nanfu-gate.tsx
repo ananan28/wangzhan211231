@@ -58,7 +58,7 @@ export function NanfuGate({ children }: { children: ReactNode }) {
       setAccount(state);
       setPassword("");
       if (!state.authenticated) {
-        setError("登录未完成，请检查邮箱和密码。");
+        setError("登录未完成，请检查登录名和密码。");
         return;
       }
       if (result.selfJoin?.ok === false) setNotice(result.selfJoin.error ?? "还未加入组织，请联系管理员获取邀请码。");
@@ -106,7 +106,7 @@ export function NanfuGate({ children }: { children: ReactNode }) {
         <section className="onboarding-card" aria-labelledby="nanfu-gate-title">
           <div className="onboarding-brand">南孚浏览器</div>
           <h1 id="nanfu-gate-title">登录南孚账号</h1>
-          <p>账号由管理员分配；子账号直接用管理员给的登录名和密码登录。没有账号或忘记密码，请联系管理员。</p>
+          <p>账号由管理员分配；用管理员给的登录名（姓名拼音或缩写，如 zhangsan）和密码直接登录，不需要邮箱。没有账号或忘记密码，请联系管理员。</p>
           <form
             className="auth-form"
             onSubmit={(event) => {
@@ -115,7 +115,7 @@ export function NanfuGate({ children }: { children: ReactNode }) {
             }}
           >
             <label>
-              邮箱或登录名
+              登录名或邮箱
               <input
                 type="text"
                 autoComplete="username"
@@ -124,6 +124,7 @@ export function NanfuGate({ children }: { children: ReactNode }) {
                 required
                 value={email}
                 disabled={busy}
+                placeholder="姓名拼音或缩写，如 zhangsan"
                 onChange={(event) => setEmail(event.target.value)}
               />
             </label>

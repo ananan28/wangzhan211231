@@ -106,7 +106,7 @@ function AddAccount({ members, overview, owner, admin, currentUserId, busy, onMu
       name: text(data, "name") || undefined,
     });
   }}>
-    <label className="fld"><span>登录名</span><input name="email" type="text" autoComplete="off" maxLength={320} required placeholder="用户名，或带 @ 的完整邮箱" /></label>
+    <label className="fld"><span>登录名</span><input name="email" type="text" autoComplete="off" maxLength={320} required placeholder="姓名拼音或缩写，如 zhangsan、zs01" /></label>
     <label className="fld"><span>姓名</span><input name="name" type="text" maxLength={60} autoComplete="off" placeholder="选填，例如 张三" disabled={busy} /></label>
     <label className="fld"><span>密码</span><input name="password" type="password" autoComplete="new-password" minLength={6} maxLength={72} required placeholder="至少 6 位，直接告诉对方" /></label>
     <label className="fld"><span>账号类型</span><select value={kind} onChange={event => setKind(event.target.value as "member" | "sub" | "admin")} disabled={busy}>
@@ -127,7 +127,7 @@ function AddAccount({ members, overview, owner, admin, currentUserId, busy, onMu
     <label className="fld"><span>窗口配额（0 不限）</span><input name="quota" type="number" min="0" step="1" defaultValue={0} disabled={busy} /></label>
     {!!overview.groups.length && <GroupPicker key={overview.groups.length} groups={overview.groups} granted={[]} legend="授权分组" disabled={busy} />}
     <button className="btn primary" type="submit" disabled={busy || (kind === "sub" && !parent)}>添加账号</button>
-    <p className="nanfu-hint">添加后对方用这个登录名和密码登录即可，账号已激活、不需要邮箱验证；授权分组决定对方在云端能看到哪些窗口，不勾选只能看到自己的窗口。{scoped && "你只能把子账号挂在自己名下。"}</p>
+    <p className="nanfu-hint">登录名用姓名拼音或缩写即可（字母、数字、点、下划线、横线，2 至 63 位），不需要邮箱；添加后对方用这个登录名和密码登录，账号已激活。授权分组决定对方在云端能看到哪些窗口，不勾选只能看到自己的窗口。{scoped && "你只能把子账号挂在自己名下。"}</p>
   </form>;
 }
 
