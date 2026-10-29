@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,17 @@ import {
   saveNanfuService,
   createNanfuRuntime,
 } from "./nanfu-service.ts";
+import {
+  compareFingerprint,
+  declarationFromProfile,
+  extractProbeCore,
+  fingerprintSelfCheck,
+  loadProbeSource,
+  osFromNavigatorPlatform,
+  probeVersion,
+  type FingerprintDeclaration,
+  type ProbeDocument,
+} from "./nanfu-fingerprint-selfcheck.ts";
 import { handleUiRequest } from "./ui.ts";
 import type { NanfuCredentialStore } from "./nanfu-account.ts";
 import { fetchNanfuState, fetchNanfuEnvironments, nanfuAuthAction, NanfuApiError, isNanfuSignInRequired } from "./web/api.ts";
@@ -626,3 +638,174 @@ describe("Translation engines", () => {
     expect(googleTextParts("")).toEqual([]);
   });
 });
+/* ------------------------------------------------------------------ */
+/* 指纹自检                                                           */
+/* ------------------------------------------------------------------ */
+
+const declaredFixture: FingerprintDeclaration = {
+  platform: "windows",
+  timezone: "Asia/Shanghai",
+  locale: "zh-CN",
+  cores: 8,
+  screenWidth: 1920,
+  screenHeight: 1080,
+  ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+};
+
+function probeFixture(signalsOverride: Partial<NonNullable<ProbeDocument["signals"]>> = {}): ProbeDocument {
+  return {
+    probe: { version: "1.0.0", generated_at: "2026-10-30T00:00:00.000Z" },
+    signals: {
+      user_agent: declaredFixture.ua ?? "",
+      platform: "Win32",
+      hardware_concurrency: 8,
+      language: "zh-CN",
+      languages: ["zh-CN", "zh"],
+      time: { intl_timezone: "Asia/Shanghai" },
+      screen_geometry: { width: 1920, height: 1080 },
+      ...signalsOverride,
+    },
+    hashes: { stable_fnv64: "d34db33f00c0ffee" },
+    notes: [],
+  };
+}
+
+test("指纹自检：一致的读数全部归入通过", () => {
+  const report = compareFingerprint(declaredFixture, probeFixture());
+  expect(report.passed.map(entry => entry.field)).toEqual([
+    "platform", "timezone", "locale", "hardware.cores", "screen", "ua",
+  ]);
+  expect(report.mismatched).toEqual([]);
+  expect(report.undetermined).toEqual([]);
+  expect(report.probe.hash).toBe("d34db33f00c0ffee");
+  // 平台按操作系统族比较，页面原文保留在说明里。
+  expect(report.passed[0]!.observed).toContain("Win32");
+});
+
+test("指纹自检：对不上的项写明页面读到什么、档案声明什么", () => {
+  const doc = probeFixture({
+    user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+    platform: "MacIntel",
+    hardware_concurrency: 16,
+    language: "en-US",
+    languages: ["en-US"],
+    time: { intl_timezone: "America/New_York" },
+    screen_geometry: { width: 1366, height: 768 },
+  });
+  const report = compareFingerprint(declaredFixture, doc);
+  expect(report.passed).toEqual([]);
+  expect(report.mismatched.map(entry => entry.field)).toEqual([
+    "platform", "timezone", "locale", "hardware.cores", "screen", "ua",
+  ]);
+  const timezone = report.mismatched.find(entry => entry.field === "timezone")!;
+  expect(timezone.detail).toContain("America/New_York");
+  expect(timezone.detail).toContain("Asia/Shanghai");
+  const platform = report.mismatched.find(entry => entry.field === "platform")!;
+  expect(platform.declared).toBe("windows");
+  expect(platform.observed).toContain("macos");
+  expect(report.undetermined).toEqual([]);
+
+  // 只有 Chrome 版本不同不算指纹漂移：内核会按种子与自身版本重建 UA。
+  const versionOnly = compareFingerprint(declaredFixture, probeFixture({
+    user_agent: (declaredFixture.ua ?? "").replace("155.0.0.0", "146.0.0.0"),
+  }));
+  expect(versionOnly.mismatched).toEqual([]);
+  expect(versionOnly.undetermined.map(entry => entry.field)).toEqual(["ua"]);
+  expect(versionOnly.undetermined[0]!.detail).toContain("Chrome 版本");
+});
+
+test("指纹自检：档案未声明或页面没读到的项归入无法判定", () => {
+  const declaration: FingerprintDeclaration = {
+    platform: null, timezone: "Asia/Tokyo", locale: null, cores: null,
+    screenWidth: 1920, screenHeight: 1080, ua: null,
+  };
+  const doc: ProbeDocument = {
+    probe: { version: "1.0.0" },
+    signals: { user_agent: "", platform: "", hardware_concurrency: null, language: "", time: {}, screen_geometry: {} },
+    hashes: { stable_fnv64: "0" },
+  };
+  const report = compareFingerprint(declaration, doc);
+  expect(report.passed).toEqual([]);
+  expect(report.mismatched).toEqual([]);
+  expect(report.undetermined.map(entry => entry.field)).toEqual([
+    "platform", "timezone", "locale", "hardware.cores", "screen", "ua",
+  ]);
+  const byField = Object.fromEntries(report.undetermined.map(entry => [entry.field, entry.detail]));
+  expect(byField.platform).toContain("未声明");
+  expect(byField.timezone).toContain("页面没有返回");
+  expect(byField.screen).toContain("页面没有返回");
+});
+
+test("指纹自检：探针页就是唯一实现，客户端只注入同一段原文", () => {
+  const htmlPath = join(import.meta.dir, "../../docs/fingerprint-probe.html");
+  const html = readFileSync(htmlPath, "utf8");
+  const source = extractProbeCore(html);
+  const loaded = loadProbeSource({ html, path: htmlPath });
+
+  // 页面只有一对标记，核心原文在页面里逐字出现且只有一个 runProbe。
+  expect(html.split("/* ===== nanfu-probe-core:start =====").length).toBe(2);
+  expect(html.split("/* ===== nanfu-probe-core:end ===== */").length).toBe(2);
+  expect(source.match(/async function runProbe\(/g)?.length).toBe(1);
+  expect(html.includes(source.slice(0, 200))).toBe(true);
+  // 版本与摘要由同一段原文算出；页面和客户端不会各自漂移。
+  expect(loaded.source).toBe(source);
+  expect(loaded.version).toBe(probeVersion(html));
+  expect(loaded.digest).toBe(createHash("sha256").update(source, "utf8").digest("hex"));
+  expect(html).toContain(`const PROBE_VERSION = "${loaded.version}";`);
+  expect(source).toContain("stable_fnv64");
+  expect(source).toContain("stable_sha256");
+  // 核心必须可在空白标签页里执行，不能依赖页面元素。
+  expect(source.includes("document.getElementById")).toBe(false);
+
+  // 客户端模块不得再实现一份采集逻辑。
+  const client = readFileSync(join(import.meta.dir, "nanfu-fingerprint-selfcheck.ts"), "utf8");
+  for (const primitive of ["createLinearGradient", "getImageData", "RTCPeerConnection", "probeWebGL", "OfflineAudioContext"]) {
+    expect(client).not.toContain(primitive);
+  }
+  expect(client).toContain("return await runProbe();");
+});
+
+test("指纹自检：档案声明取自 profile 的耐久字段", () => {
+  const declaration = declarationFromProfile({
+    platformOs: "", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/146.0.0.0",
+    timezone: "Europe/Berlin", locale: "de-DE", hardware: { cores: 12 }, screenWidth: 1440, screenHeight: 900,
+  });
+  expect(declaration.platform).toBe("macos");
+  expect(declaration.cores).toBe(12);
+  expect(declaration.screenWidth).toBe(1440);
+  expect(osFromNavigatorPlatform("Linux x86_64")).toBe("linux");
+  expect(osFromNavigatorPlatform("")).toBeNull();
+});
+
+test("指纹自检：未启动的环境提示先启动，Firefox 内核明确拒绝", async () => {
+  const profile = {
+    id: "env-1", engine: "chromium" as const, platformOs: "windows", ua: "Mozilla/5.0",
+    timezone: "Asia/Shanghai", locale: "zh-CN", hardware: { cores: 8 }, screenWidth: 1920, screenHeight: 1080,
+  };
+  const notRunning = await fingerprintSelfCheck("env-1", {
+    getProfile: () => profile, getLaunch: () => null, active: async () => false,
+  });
+  expect(notRunning.status).toBe(409);
+  expect(notRunning.body).toMatchObject({ ok: false, code: "nanfu_env_not_running" });
+  expect(String(notRunning.body.error)).toContain("请先启动该环境");
+
+  const firefox = await fingerprintSelfCheck("env-1", {
+    getProfile: () => ({ ...profile, engine: "firefox" as const }),
+    getLaunch: () => ({ debugPort: 1, engine: "firefox" as const }),
+    active: async () => true,
+  });
+  expect(firefox.status).toBe(400);
+  expect(String(firefox.body.error)).toContain("Firefox");
+
+  // 采集只走环境自己的调试端口；端点不可达时不返回任何伪造读数。
+  const unreachable = await fingerprintSelfCheck("env-1", {
+    getProfile: () => profile,
+    getLaunch: () => ({ debugPort: 1, engine: "chromium" as const }),
+    active: async () => true,
+    endpoint: async () => null,
+  });
+  expect(unreachable.status).toBe(502);
+  expect(unreachable.body.ok).toBe(false);
+});
+
+

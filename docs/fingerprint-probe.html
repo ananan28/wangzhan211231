@@ -112,6 +112,15 @@
 <script>
 "use strict";
 
+/* ===== nanfu-probe-core:start ===== */
+/* Everything between these two markers is the single probe implementation.
+   The client's 指纹自检 injects this exact text into the environment's own
+   browser (through the launcher's existing CDP endpoint), so there is no
+   second copy to drift. Keep this region DOM-free: it runs in a blank tab,
+   where none of the page chrome below exists. */
+
+const PROBE_VERSION = "1.0.0";
+
 /* ------------------------------------------------------------------ */
 /* hashing                                                             */
 /* ------------------------------------------------------------------ */
@@ -715,7 +724,7 @@ async function collect() {
 
   return {
     probe: {
-      version: "1.0.0",
+      version: PROBE_VERSION,
       generated_at: new Date().toISOString(),
       duration_ms: Math.round(performance.now() - started),
       secure_context: window.isSecureContext
@@ -737,6 +746,29 @@ function hashable(doc) {
   if (copy.signals.webrtc) delete copy.signals.webrtc.mdns_names;
   return copy;
 }
+
+/* One run, no DOM: collect, hash, return. The page renders this; the client's
+   self-check asks the environment's browser for it directly. */
+async function runProbe() {
+  notes.length = 0;
+  const doc = await collect();
+  const canonicalJson = JSON.stringify(canonical(hashable(doc)));
+  const stable = fnvString(canonicalJson);
+  const sha = await sha256Hex(canonicalJson);
+  doc.hashes = {
+    stable_fnv64: stable,
+    stable_sha256: sha,
+    canvas: doc.signals.canvas_readback.hash,
+    webgl: doc.signals.webgl.render_hash,
+    audio: doc.signals.audio_readback ? doc.signals.audio_readback.hash : null,
+    fonts: doc.signals.fonts.hash,
+    webgl_extensions: doc.signals.webgl.extensions_hash,
+    speech_voices: doc.signals.speech_voices.names_hash || null
+  };
+  return doc;
+}
+
+/* ===== nanfu-probe-core:end ===== */
 
 /* ------------------------------------------------------------------ */
 /* rendering                                                           */
@@ -879,24 +911,10 @@ async function run() {
   el("copy").disabled = true;
   el("download").disabled = true;
 
-  const doc = await collect();
-  const canonicalJson = JSON.stringify(canonical(hashable(doc)));
-  const stable = fnvString(canonicalJson);
-  const sha = await sha256Hex(canonicalJson);
-
-  doc.hashes = {
-    stable_fnv64: stable,
-    stable_sha256: sha,
-    canvas: doc.signals.canvas_readback.hash,
-    webgl: doc.signals.webgl.render_hash,
-    audio: doc.signals.audio_readback ? doc.signals.audio_readback.hash : null,
-    fonts: doc.signals.fonts.hash,
-    webgl_extensions: doc.signals.webgl.extensions_hash,
-    speech_voices: doc.signals.speech_voices.names_hash || null
-  };
+  const doc = await runProbe();
 
   current = doc;
-  el("stable").textContent = "fnv64 " + stable + (sha ? "  ·  sha256 " + sha.slice(0, 32) + "…" : "");
+  el("stable").textContent = "fnv64 " + doc.hashes.stable_fnv64 + (doc.hashes.stable_sha256 ? "  ·  sha256 " + doc.hashes.stable_sha256.slice(0, 32) + "…" : "");
   el("json").value = JSON.stringify(doc, null, 2);
   render(doc);
   renderNotes(doc);

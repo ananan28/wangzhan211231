@@ -147,6 +147,41 @@ export function fetchNanfuTransfers(signal?: AbortSignal): Promise<{ userId: str
   return nanfuJson("transfers", { signal });
 }
 
+/** 指纹自检的单项结论：通过、不一致、无法判定。 */
+export interface FingerprintSelfCheckItem {
+  field: string;
+  label: string;
+  state: "pass" | "mismatch" | "unknown";
+  declared: string;
+  observed: string;
+  detail: string;
+}
+
+export interface FingerprintSelfCheckReport {
+  passed: FingerprintSelfCheckItem[];
+  mismatched: FingerprintSelfCheckItem[];
+  undetermined: FingerprintSelfCheckItem[];
+  probe: { version: string; hash: string; capturedAt: string; notes: string[] };
+}
+
+/** 在目标环境自己的浏览器里跑指纹探针；未启动时服务端返回「请先启动该环境」。 */
+export async function fetchFingerprintSelfCheck(
+  profileId: string, signal?: AbortSignal,
+): Promise<FingerprintSelfCheckReport> {
+  const response = await fetch("/ui/api/fingerprint-selfcheck", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ profileId }),
+    cache: "no-store",
+    signal,
+  });
+  const body = await apiJson(response, "fingerprint-selfcheck");
+  if (!response.ok || body.ok !== true) {
+    throw new NanfuApiError(body.error || "指纹自检失败，请重试", response.status, false);
+  }
+  return body.result as FingerprintSelfCheckReport;
+}
+
 /** One row of the transfer page: a transfer plus the two member emails. */
 export interface NanfuTransferRow extends NanfuEnvTransfer {
   fromEmail: string;
