@@ -1,141 +1,257 @@
-# 内核补丁流水线：从想法到出货
+# Kernel patch pipeline
 
-> 本文只描述**已经存在**的链路（`kernel/apply-patches.sh` + `.github/workflows/kernel-patches.yml`）。
-> CI 只证明补丁对钉住版本“能 apply / 能 reverse”，**不编译、不证明行为正确**。
+How a change to the browser gets from "a page can see X" to "a signed Windows
+build with X fixed". This is the process we are adopting for our own kernel
+patches; the reference implementation of the first half of it is the vendored
+series in `vendor/aliasmode-chromium/`, which we can read, copy and re-verify.
 
-## 0. 一句话原则
+## The one rule that shapes everything else
 
-**钉死一个上游 tag，在其上维护一条有序补丁序列；每次升级都是一次显式 rebase，而不是“跟着分支走”。**
+A full Chromium checkout is roughly 100 GB (source, `third_party` dependencies,
+build output), and one link is hours, not minutes. Therefore:
 
-- 版本锚点：`kernel/pinned.json` → `refs/tags/155.0.8059.85` / `0e66b94549a8bd85f03fbdf189b752d6e7b63c32`
-- 补丁目录：`kernel/patches/`
-- 应用顺序：文件名数字前缀
-- 验证：`.github/workflows/kernel-patches.yml`（仅 `workflow_dispatch`）
+- **We never track a branch.** Every patch is written against a pinned tag, and
+  the tag changes only as a deliberate event: bump, re-apply the whole series,
+  measure, ship.
+- **We never re-fetch to test a patch.** A 10-line change is reviewed by
+  compiling the translation units it touches (minutes), not by building the
+  browser.
+- **The series is the product.** The source tree is disposable and reproducible:
+  tag + series = build. Anything that is not in the series does not exist.
 
-## 1. 为什么不能在滑动分支上做
+Current pin: **155.0.8059.85** (`kernel/pinned.json`; `pinned.json` is the
+authoritative list of the series). The runtime we ship today is upstream's
+prebuilt binary for that tag (`vendor/aliasmode/aliasmode-chromium.ts`, pinned by
+archive and executable SHA-256). Our own series has three entries against
+existing upstream files (WebGL vendor/renderer strings, seeded client-rects
+jitter, TLS server padding); CI proves they apply and reverse, **none has been
+compiled or measured**. That is the gap the rest of this process closes.
 
-不能拿 `main`/`refs/heads/main` 这类会移动的分支当补丁基底：
-
-| 约束 | 数字 | 后果 |
-| --- | --- | --- |
-| Chromium 全量检出 | 约 100GB（`--no-history` 仍约 25GB） | 托管 runner 装不下；本地磁盘和网络成本高 |
-| 全量构建 | Windows 冷构建 4–8 小时，增量 10–40 分钟 | 每次上游提交都重建不可接受 |
-| 上下文稳定性 | 上游每天数百次提交 | 滑动分支上补丁上下文天天漂移，`git apply` 随时失效 |
-| 可复现性 | 同一 tag + 同一序列 → 同一树 | 滑动分支无法回答“这个包到底是哪个提交加哪些补丁” |
-| 审计 | 每个补丁独立可读 | 滑动分支上 rebase 会把多个补丁搅在一起 |
-
-因此：
-
-- **基底永远是 tag**，不是分支；
-- 上游吸收或升级时，**新建一次 rebase 提交**，更新 `pinned.json`，重放补丁，重跑 CI；
-- 不在旧 patch 上“套”新上游，也不为了通过而扩大上下文。
-
-## 2. 命名与目录
+## Layout
 
 ```
 kernel/
-  pinned.json
-  apply-patches.sh
+  verify-patches.sh          the only entry: applies the series and checks its promises
+  apply-patches.sh           three-line shim to it, kept for the frozen CI workflow
+  pinned.json                pinned tag/commit and the authoritative series order
   patches/
-    0001-add-webgl-vendor-renderer-switches.patch
-    0002-add-client-rects-jitter-seed.patch
-    0003-tls-enable-server-handshake-padding.patch
+    series                   ordered list, kept identical to pinned.json
+    0001-....patch           one change, one file, one number
+    README.md                format, lifecycle, and what is in examples/
+    examples/                illustrations and inert headers, never applied
+docs/kernel/
+  patch-pipeline.md          this file
+  patch-inventory.md         what exists today, verified vs claimed
 ```
 
-- 文件名：`NNNN-<动词>-<主题>.patch`，四位数字、小写 kebab-case，**一个补丁只做一件事**。
-- 编号即顺序；补丁内路径相对 Chromium 源码根（`a/`、`b/`）。
-- 补丁必须由 `git diff` 从真实文件生成，带完整 `diff --git` 头；不接受手写 hunk。
-- 新命令行开关统一放 `third_party/blink/public/common/switches.{h,cc}`，由
-  `RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer()` 的 `kSwitchNames`
-  转发到 renderer；未传开关时行为必须与上游完全一致。
-- 跨进程（browser/gpu/network）的开关要单独说明传播路径，不能假设 renderer 能看到。
+Both live in our repo, not in the Chromium checkout. The checkout stays pristine
+apart from what `git apply` puts there, so a rebuild is `git checkout -- .` plus
+the series.
 
-## 3. 每个补丁声明适用上游版本
+## Naming
 
-补丁头（`diff --git` 之前）至少写：
+`NNNN-area-topic.patch`
 
-```
-Applies-To: refs/tags/155.0.8059.85
-Depends-On: 0002-add-client-rects-jitter-seed.patch   # 可选，仅在同文件/同符号依赖时写
-Subject: [PATCH] <一句话说明改了什么、为什么>
-```
+- `NNNN` is four digits, ascending, unique forever. **A dropped patch leaves a
+  gap.** Never renumber to fill it: numbers appear in changelogs, bug reports and
+  build logs, and reuse makes two different changes answer to the same name.
+- `area` is the Chromium component or the surface, one word: `blink`, `net`,
+  `display`, `quota`, `font`, `webrtc`, `speech`, `compose`.
+- `topic` is what it does, hyphens, no filler: `screen-geometry-from-profile`,
+  not `fix-screen-bug`.
 
-- `Applies-To` 必须与 `pinned.json.chromium.source_ref` 一致；不一致的补丁不得进序列。
-- `index <old>..<new>` 行保留，便于审查 blob 是否来自该 tag。
-- 0001/0002 是上一轮产物，没有 `Applies-To` 头；它们的适用版本由 `pinned.json` 统一声明。**新补丁必须带头。**
-- 0003 起，`Subject` 里写清“改哪个子系统、对齐什么行为”。
+Real examples from the reference series: `0010-display-screen-geometry-from-profile.patch`,
+`0074-webrtc-spoof-ice-candidate-ip.patch`, `0120-opt-in-profile-seeded-readback-noise.patch`.
 
-## 4. series 顺序
+## The series file
 
-- 顺序 = 文件名字典序（`patches/*.patch` 自然排序），CI 和应用脚本都按此执行。
-- `pinned.json.patch_series.order` 必须与目录内容**逐项一致**；加/删补丁时同步更新。
-- 应用：正序 `--check` → `apply`；回滚：逆序 `--reverse --check` → `--reverse`。
-- 两个补丁改同一文件的同一区域时，后一个必须在前一个之后；在 `Depends-On` 里写明。
-- 不允许“为了排序而重命名历史补丁”；顺序变化必须作为独立提交，并重跑全序列。
+`kernel/patches/series` is a list, one file name per line. Blank lines and
+lines starting with `#` are ignored. Entries apply top to bottom and a patch
+sees the tree as the entries above it left it.
 
-## 5. 从想法到出货
+Rules:
 
-| 步骤 | 动作 | 产物 / 门禁 |
+1. Every `patches/NNNN-*.patch` is listed exactly once; every listed file exists.
+2. A patch that edits or deletes a file comes after the patch that creates it.
+3. No two patches create the same file.
+4. Entries ascend by number, except inside a dependency group that a `#` comment
+   introduces, where the group is contiguous with the comment.
+5. `examples/` and anything ending in `.stub` is never listed.
+
+## Where a patch sits in the source tree
+
+A patch is applied with `git apply` from the checkout root, so its paths are
+relative to `src/`. The areas we are likely to touch, and the file that decides
+whether the change is reachable at all:
+
+| Surface | Typical paths | Wiring |
 | --- | --- | --- |
-| 1 提案 | 写清要改的检测面、预期值、是否与上游重复 | issue/PR 描述 |
-| 2 查重 | 在 `vendor/aliasmode-chromium/patches/series` 找同目标补丁 | 避免重复造轮子 |
-| 3 钉版本 | 确认 `pinned.json` 的 tag 仍解析到记录的 commit | CI `Resolve pinned revision` |
-| 4 取最小树 | 只取补丁要改的文件（`?format=TEXT`），**不拉全仓** | 临时目录 |
-| 5 写补丁 | 从真实文件 `git diff` 生成；带 `Applies-To` / `Subject` | `NNNN-*.patch` |
-| 6 本地自检 | `git apply --check`，再逆序 `--reverse --check` | 全绿 |
-| 7 CI | 派发 `kernel-patches`，只校验 apply/reverse | run 绿 |
-| 8 审查 | 过第 6 节清单 | 至少一人 |
-| 9 构建 | 自建构建机编译、签名、打包（见 `kernel/README.md`「自建构建机要求」） | 安装包 |
-| 10 回归 | 用 `docs/fingerprint-probe.html` 做前后对比；重点看稳定性与一致性 | 报告 |
-| 11 出货 | 版本号、SHA256、补丁序列、pin 一起发布 | release notes（人工） |
+| UA, UA-CH, `navigator.platform` | `third_party/blink/renderer/core/frame/`, `components/embedder_support/` | `//components/embedder_support` |
+| Canvas / text / audio readback | `third_party/blink/renderer/platform/graphics/`, `.../modules/webaudio/` | `//third_party/blink/renderer/platform` |
+| WebGL / WebGPU | `third_party/blink/renderer/modules/webgl/`, `third_party/dawn/`, `gpu/command_buffer/` | nested repos: `third_party/dawn` |
+| Screen, DPR, colour | `ui/display/`, `content/browser/renderer_host/` | `//ui/display` |
+| Fonts | `third_party/blink/renderer/platform/fonts/`, `ui/gfx/` | `//third_party/blink/renderer/platform` |
+| Timezone, locale, calendars | `base/i18n/`, `third_party/icu/` | `//base` |
+| Storage quota | `storage/browser/quota/` | `//storage/browser` |
+| WebRTC candidates | `third_party/webrtc/`, `content/browser/renderer_host/` | nested repo: `third_party/webrtc` |
+| Automation tells | `content/child/runtime_features.cc`, `content/browser/devtools/` | `//content` |
+| Branding, product strings | `chrome/app/`, `components/version_info/` | `//chrome` |
 
-> 第 9 步之前，任何补丁都只能叫“上下文正确”，不能叫“生效”。
+Adding a `.cc` is not enough: a new file that no GN target lists never compiles,
+so a patch that adds source also edits the `BUILD.gn` that should own it, and
+that GN edit is a separate entry in the series (see the checklist).
 
-## 6. 审查清单
+`ninja -t query` and `compile_commands.json` answer "which targets build this
+file" without guessing; `vendor/aliasmode-chromium/scripts/checkfile.sh` is a
+working example of doing exactly that.
 
-每个补丁合并前逐项确认：
+## Declaring which upstream versions a patch applies to
 
-1. `Applies-To` 与 `pinned.json` 一致；`index` 行来自该 tag。
-2. 只改必要文件；没有顺手重构、格式化、无关 include。
-3. 未传开关时行为与上游**逐字节**一致（默认关闭 / 默认值不变）。
-4. 新开关命名不与上游 `--fingerprint-*` 冲突；接线路径（browser → renderer/gpu/network）写清。
-5. 同一值在所有查询点一致（例如 WebGL1/2、`UNMASKED_*`、worker、iframe）。
-6. 不引入构建期代码生成、不新增第三方依赖、不改 GN 目标（除非必要且已说明）。
-7. 不包含密钥、代理凭据、真实 IP、个人路径。
-8. 正序 apply + 逆序 reverse 全绿；CI run 链接贴进 PR。
-9. 同步更新 `pinned.json.patch_series.order`、`kernel/README.md`、`docs/kernel/patch-inventory.md`。
-10. 写明回滚方式与已知副作用。
+Every patch carries, in its header:
 
-## 7. 上游吸收后如何下线
+```
+Nanfu-Patch-Applies-To: 155.0.8059.85
+```
 
-当上游（AliasMode 或 Chromium）自己实现了同一行为：
+- Exact version: the patch is valid on that tag only. This is the default and
+  the honest answer for anything that touches existing context.
+- Glob (`155.0.8059.*`): the patch survived a patch-level bump unchanged. Only
+  claim this after actually re-verifying on the new tag.
+- Comma-separated list: a patch deliberately valid on two tags, e.g. during a
+  migration window.
 
-1. 在补丁头加 `Superseded-By: <上游补丁名或 commit>`，保留一个版本周期便于对照。
-2. 单独提交从 `patches/` 删除，并同步 `pinned.json.patch_series.order`。
-3. 重跑 `kernel-patches`（确认剩余序列仍 apply/reverse）。
-4. 在 `docs/kernel/patch-inventory.md` 把对应行改为“上游已吸收”，更新证据。
-5. 不保留“僵尸补丁”；历史由 git 保存，不靠目录里留旧文件。
+`kernel/verify-patches.sh` reads `chrome/VERSION` from the checkout and refuses
+any entry whose declaration does not match. A tag bump therefore fails loudly on
+the first incompatible patch instead of producing a plausible-looking build.
 
-## 8. Rebase 到新上游版本
+Each patch also declares what it promises:
 
-1. 在 `chromium.googlesource.com` 确认新 tag 存在，记录 commit，更新
-   `pinned.json` 的 `version` / `source_ref` / `source_commit` / `verified_at`。
-2. 只取补丁涉及的文件，建最小树；**不拉全仓**。
-3. 逐条重放改动，而不是硬套旧 patch；上下文漂移时手工移植，再用 `git diff` 重新生成最小 hunk。
-4. 本地 `kernel/apply-patches.sh <src>` + 逆序 `--reverse --check` 全绿。
-5. 派发 CI；绿后在自建构建机做一次真机构建与指纹回归。
-6. 在 `patch-inventory.md` 记录“旧版本 → 新版本”的差异与新证据。
+```
+Nanfu-Patch-Promise: base/nanfu/kernel_stamp.h::nanfu-kernel-series:1;upstream=155.0.8059.85
+```
 
-## 9. 失败与回滚
+`path::text`, at least one per patch. After the patch applies, the file at `path`
+must contain `text` verbatim. This is the difference between "the hunks landed"
+and "the change is in the tree": `git apply` will happily apply a patch whose
+hunk header undercounts its body and silently drop the tail, so the promise is
+re-checked against the post-patch file, not trusted.
 
-- **apply 失败**：不扩大上下文硬套；回到真实文件重新生成 hunk。
-- **reverse 失败**：说明补丁之间有隐式依赖，补 `Depends-On` 或拆补丁。
-- **构建失败**：先核对 include、命名空间、Blink WTF 类型转换；不要靠改 CI 绕过。
-- **行为回归**：保留补丁但默认关闭，或整条回退；在 inventory 记录回退原因。
-- **线上回滚**：发行包按 `pinned.json` 的 tag + 序列重建；不依赖“当时的分支状态”。
+Optional: `Nanfu-Patch-Repo: third_party/dawn`. Chromium nests real git
+repositories; a patch inside one applies and is verified in that repository.
 
-## 10. 边界
+## From idea to shipped build
 
-- CI runner 只有 20 分钟预算、装不下 Chromium，**只做 apply/reverse**。
-- 真机构建、签名、公证、回归都在自建构建机完成；要求见 `kernel/README.md`。
-- 本流水线不发布 Release、不改仓库权限、不改 workflow。
+0. **Decide it is a kernel change.** If an existing switch does it, or our
+   manager can do it, it is not a patch. Check `docs/kernel/patch-inventory.md`
+   and the upstream switch table first.
+1. **Pin.** Check out the tag in a build container (not on a workstation):
+   `depot_tools`, `fetch --nohooks chromium`, `gclient sync --revision <tag>`,
+   then `gclient runhooks`. Record the `DEPOT_TOOLS_REVISION` and the tag.
+2. **Apply the series.** `kernel/verify-patches.sh --src src --in-tree` on a
+   clean tree. A red series stops here. (`kernel/apply-patches.sh` is a shim to
+   the same verifier, kept only because the CI workflow calls that path.)
+3. **Measure first.** Run `docs/fingerprint-probe.html` against the unpatched
+   build of that tag and store the JSON. A patch with no "before" is a patch
+   nobody can prove changed anything.
+4. **Write the patch** on the checkout (procedure below), compile just the files
+   it touches, add it to `series` after its dependencies.
+5. **Verify.** `kernel/verify-patches.sh --src src` must pass, from a clean tree,
+   with the entry named in the output.
+6. **Measure after.** Same probe page, same seed, same host. Diff the two JSON
+   documents: the keys that changed must be the keys the patch promised, and no
+   others. An unexpected key change is a regression, not a bonus.
+7. **Review.** The checklist below, on the patch file, not on a verbal
+   description.
+8. **Build.** Full build in CI on the pinned tag with the series applied, per
+   target. Hours, so it is a scheduled job, not a per-commit one.
+9. **Prove the binary carries it.** `strings -a chrome | grep <promise string>`
+   on the produced binary, plus the probe JSON attached to the release record.
+10. **Ship** with the series revision in the build metadata — once the stamp
+    header from `kernel/patches/examples/0001-base-nanfu-kernel-stamp.patch` is
+    wired into a compiled target (`base::nanfu::kSeriesRevision`) — so a binary
+    names the exact series it came from.
+
+### Write a patch on a checkout
+
+```bash
+src=~/chromium/src
+f=third_party/blink/renderer/core/frame/navigator_base.cc
+cp "$src/$f" /tmp/orig.cc
+# edit "$src/$f"
+{
+  printf 'Subject: [PATCH] blink: hardware concurrency from the profile\n\n'
+  printf 'navigator.hardwareConcurrency and the WorkerNavigator value come from\n'
+  printf 'the composed profile; the host value stays when the profile has none.\n\n'
+  printf 'Nanfu-Patch-Applies-To: 155.0.8059.85\n'
+  printf 'Nanfu-Patch-Promise: %s::NanfuProfileHardwareConcurrency\n\n' "$f"
+  diff -u --label "a/$f" --label "b/$f" /tmp/orig.cc "$src/$f"
+} > kernel/patches/0003-blink-hardware-concurrency-from-profile.patch
+```
+
+`diff -u` writes correct hunk headers because it counted the lines itself. A
+hand-edited hunk header is the single most common way a patch "applies" while
+dropping half its body; the promise check catches it, but do not rely on that.
+
+New files: `git -C "$src" diff --no-index -- /dev/null path/to/new.cc`.
+Never run a patch through a text-mode converter: CRLF and trailing whitespace
+are part of the diff.
+
+## Review checklist
+
+Reject the patch unless every line has an answer.
+
+- [ ] **Number and name.** Next free number, `area-topic`, listed once in `series`, after its dependencies.
+- [ ] **One change.** The patch does one thing. A behaviour change plus a rename plus a formatting fix is three patches.
+- [ ] **Declared versions.** `Nanfu-Patch-Applies-To` is true; it was not widened to make CI pass.
+- [ ] **Promises.** At least one `Nanfu-Patch-Promise` naming a string only this patch introduces, in a file the patch actually writes.
+- [ ] **Surface named.** The description says which probe key (`docs/fingerprint-probe.html`) a page sees change, and what stays as stock.
+- [ ] **Context only.** No hunk touches lines it does not need; no whitespace-only reflow; no reformatting of the surrounding file.
+- [ ] **Build wiring.** If the patch adds a source file, the GN edit that compiles it is present, or the patch says explicitly that the file is inert.
+- [ ] **Thread and process model.** The value is set where the page reads it *and* where workers, out-of-process iframes, the GPU process and the network service read it. A renderer does not inherit the browser command line; check whether the value has to be forwarded.
+- [ ] **Header/JS agreement.** Anything exposed both as a header (Sec-CH-*) and as JavaScript is computed from one source, so they cannot disagree.
+- [ ] **Falsifiability.** The description says how a page could disprove the claim, and the patch clamps to what the host can actually deliver where that applies.
+- [ ] **No page-readable residue.** No new global, no string on `window`, no extra property on a prototype, no measurable timing change on a path a page can time.
+- [ ] **No secrets, no user data, no absolute paths** from the authoring machine; synthetic fixtures only.
+- [ ] **Line endings preserved**; no `core.autocrlf` damage.
+- [ ] **Verified on a clean tree**, `verify-patches.sh` PASS naming this entry, and the probe diff shows only the promised keys.
+
+## Dropping a patch when upstream absorbs it
+
+Upstream will eventually implement some of this. The procedure is deliberate,
+because the failure mode is a patch that silently does nothing.
+
+1. **Find the upstream change.** The commit that implements it, and the first
+   tag that contains it. Evidence, not a hunch.
+2. **Diff the behaviour, not the code.** Apply the candidate tag without our
+   patch and run the probe page. If the promised key already has the intended
+   value, the patch is absorbed. If it is only partly absorbed, the patch
+   becomes a *delta* patch against the new behaviour, with a new description —
+   same number, because it is still the same intent.
+3. **Delete the file** and its line in `series`. Do not renumber anything else.
+4. **Move the promise into a regression check.** The promise string no longer
+   exists in our tree; the equivalent assertion moves to the probe page's
+   expected-value file or to a build-time smoke check, so the capability stays
+   guarded after the patch is gone.
+5. **Bump the series revision** (the stamp header in
+   `kernel/patches/examples/0001-base-nanfu-kernel-stamp.patch`, once it is
+   wired in) and note in the patch's changelog entry: which tag absorbed it,
+   which commit, what the probe read before and after.
+6. **Re-run the whole series** against the new tag. A removal changes line
+   context for every later patch that touches the same file, so expect the
+   neighbours to need regeneration — that is normal, and it is why removal is a
+   separate change from the tag bump that caused it.
+
+The same procedure applies when we drop a patch because it stopped being
+worth its maintenance cost, except step 4 becomes "record why the capability is
+gone" so nobody re-adds it by accident.
+
+## Cost model, so the process stays honest
+
+| Step | Time | Where |
+| --- | --- | --- |
+| `gclient sync` at a tag | 40-90 min, ~100 GB | build container, cached volume |
+| Compile the files one patch touches | 2-15 min | build container |
+| Full `chrome` build | 3-6 h (16-core, no GPU) | CI runner, not a workstation |
+| Probe + diff | 2 min | any machine with the binary |
+
+If a proposed process step cannot fit that table, it is the wrong process.

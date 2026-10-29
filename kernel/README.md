@@ -13,11 +13,16 @@
 ```
 kernel/
   README.md                 本文件
-  pinned.json               目标 Chromium tag / commit（已核实存在）
-  apply-patches.sh          对给定源码根按序 check + apply
+  pinned.json               目标 Chromium tag / commit，补丁顺序的唯一权威
+  verify-patches.sh         唯一入口：按 series 应用并校验每个补丁的 promise
+  apply-patches.sh          仅给 CI 工作流用的三行转调，不是第二个实现
   patches/
+    series                  顺序表，与 pinned.json 一致
+    README.md               补丁格式、生命周期、示例目录说明
     0001-add-webgl-vendor-renderer-switches.patch
     0002-add-client-rects-jitter-seed.patch
+    0003-tls-enable-server-handshake-padding.patch
+    examples/               不在 series 里，也不会被 CI 读取
 ```
 
 ## 补丁序列怎么组织
@@ -38,6 +43,14 @@ kernel/
     `--fingerprint-seed=<uint32>`：给 `Element::getClientRects()` /
     `getBoundingClientRect()` 加确定性亚像素偏移。同一元素在同一文档内稳定，
     幅度上限 ±0.5px（开关值再大也会被截断），默认关闭。
+  - **0003** 打开 `kAddTLSServerHandshakePadding` 并按 Chrome 的取值请求
+    4000 字节，使 ClientHello 带上 `server_padding` 扩展，JA4 从
+    `t13d1517h2` 对齐到 Chrome 155 的 `t13d1518h2`。不改 TLS 栈本身。
+- 序列顺序以 `pinned.json` 的 `patch_series.order` 为准；`patches/series`
+  必须与它逐条一致，不一致时改 series。
+- `patches/examples/` 里另有两个只新增头文件的补丁和一个格式示例，来自并行
+  分支，原样保留，不在 series 中：新文件补丁无法被当前 CI 取到上游文件，
+  编号也与上面的 0001/0002 冲突。
 - 补丁不改上游已有开关语义，不引入构建期代码生成，便于 rebase 和审计。
 
 ## 对新内核版本 rebase
@@ -50,8 +63,9 @@ kernel/
    取新版本真实文件（base64），在临时目录建最小树；**不要**拉全仓。
 3. 逐条重放改动而不是硬套旧 patch；上下文漂移时手工移植，再用 `git diff`
    重新生成最小 hunk。不要为了让旧 patch 通过而扩大上下文。
-4. 本地跑 `kernel/apply-patches.sh <src>`，再按逆序做
-   `git apply --reverse --check`（必须配合真实 reverse，见下），全绿后提交。
+4. 本地跑 `kernel/verify-patches.sh --src <src>`（只校验，不改工作区）；
+   需要留下改动时加 `--in-tree`。再按逆序做 `git apply --reverse --check`
+   并真实回滚，全绿后提交。
 5. CI 绿只代表“能干净应用/回滚”，不代表“能编译”。首次真机构建时优先核对
    include、命名空间、Blink WTF 类型转换。
 
@@ -59,14 +73,16 @@ kernel/
 
 - 本地：
   ```bash
-  kernel/apply-patches.sh /path/to/chromium/src
+  kernel/verify-patches.sh --src /path/to/chromium/src
   ```
-  脚本对每个补丁先 `git apply --check` 再 `git apply`，任一失败立即非零退出。
-- CI：`.github/workflows/kernel-patches.yml`，仅 `workflow_dispatch`，只存在于
-  本功能分支：
+  按 `patches/series` 顺序逐条应用，先 `git apply --check`，再校验补丁
+  `Nanfu-Patch-Applies-To` 与 `Nanfu-Patch-Promise`，任一不符立即非零退出。
+  `kernel/apply-patches.sh` 只是工作流按路径调用的转调，本地请用上面这条。
+- CI：`.github/workflows/kernel-patches.yml`，仅 `workflow_dispatch`：
   - 校验 `pinned.json` 的 tag 仍解析到记录的 commit；
-  - 只从 googlesource 拉取补丁涉及的 5 个文件（不拉全仓）；
-  - 按序 `--check` + apply；
+  - 只从 googlesource 拉取补丁涉及的 6 个文件（不拉全仓）；
+  - 工作流按路径调用 `apply-patches.sh`，转调 `verify-patches.sh --in-tree`，
+    按序 check + apply + 校验 promise；
   - 按逆序 `--reverse --check` 并真实回滚，证明可逆；
   - 打印每个补丁的 `git apply --stat`。
 - 边界：托管 runner 装不下 Chromium，CI 不做完整构建；**补丁未经编译验证**，
@@ -118,7 +134,11 @@ kernel/
 
 ## 已知限制
 
-- 只覆盖 WebGL 字符串与 ClientRects 抖动，离“完整超越比特”还很远。
+- 只覆盖 WebGL 字符串、ClientRects 抖动和 TLS server padding 三处，离“完整超越比特”还很远。
+- 这三条都**未编译、未实测**；CI 只证明对 `155.0.8059.85` 的真实文件能 apply/回滚，
+  并逐条确认补丁声明的字符串确实落到文件里。
+- `patches/examples/` 下两个只新增头文件的补丁是并行分支的产物，原样保留、不参与
+  构建，也不在 series 中。
 - 未处理 GPU/浏览器进程侧的一致性泄漏（ANGLE、GL 实现信息可能从其他路径暴露）。
 - 尚未编译验证；补丁的 include 与类型转换需在首次真机构建时确认。
 - 没有自动化指纹回归套件；上面的清单目前是人工验收项。

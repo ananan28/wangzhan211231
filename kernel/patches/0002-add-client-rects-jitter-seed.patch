@@ -1,3 +1,13 @@
+Subject: [PATCH] blink: seeded sub-pixel jitter for client rects
+
+Adds --fingerprint-client-rects-jitter and --fingerprint-seed, both forwarded to
+the renderer. getClientRects() and getBoundingClientRect() get a deterministic
+offset derived from the two switches, bounded to +/-0.5 CSS px, and zero when the
+switches are absent.
+
+Nanfu-Patch-Applies-To: 155.0.8059.85
+Nanfu-Patch-Promise: third_party/blink/common/switches.cc::"fingerprint-client-rects-jitter"
+
 diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
 index 853d197..2f797ec 100644
 --- a/content/browser/renderer_host/render_process_host_impl.cc

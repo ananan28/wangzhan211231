@@ -1,118 +1,175 @@
-# 内核补丁现状清单
+# Kernel patch inventory
 
-> 本文件只记录**能举证**的现状。证据等级严格区分「本仓库实测」与「上游文档声明」。
-> 没有代码或参数证据的条目，一律不写“已验证”。
+What our browser actually controls today, where that is proven, and what is
+missing against the products we are compared to.
 
-## 口径
+Read this as an evidence table, not a feature list. A row is only as good as
+the file it points at.
 
-| 等级 | 定义 |
+## How to read the status column
+
+| Status | Means |
 | --- | --- |
-| **已验证** | 本仓库内能指向代码/参数，并且有可复核的实测记录（GitHub Actions run、或仓库内带日期的测量输出）。 |
-| **仅报告** | 有开关、补丁或上游带日期的测量，但本仓库没有独立复现。 |
-| **未知** | 没有代码/参数证据，或明确未实现、未编译、未测量。 |
+| **verified (source)** | The behaviour is visible in code we vendor or own: a patch file, a switch table entry, or a line of our manager. I re-read the cited lines at the base commit `4cdd9bf`. |
+| **verified (source, by absence)** | I searched every entry of the vendored series and the published switch table and found no entry for this surface. Weaker than reading the code that implements it: absence in a 149-entry series is strong evidence, not proof, because the binary could carry something the listed series does not. |
+| **verified (runtime)** | Measured on a running build with `docs/fingerprint-probe.html`. **There are none yet** — see below. |
+| **reported-only** | An upstream document claims it and I did not find code that proves it. Treat as a hypothesis. |
+| **unknown** | No evidence either way. |
 
-- “上游”指仓库内导入的 `vendor/aliasmode-chromium`（AliasMode / Apostate 定制 Chromium，版本见 `kernel/pinned.json`）。
-- 线上实际分发的是上游二进制（Windows `155.0.8059.85-aliasmode.4`，macOS/Linux `155.0.8059.31`），不是本仓库构建的产物。
-- 本仓库 `kernel/patches/` 只有补丁文本；CI 只证明“能 apply / 能 reverse”，**不编译**。
+**Nothing in this document is verified at runtime.** The authoring machine has
+no GPU, no Chromium source tree and no built binary, so every `verified (source)`
+row is a claim about code, not about what a page saw. Converting them is the
+first job of `docs/fingerprint-probe.html`: run it on the shipped 155 build,
+store the JSON, and a row moves to `verified (runtime)` only when the probe
+output matches the claim.
 
-## A. 本仓库自己的实测（已验证）
+Evidence shorthand:
 
-| # | 能力 | 证据 | 等级 |
+- `P:00NN-...` — `vendor/aliasmode-chromium/patches/00NN-....patch`, the actual diff.
+- `S:...` — `vendor/aliasmode-chromium/docs/reference/switches.mdx`, the upstream switch table.
+- `G:...` — `vendor/aliasmode-chromium/docs/known-gaps.mdx`, upstream's own gap list.
+- `M:...` — our manager: `vendor/aliasmode/fingerprint.ts`, `launcher.ts`, `aliasmode-chromium.ts`, `types.ts`.
+- `N:...` — our own code: `nanfu_chromium/nanfu_environments.py`.
+
+## What we ship today
+
+- The runtime is **upstream's prebuilt binary**, downloaded on first use and
+  pinned by archive and executable SHA-256: `M:aliasmode-chromium.ts:18-27`
+  (`155.0.8059.85`, `aliasmode/aliasmode-chromium` release assets).
+- **We do not build Chromium.** The only build job is the Tauri manager
+  (`.github/workflows/nanfu-chromium-baseline.yml`, `bun run desktop:build:nsis`);
+  no job compiles a kernel.
+- **We maintain three kernel patches, none compiled.** `kernel/patches/` holds
+  three diffs against existing upstream files (WebGL vendor/renderer strings,
+  seeded client-rects jitter, TLS server padding). CI proves they apply to and
+  reverse from the pinned tag. No build has produced them, so their runtime
+  effect is **unknown**; two further inert header-only diffs and one format stub
+  live under `kernel/patches/examples/` and are not in the series.
+- Our own code in this area is small: environment records, proxy syntax
+  validation, batch creation and atomic JSON persistence
+  (`N:nanfu_environments.py:16-91`), plus the launch-flag derivation below.
+  None of it touches the rendering or JS surfaces.
+
+**Unknown, and it matters:** whether the shipped binary is byte-for-byte what
+`vendor/aliasmode-chromium` builds from the tag. We pin the archive and the
+executable by SHA-256 (`M:aliasmode-chromium.ts:24-27`), which proves we get the
+artifact upstream published, not that the artifact matches the vendored series.
+Closing that needs one build of our own on a runner and a hash comparison. Until
+then, every `P:00NN` row below describes source we can read, not necessarily the
+binary in the field.
+
+## 1. Controls the upstream build gives us
+
+Status is `verified (source)` unless marked otherwise.
+
+### Identity, UA and Client Hints
+
+| Control | What a page sees | Evidence | Status |
 | --- | --- | --- | --- |
-| 1 | 每环境独立进程 / Cookie / 本地存储隔离 | `CHROMIUM_MIGRATION.md:17`；CI run 40579090735 | 已验证 |
-| 2 | 不同种子 Canvas 输出不同，刷新后稳定 | `CHROMIUM_MIGRATION.md:17`；CI run 40579090735 | 已验证 |
-| 3 | 两个 Chromium 环境同时运行并各自隔离 | `CHROMIUM_MIGRATION.md:18-19`；CI run 40579090735 | 已验证 |
-| 4 | 固定 HTTP 代理关闭后未观察到测试请求回退直连 | `CHROMIUM_MIGRATION.md:22-24`；CI run 40576175729。**仅覆盖直接启动 Chromium 的路径**，不含 SOCKS/DNS/WebRTC/扩展 | 已验证（范围受限） |
-| 5 | Windows 开发安装包可编译、静默安装、启动后 15 秒存活 | `CHROMIUM_MIGRATION.md:33-35`；CI run 40605311426 | 已验证 |
-| 6 | 南孚产品名/应用标识/安装目录/阻止上游更新覆盖 | `CHROMIUM_MIGRATION.md:30-34`；CI run 40605311426、40605845335 | 已验证 |
-| 7 | 自研补丁 0001 对钉住版本能 apply + reverse | `kernel/patches/0001-*.patch`；CI run 40940653742 | 已验证（仅补丁上下文） |
-| 8 | 自研补丁 0002 对钉住版本能 apply + reverse | `kernel/patches/0002-*.patch`；CI run 40940653742 | 已验证（仅补丁上下文） |
-| 9 | 自研补丁 0003 对钉住版本能 apply + reverse | `kernel/patches/0003-tls-enable-server-handshake-padding.patch`；CI run 40940653742 | 已验证（仅补丁上下文） |
+| Seed / persona | One seed decides every composed value; same seed, same machine | `P:0081`, `P:0084`, `S:--fingerprint` | verified (source) |
+| Platform persona | `navigator.platform`, font set, voices, colours follow `windows`/`macos`/`linux` | `P:0009` (platform + whole UA from profile, workers included), `S:--fingerprint-platform` | verified (source) |
+| User-Agent string | Taken whole from the profile; consistent across header, `navigator.userAgent`, workers | `P:0009` | verified (source) |
+| Headless token | `HeadlessChrome` never appears even under `--headless=new` | `P:0002` | verified (source) |
+| UA-CH platform, platformVersion, arch, bitness, model, mobile | One `UserAgentMetadata` feeds every `Sec-CH-*` header and `navigator.userAgentData` | `P:0008` | verified (source) |
+| UA-CH brand list | Always contains the `Google Chrome` entry real Chrome sends; stock Chromium omits it | `P:0008` | verified (source) |
+| `navigator.webdriver` | `false` even with `--enable-automation`, `--headless`, remote debugging | `P:0003` | verified (source) |
+| CDP attach tells | Exception/console stack capture and console serialisation do not change under `Runtime.enable`; the debugging port rejects page-originated requests | `P:0087` | verified (source) |
 
-## B. 上游内核已经提供、我们只消费的能力
+### Display and hardware
 
-| # | 能力 | 开关 / 实现证据 | 等级 | 说明 |
-| --- | --- | --- | --- | --- |
-| 10 | 整机种子 | `switches.mdx:37-56`，`--fingerprint=SEED`；`verify.mdx:97-98` 示例 seed 42 | 仅报告 | 本仓库只验证了“不同种子 Canvas 不同”，未做全机一致性复核 |
-| 11 | 平台 persona | `switches.mdx:58-63`，`--fingerprint-platform` | 仅报告 | 上游示例：Linux 宿主上 Windows persona 读 `Win32`（`verify.mdx:53,63`） |
-| 12 | 屏幕几何 | `switches.mdx:155-191`，`--fingerprint-screen-width/height`；`0010-display-screen-geometry-from-profile.patch` | 仅报告 | 本仓库无屏幕一致性实测 |
-| 13 | 时区 | `switches.mdx:206-212`，`--fingerprint-timezone`；`0011-base-icu-timezone-from-profile.patch` | 仅报告 | 本仓库无时区实测 |
-| 14 | 语言 / Accept-Language | `switches.mdx:197-204`，`--fingerprint-locale`；`0013-accept-languages-from-profile.patch` | 仅报告 | 本仓库无语言实测 |
-| 15 | hardwareConcurrency | `switches.mdx:159,175-180`，`--fingerprint-hardware-concurrency` | 仅报告 | **受宿主上限约束**：不得超过宿主逻辑核数 |
-| 16 | deviceMemory | `switches.mdx:160,182`，`--fingerprint-device-memory`；`0006-blink-device-memory-from-profile.patch` | 仅报告 | **受宿主上限约束**，且 Chrome 只报 2/4/8/16/32 |
-| 17 | storage quota | **没有独立开关**；`0022-quota-incognito-memory-from-profile.patch:3-10,47-52` 把 incognito 配额分母改成 profile 内存 | 仅报告 | 上游没有 `--fingerprint-storage-quota` 这个开关；配额跟随 profile 内存，随机比例保留 |
-| 18 | Canvas / WebGL / Audio 读回噪声 | `switches.mdx:238-248`，`--fingerprint-noise`；`0120-opt-in-profile-seeded-readback-noise.patch` | 仅报告 | 上游明确说页面可检测（同文件 248 行），默认关闭 |
-| 19 | WebGL vendor/renderer | `switches.mdx:18-19,157-158`，`--fingerprint-gpu-vendor/renderer` | 仅报告 | 字符串与能力簇绑定，跨家族字符串会被拒绝 |
-| 20 | WebGL limits / extensions | `0026`、`0028`、`0032`、`0103`、`0104`、`0112`、`0119` 等补丁 | 仅报告 | 能力表来自实测 GPU 家族；Apple silicon 上仍会泄漏宿主值（`known-gaps.mdx:68-72`） |
-| 21 | WebGPU adapter | `0068`、`0069`、`0135`、`0136`、`0142`、`0149`、`0155`、`0157` | 仅报告 | Linux headless 下 `requestAdapter()` 返回 `null`（`known-gaps.mdx:82-86`） |
-| 22 | WebRTC 候选 IP | `switches.mdx:218-222`，`--fingerprint-webrtc-ip`；`0073`、`0074`、`0164`、`0169` | 仅报告 | UDP 可用时对端仍能从包源地址读到真实地址（`switches.mdx:220`） |
-| 23 | WebRTC UDP 走向 | `switches.mdx:224-234`，`--fingerprint-webrtc-udp` | 仅报告 | HTTP/SOCKS4 等代理下无 UDP；需支持 UDP ASSOCIATE 的 SOCKS5 |
-| 24 | UA / UA-CH | `detection.mdx:21`；`verify.mdx:49-97,168-180` 给出 UA、`sec-ch-ua*` 示例 | 仅报告 | 上游带日期的示例；本仓库未复核 |
-| 25 | AudioContext 指纹 | `switches.mdx:243`；`0130`、`0167` | 仅报告 | 默认 48 kHz；振荡器/压缩器按 profile 微调 |
-| 26 | 字体枚举 / 字体过滤 | `0090`、`0099`、`0031`、`0143-0146`、`0150`、`0166` | 仅报告 | 见 D-33：`fonts` 段会被 iphey 判 Unreliable |
-| 27 | 自动化痕迹（webdriver/headless/CDP） | `detection.mdx:47-68`；`0003-content-no-automation-controlled-from-switches.patch`、`0087`、`0170` | 仅报告 | `navigator.webdriver` 在常见驱动开关下为 false（上游声明） |
-| 28 | 浏览器 chrome 高度 | `known-gaps.mdx:118-122` | 仅报告 | Windows persona 的 `outerHeight-innerHeight` 读 87，真实 Windows 为 133–143，**极易测** |
-| 29 | Passkey / 硬件视频编码器 | `known-gaps.mdx:88-98` | 仅报告 | 跟随宿主，未伪装 |
-
-## C. 我们自研补丁的实际覆盖
-
-| # | 补丁 | 改动点 | 运行时效果 | 等级 |
-| --- | --- | --- | --- | --- |
-| 30 | `0001-add-webgl-vendor-renderer-switches.patch` | `--fingerprint-webgl-vendor/renderer` 覆盖 WebGL1/2 与 `WEBGL_debug_renderer_info` 四个查询点 | **未编译、未实测** | 未知 |
-| 31 | `0002-add-client-rects-jitter-seed.patch` | `--fingerprint-client-rects-jitter` + `--fingerprint-seed`，确定性 ±0.5px 抖动 | **未编译、未实测** | 未知 |
-| 32 | `0003-tls-enable-server-handshake-padding.patch` | 开启 `kAddTLSServerHandshakePadding` 并请求 4000 字节；目标是让 JA4 对齐 Chrome 155（依据上游 0161 的测量） | **未编译、未实测** | 未知 |
-
-> 001/002/003 的“能 apply / 能 reverse”是已验证的；**补丁编译后的行为**全部是未知。二者不能混为一谈。
-
-## D. 和 BitBrowser 这类产品的差距
-
-> BitBrowser / AdsPower 这类产品的公开卖点是“每环境独立且自洽的指纹（含 TLS、字体、WebGL）”。
-> 下表只列**我们能举证的本仓库差距**，不替对端背书其内部实现。
-
-| # | 差距 | 我们的证据 | 等级 |
+| Control | What a page sees | Evidence | Status |
 | --- | --- | --- | --- |
-| 33 | **字体面**：任何带 `fonts` 段的 persona 被 iphey 判“Unreliable”，移除 `fonts` 段才清除；字体缺失依赖宿主安装，字形由宿主字体引擎绘制 | `known-gaps.mdx:34-36,161-169` | 仅报告（上游测量） |
-| 34 | **渲染真值**：Canvas/WebGL/WebGPU 像素与渲染速度来自宿主 GPU，无法伪装真实硬件；Apple silicon 上 `MAX_UNIFORM_BLOCK_SIZE` 读 16384 而 persona 声称 65536 | `known-gaps.mdx:62-72` | 仅报告（上游测量） |
-| 35 | **per-profile TLS/JA3**：没有按 profile 定制 TLS；TLS 栈就是 Chromium 155 自己的，0161 只是打开 Chrome 默认的 server padding，把 JA4 从 `t13d1517h2` 对齐到 `t13d1518h2` | `detection.mdx:92-93`；`0161-tls-ask-for-server-padding-as-chrome-does.patch:1-9` | 未知（我们无此能力） |
-| 36 | **每标签页独立指纹**：当前隔离边界是独立进程/环境，不是同一窗口内每标签页独立指纹 | `CHROMIUM_MIGRATION.md:41` | 未知（未实现） |
-| 37 | **Worker / Service Worker / IndexedDB / CacheStorage 隔离**：未完整验证 | `CHROMIUM_MIGRATION.md:45` | 未知（未验证） |
-| 38 | **行为面**：不伪造鼠标轨迹、打字节奏、滚动；浏览器侧无解 | `detection.mdx:102-106` | 未知（不做） |
-| 39 | **移动端 persona**：没有移动端 persona、Intel Mac、32 位 Windows 构建 | `known-gaps.mdx:249-254` | 未知（未做） |
+| Screen size | `screen.width/height`, CSS display media features, DPR client hint agree | `P:0010`, `S:--fingerprint-screen-*`, `P:0085` | verified (source) |
+| Available area, colour depth, `isExtended` | `availWidth/availHeight`, `colorDepth` (24 or 30 only) | `P:0010`, `P:0016`, `P:0033` | verified (source) |
+| Device pixel ratio | From the persona; a forced scale factor overrides it coherently | `P:0010`, `P:0159` | verified (source) |
+| `hardwareConcurrency` | Set by switch, clamped to host logical cores | `P:0085`, `S:--fingerprint-hardware-concurrency`, `G:cores-and-memory` | verified (source) |
+| `deviceMemory` | Rounded to 2/4/8/16/32, matches the `Device-Memory` header, clamped to host RAM | `P:0006`, `P:0085` | verified (source) |
+| CPU performance tier | A CPU tier without the host's real model | `P:0152` | verified (source) |
+| Battery | `navigator.getBattery()` values from the profile | `P:0089` | verified (source) |
 
-## E. 统计
+### GPU, canvas, WebGL, WebGPU
 
-| 等级 | 条数 | 编号 |
-| --- | --- | --- |
-| 已验证 | **9** | 1–9 |
-| 仅报告 | **22** | 10–29、33、34 |
-| 未知 | **8** | 30–32、35–39 |
-| 合计 | **39** | 1–39 |
+| Control | What a page sees | Evidence | Status |
+| --- | --- | --- | --- |
+| WebGL vendor/renderer | Unmasked strings from the profile; masked renderer stays `WebKit WebGL` | `P:0007`, `P:0085` (`--fingerprint-gpu-vendor/-renderer`) | verified (source) |
+| WebGL limits | Limits served from the profile's capability table, clamped | `P:0026`, `P:0032`, `P:0035`, `P:0036`, `P:0103`, `P:0112` | verified (source) |
+| WebGL extensions | Extension list from the profile, constants served consistently | `P:0028`, `P:0104` | verified (source) |
+| Shader precision | `getShaderPrecisionFormat` from the profile | `P:0029` | verified (source) |
+| WebGPU adapter | Adapter info and limits from the profile, incl. subgroup sizes | `P:0068`, `P:0069`, `P:0135`, `P:0136`, `P:0149`, `P:0155` | verified (source) |
+| Canvas/text/audio readback noise | Opt-in (`--fingerprint-noise`): per-profile, banded, self-consistent across `getImageData`/`toDataURL`/`readPixels` | `P:0120`, `P:0165`, `P:0168`, `P:0167`, `S:--fingerprint-noise` | verified (source) |
 
-### CI 证据（仅 apply/reverse）
+### Locale, fonts, devices, network
 
-`kernel-patches` run **40940653742**（`qoder/nanfu-kernel-docs-20261030`）：
+| Control | What a page sees | Evidence | Status |
+| --- | --- | --- | --- |
+| Timezone | `Intl`, `Date`, resolved zone | `P:0011`, `P:0085`, `S:--fingerprint-timezone` | verified (source) |
+| Locale and `navigator.languages` | UI locale, `Intl` formats, `Accept-Language` | `P:0013`, `P:0014`, `P:0111`, `P:0114`, `P:0115`, `P:0148` | verified (source) |
+| Fonts | Families the persona has; per-profile scaling; Windows metrics, aliases, fallbacks | `P:0031`, `P:0047`, `P:0090`, `P:0099`, `P:0127`, `P:0128`, `P:0143`, `P:0144`, `P:0146`, `P:0150`, `P:0156`, `P:0166` | verified (source) |
+| Speech voices | Voice list from the persona, spoken by a real provider | `P:0037`, `P:0043`, `P:0075`, `P:0125`, `P:0147` | verified (source) |
+| Media devices | Device counts and names from the profile, synthesised frames | `P:0020`, `P:0092`, `P:0131`, `P:0132`, `P:0141` | verified (source) |
+| WebRTC candidate address | `--fingerprint-webrtc-ip` rewrites the SDP candidate text; UDP through SOCKS5 or fail closed | `P:0073`, `P:0074`, `P:0164`, `P:0169`, `P:0086`, `P:0118`, `S:--fingerprint-webrtc-ip` | verified (source) |
+| Bluetooth | Follows the claimed platform | `P:0017`, `P:0025` | verified (source) |
+| Keyboard layout | Layout map from the profile | `P:0021`, `P:0133` | verified (source) |
+| Storage quota | In incognito, the quota derives from the profile's memory, matching `deviceMemory`; there is **no switch** and no operator-set value | `P:0022` | verified (source) |
 
-- 从 `refs/tags/155.0.8059.85` 只取补丁涉及的文件，日志含 `fetched net/base/features.cc (41275 bytes)`；
-- `applied 3 patch(es)`；
-- `all patches reversed cleanly`；
-- `git apply --stat` 显示 0003 改 `net/base/features.cc` 共 9 行（+7/−2）。
+## 2. What Nanfu maintains ourselves
 
-这证明 0003 对钉住版本的真实文件可 apply/可回滚；**仍不证明能编译、更不证明行为生效**。
+| Thing | Where | What it does | Status |
+| --- | --- | --- | --- |
+| Environment records | `N:nanfu_environments.py:33-91` | name/id/proxy/`proxy_mode=fixed`/`rotate_fingerprint_on_reload`; atomic JSON save; validation on load | verified (source) |
+| Proxy syntax validation | `N:nanfu_environments.py:16-30` | http/https/socks4/socks5, port required, **credentials in the URL rejected** | verified (source) |
+| Batch creation | `N:nanfu_environments.py:46-50` | 1-1000 environments with a shared proxy | verified (source) |
+| Launch flags | `M:fingerprint.ts:214-245` | derives `--fingerprint`, screen w/h, platform, timezone, locale, `--fingerprint-hardware-concurrency`, `--fingerprint-noise` | verified (source) |
+| WebRTC flag | `M:launcher.ts:1383-1386`, `M:launcher.ts:1500-1503` | `--force-webrtc-ip-handling-policy` always; `--fingerprint-webrtc-ip` only when Windows **and** a proxy is set **and** the build feature is on | verified (source) |
+| Runtime pin | `M:aliasmode-chromium.ts:18-31` | version + archive/executable SHA-256 | verified (source) |
+| Installer branding | `vendor/aliasmode/src-tauri/nanfu.conf.json` | product name, identifier, bundled resources | verified (source) |
+| Kernel patches | `kernel/patches/` | three diffs against existing upstream files, in `series`; **none compiled or measured** | verified (source) |
 
-### 一眼结论
+## 3. Ranked gaps against BitBrowser-class products
 
-- **真正经过本仓库实测的只有 6 类**：环境/存储隔离、种子对 Canvas 的影响、多开隔离、固定代理不回退（范围受限）、Windows 包安装启动、品牌替换。
-- **上游 `--fingerprint-*` 族没有一条在本仓库做过完整的全机一致性复核**；只有“seed 影响 Canvas”有实测，其余全是“仅报告”。
-- 自研补丁目前只证明了“补丁上下文正确”，**没有任何一条经过编译或真机验证**。
-- 最实在的三个差距：**字体（iphey 直接判死）**、**渲染/GPU 真值（宿主决定像素与 limits）**、**TLS 不能按 profile 定制**；另有一个几乎零成本就能测出来的 **chrome 高度 87 vs 133–143**。
+Ranked by (a) how easily a page can see it, (b) how often the competing
+products advertise a control for it, (c) how much of our own work it is.
+Status describes the evidence, not the size of the gap.
 
-## 证据文件索引
+| # | Gap | What a page can see | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| 1 | **WebRTC IP is Windows-only and proxy-only** | Real candidate addresses on macOS/Linux builds, and on Windows when no proxy is set: only host candidates are mDNS-obfuscated, server-reflexive ones still carry the real public address | `M:launcher.ts:1500-1503` gates on `win32 && proxy && chromiumRuntime && ALIASMODE_CHROMIUM_WEBRTC_IP`; the flag is pushed at `M:launcher.ts:1386`; `G:webrtc-needs-a-socks5-proxy-with-udp` | verified (source) |
+| 2 | **No geolocation control** | `navigator.geolocation` resolves to the host's real position (network/host provider) | No geolocation entry in the 149-name series listing; no geolocation switch in `S:`. Absence, not code | verified (source, by absence) |
+| 3 | **Browser chrome height is the host's** | `outerHeight - innerHeight` reads 87 at 100% scaling, headless and headed, on any host; real machines read 143 (Windows 11, 2026-09-14) and 133 (2026-09-26) | `G:browser-chrome-height` ("Not fixed"), upstream's own measurement, not ours | reported-only |
+| 4 | **No per-field hardware/GPU editing in our UI** | Every profile on a host reports the seed's cores/memory, capped at the host; no UI for GPU vendor/renderer or `deviceMemory` | `M:types.ts:71-74` (`ProfileHardware` has `cores` only); kernel can do it: `P:0085` | verified (source) |
+| 5 | **Fonts are limited to the host's installed families** | A Windows persona on a Linux/macOS host lacks Segoe UI and other Windows families; missing families are simply absent | `G:fonts-that-are-not-installed-are-absent` | reported-only |
+| 6 | **Readback noise is always on** | Canvas/WebGL/audio pixels are modified for every profile, and the modification is detectable by drawing one image at two scales | `M:fingerprint.ts:245` pushes `--fingerprint-noise` unconditionally; `S:--fingerprint-noise` warns "a page can detect the change … leave it off" | verified (source) |
+| 7 | **`--fingerprint-storage-quota` is a dead switch in 155** | `navigator.storage.estimate()` follows the profile's memory in incognito, but no operator value is delivered: the switch is not read by the 155 kernel | `M:fingerprint.ts:234` emits it **only when `!profile.chromiumRuntime`** (the legacy runtime); the 155 per-field set in `P:0085` (timezone, screen, locale, hardware concurrency, GPU vendor/renderer, device memory, anchor) has no quota entry, and `S:` has none either. An unknown switch is ignored silently, so the control looks present and does nothing | verified (source, by absence) |
+| 8 | **Host capture devices leak into the persona** | `enumerateDevices()` lists the host's camera/microphone, and labels become readable after a permission grant | `G:cameras-and-microphones` | reported-only |
+| 9 | **Keyboard layout is the US layout of the claimed platform, whatever the language** | `navigator.keyboard.getLayoutMap()` returns a US map for every persona | `G:keyboard-layout-is-us`; the map is profile-driven (`P:0021`, `P:0133`) and a written profile can carry another layout | reported-only |
+| 10 | **Cores/memory cannot exceed the host** | A small server forces every persona to the server's core count next to a desktop GPU | `G:cores-and-memory-are-capped` | reported-only |
+| 11 | **Kernel branding is not ours** | Human-visible product strings come from upstream's branding patch, not Nanfu | `P:0158` (product/company labels) | verified (source) |
+| 12 | **No mobile personas, no Intel Mac, no 32-bit Windows** | Platform mismatch on any device that expects them | `G:not-done-or-not-measured` | reported-only |
 
-- `kernel/pinned.json` — 钉住的 Chromium tag/commit 与补丁顺序
-- `kernel/README.md` — 构建/验证边界
-- `vendor/aliasmode-chromium/docs/reference/switches.mdx` — 全部开关、默认值、拒绝规则
-- `vendor/aliasmode-chromium/docs/guides/verify.mdx` — `what_a_page_sees.py` 的真实输出
-- `vendor/aliasmode-chromium/docs/concepts/detection.mdx` — 检测面与自动化痕迹
-- `vendor/aliasmode-chromium/docs/known-gaps.mdx` — 带日期的差距测量
-- `vendor/aliasmode-chromium/patches/series` — 上游 149 个补丁的应用顺序
-- `CHROMIUM_MIGRATION.md` — 本仓库已有的实测与 CI run 链接
+### Two contradictions worth fixing before any new patch
+
+1. **`--fingerprint-storage-quota` is dead in both directions.** Our manager only
+   computes a quota when `!profile.chromiumRuntime` (`M:fingerprint.ts:234`), so
+   it never reaches a 155 launch; and even if it did, the 155 kernel has no such
+   switch — the per-field set in `0085` has no quota entry and neither does the
+   published switch table. An unknown switch is ignored silently, so this is a
+   control we believe we have and do not. What the kernel does control is the
+   incognito quota's memory figure, via `P:0022`, which follows the profile.
+2. **We enable noise for every profile.** Upstream ships it off by default and
+   documents that a page can detect it. Turning it on globally trades a real
+   detection risk for canvas-hash uniqueness that most profiles do not need.
+
+Also inconsistent, lower stakes: our environment validator refuses proxy
+credentials in the URL (`N:nanfu_environments.py:29`) while the kernel supports
+them explicitly (`P:0110`), so the capability exists and we cannot reach it.
+
+## 4. How a row moves
+
+`reported-only` → `verified (runtime)` requires three artefacts, kept together:
+
+1. the probe JSON from `docs/fingerprint-probe.html`, run on the shipped build;
+2. `--fingerprint-explain` output for the same seed;
+3. the binary's version and the series revision it was built from.
+
+A row that the probe contradicts is corrected here, not defended. That is the
+only reason this file exists.

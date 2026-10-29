@@ -1,0 +1,21 @@
+# Nanfu kernel patch series.
+#
+# Every entry is a patch against the pinned upstream tag named by
+# Nanfu-Patch-Applies-To in the patch's own header (currently 155.0.8059.85).
+# Order matters: entries apply top to bottom, and a patch sees the tree as the
+# entries above it left it. A patch that needs a file another patch creates
+# goes after it.
+#
+# Constraints, checked by kernel/verify-patches.sh and enforced in review:
+#   - every patches/NNNN-*.patch file is listed here exactly once;
+#   - numbers are never reused, and a dropped patch leaves a gap on purpose;
+#   - entries otherwise ascend by number.
+#
+# Files under patches/examples/ are illustrations and are never listed here.
+# The order below is the list in kernel/pinned.json, which is authoritative.
+#
+# Format notes and the lifecycle of a patch: kernel/patches/README.md.
+
+0001-add-webgl-vendor-renderer-switches.patch
+0002-add-client-rects-jitter-seed.patch
+0003-tls-enable-server-handshake-padding.patch

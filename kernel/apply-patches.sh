@@ -1,35 +1,21 @@
-#!/usr/bin/env bash
-# Apply the Nanfu Chromium patch series to a Chromium source tree.
+#!/bin/sh
+# Compatibility shim. The only implementation is kernel/verify-patches.sh.
 #
-# Usage: kernel/apply-patches.sh /path/to/chromium/src
+# .github/workflows/kernel-patches.yml invokes this path by name, and that
+# workflow cannot be edited from here, so the path has to keep working. It does
+# nothing of its own: it runs the verifier in --in-tree mode, which applies the
+# series in order and checks each patch's promise against the resulting file.
 #
-# Each patch is checked before it is applied; the first failure aborts with a
-# non-zero exit status. The series is validated (apply + reverse) by
-# .github/workflows/kernel-patches.yml.
+# Use kernel/verify-patches.sh directly; this file exists for the workflow only.
+#
+# Usage: kernel/apply-patches.sh <chromium-src-root>
 
-set -euo pipefail
+set -eu
 
-if [[ $# -ne 1 ]]; then
+if [ $# -ne 1 ]; then
   echo "usage: $0 <chromium-src-root>" >&2
   exit 2
 fi
 
-SRC_ROOT="$(cd "$1" && pwd)"
-PATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches"
-
-shopt -s nullglob
-patches=("$PATCH_DIR"/*.patch)
-if [[ ${#patches[@]} -eq 0 ]]; then
-  echo "no patches found in $PATCH_DIR" >&2
-  exit 1
-fi
-
-for patch in "${patches[@]}"; do
-  name="$(basename "$patch")"
-  echo "==> ${name}: git apply --check"
-  git -C "$SRC_ROOT" apply --check "$patch"
-  echo "==> ${name}: git apply"
-  git -C "$SRC_ROOT" apply "$patch"
-done
-
-echo "applied ${#patches[@]} patch(es) to $SRC_ROOT"
+exec sh "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/verify-patches.sh" \
+  --in-tree --allow-dirty "$1"

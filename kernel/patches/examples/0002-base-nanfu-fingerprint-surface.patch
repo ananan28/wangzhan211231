@@ -1,0 +1,140 @@
+Subject: [PATCH] base: name every fingerprint surface once
+
+Adds base/nanfu/surface.h, an enum listing each surface the kernel
+composes or audits, with SurfaceName() returning the JSON key that
+docs/fingerprint-probe.html emits for the same surface. A patch in this
+series names the surface it changes in its own header, and a probe result
+diffed against --fingerprint-explain needs no translation table.
+
+Header only, included by nothing yet, for the same reason as 0001.
+
+Nanfu-Patch-Applies-To: 155.0.8059.85
+Nanfu-Patch-Promise: base/nanfu/surface.h::"webrtc_candidates"
+Nanfu-Patch-Promise: base/nanfu/surface.h::kMaxValue = kNotificationPermission
+Nanfu-Patch-Surfaces: all (index only)
+
+diff --git a/base/nanfu/surface.h b/base/nanfu/surface.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..85926127e2b6171aa396c0e837bfcdfc3f150ed3
+--- /dev/null
++++ b/base/nanfu/surface.h
+@@ -0,0 +1,119 @@
++// Copyright 2026 The Nanfu Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef BASE_NANFU_SURFACE_H_
++#define BASE_NANFU_SURFACE_H_
++
++#include <array>
++#include <cstddef>
++#include <string_view>
++
++namespace base::nanfu {
++
++// One entry per fingerprint surface the kernel composes or audits. The names
++// are exactly the JSON keys docs/fingerprint-probe.html emits, so a probe run
++// can be diffed against --fingerprint-explain with no translation table, and a
++// patch in this series names the surface it changes in its own header.
++enum class Surface : size_t {
++  kUserAgent,
++  kUaChBrands,
++  kUaChFullVersionList,
++  kPlatform,
++  kLanguages,
++  kTimezone,
++  kHardwareConcurrency,
++  kDeviceMemory,
++  kScreenGeometry,
++  kDevicePixelRatio,
++  kPlugins,
++  kChromeRuntime,
++  kCanvasReadback,
++  kWebglVendorRenderer,
++  kWebglLimits,
++  kWebglExtensions,
++  kWebgpuAdapter,
++  kAudioReadback,
++  kFonts,
++  kSpeechVoices,
++  kMediaDevices,
++  kWebrtcCandidates,
++  kStorageQuota,
++  kNotificationPermission,
++  kMaxValue = kNotificationPermission,
++};
++
++inline constexpr std::array<Surface, 24> kSurfaces = {
++    Surface::kUserAgent,          Surface::kUaChBrands,
++    Surface::kUaChFullVersionList, Surface::kPlatform,
++    Surface::kLanguages,          Surface::kTimezone,
++    Surface::kHardwareConcurrency, Surface::kDeviceMemory,
++    Surface::kScreenGeometry,     Surface::kDevicePixelRatio,
++    Surface::kPlugins,            Surface::kChromeRuntime,
++    Surface::kCanvasReadback,     Surface::kWebglVendorRenderer,
++    Surface::kWebglLimits,        Surface::kWebglExtensions,
++    Surface::kWebgpuAdapter,      Surface::kAudioReadback,
++    Surface::kFonts,              Surface::kSpeechVoices,
++    Surface::kMediaDevices,       Surface::kWebrtcCandidates,
++    Surface::kStorageQuota,       Surface::kNotificationPermission,
++};
++
++// The probe page's JSON key for a surface. Stable: a rename here is a breaking
++// change to every stored probe result, so it is never done casually.
++inline constexpr std::string_view SurfaceName(Surface surface) {
++  switch (surface) {
++    case Surface::kUserAgent:
++      return "user_agent";
++    case Surface::kUaChBrands:
++      return "ua_ch_brands";
++    case Surface::kUaChFullVersionList:
++      return "ua_ch_full_version_list";
++    case Surface::kPlatform:
++      return "platform";
++    case Surface::kLanguages:
++      return "languages";
++    case Surface::kTimezone:
++      return "timezone";
++    case Surface::kHardwareConcurrency:
++      return "hardware_concurrency";
++    case Surface::kDeviceMemory:
++      return "device_memory";
++    case Surface::kScreenGeometry:
++      return "screen_geometry";
++    case Surface::kDevicePixelRatio:
++      return "device_pixel_ratio";
++    case Surface::kPlugins:
++      return "plugins";
++    case Surface::kChromeRuntime:
++      return "chrome_runtime";
++    case Surface::kCanvasReadback:
++      return "canvas_readback";
++    case Surface::kWebglVendorRenderer:
++      return "webgl_vendor_renderer";
++    case Surface::kWebglLimits:
++      return "webgl_limits";
++    case Surface::kWebglExtensions:
++      return "webgl_extensions";
++    case Surface::kWebgpuAdapter:
++      return "webgpu_adapter";
++    case Surface::kAudioReadback:
++      return "audio_readback";
++    case Surface::kFonts:
++      return "fonts";
++    case Surface::kSpeechVoices:
++      return "speech_voices";
++    case Surface::kMediaDevices:
++      return "media_devices";
++    case Surface::kWebrtcCandidates:
++      return "webrtc_candidates";
++    case Surface::kStorageQuota:
++      return "storage_quota";
++    case Surface::kNotificationPermission:
++      return "notification_permission";
++  }
++  return "unknown";
++}
++
++}  // namespace base::nanfu
++
++#endif  // BASE_NANFU_SURFACE_H_

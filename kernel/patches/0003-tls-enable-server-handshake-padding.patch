@@ -1,4 +1,4 @@
-Applies-To: refs/tags/155.0.8059.85
+Nanfu-Patch-Applies-To: 155.0.8059.85
 Subject: [PATCH] tls: enable the server handshake padding Chrome gets from its field trial
 
 Google Chrome turns on AddTLSServerHandshakePadding through a field trial and
@@ -6,6 +6,8 @@ its ClientHello asks for 4000 bytes. A stock build runs no field trials, so its
 ClientHello omits the server_padding extension (0x12e0) and its JA4 reads
 t13d1517h2 where Chrome 155 reads t13d1518h2. Enable the feature with the
 4000-byte request so the TLS fingerprint matches the browser we ship.
+
+Nanfu-Patch-Promise: net/base/features.cc::Nanfu: enable the server handshake padding
 
 diff --git a/net/base/features.cc b/net/base/features.cc
 --- a/net/base/features.cc
