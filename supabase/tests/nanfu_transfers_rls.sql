@@ -1088,7 +1088,8 @@ declare blocked boolean := false;
 begin
   begin
     perform public.nanfu_org_redeem_invite((select code from public.nanfu_test_codes where label = 'late-invite'));
-  exception when raise_exception then
+  exception when others then
+    -- The refusal arrives as SQLSTATE 42501, not P0001, so match on the text.
     if sqlerrm not like 'NANFU_FORBIDDEN: this account already belongs to an organization%' then raise; end if;
     blocked := true;
   end;
