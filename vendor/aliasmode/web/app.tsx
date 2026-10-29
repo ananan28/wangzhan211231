@@ -168,6 +168,9 @@ const REFRESH_MS = 3000;
 const PROFILE_PAGE_SIZE = 50;
 const PAGE_SIZES = [25, 50, 100, 200];
 
+// 南孚版必须登录使用：本地模式不提供，也不接受遗留的本地配置。
+const ALLOW_LOCAL_MODE = false;
+
 const PAGE_TITLES: Record<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "nanfu" | "nanfu-transfer", string> = {
   profiles: "Profiles",
   scripts: "Scripts",
@@ -1364,7 +1367,6 @@ function App() {
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [confirmationEmail, setConfirmationEmail] = useState("");
   const [authCode, setAuthCode] = useState("");
-  const [localPrompt, setLocalPrompt] = useState(false);
   const [invitationCode, setInvitationCode] = useState("");
   const [team, setTeam] = useState<CloudTeamState | null>(null);
   const [teamEmail, setTeamEmail] = useState("");
@@ -1515,7 +1517,7 @@ function App() {
   // Profiles that need a proxy. Local mode only: a Cloud profile shows no
   // proxy until its encrypted payload is fetched, so the count would be wrong.
   const profilesWithoutProxy = isCloudMode ? 0 : profiles.filter((p) => !p.proxy?.trim()).length;
-  const workspaceReady = appMode?.mode === "local" || (isCloudMode && cloudWorkspaceReady(cloudAuth));
+  const workspaceReady = (ALLOW_LOCAL_MODE && appMode?.mode === "local") || (isCloudMode && cloudWorkspaceReady(cloudAuth));
   const canEditCloud = !isCloudMode || cloudAuth?.workspace?.role === "owner" || cloudAuth?.workspace?.role === "admin" ||
     team?.folders.some((folder) => folder.permission === "edit" && !folder.archivedAt) === true;
   const canManageCloudFolders = cloudAuth?.workspace?.role === "owner" || cloudAuth?.workspace?.role === "admin";
@@ -2223,7 +2225,11 @@ function App() {
   }, []);
 
   useEffect(() => {
-    fetchAppMode().then((config) => {
+    fetchAppMode().then(async (config) => {
+      if (
+        !ALLOW_LOCAL_MODE && config.mode === "local" &&
+        await chooseMode("cloud")
+      ) return;
       setAppMode(config);
       setRestartRequired(config.restartRequired === true);
     }).catch((error) => {
@@ -3513,16 +3519,6 @@ function App() {
                   <button className="mode-secondary" type="button" disabled={authBusy} onClick={() => void signInInstead()}>{t("Sign in instead")}</button>
                 </div>
               </>
-            ) : localPrompt ? (
-              <>
-                <h1 id="onboarding-title">{t("Continue without Cloud?")}</h1>
-                <p>{t("Local profiles stay on this computer only. They do not sync across your devices. You can switch to Cloud later in Settings.")}</p>
-                {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-                <div className="local-choice">
-                  <button className="mode-primary" type="button" disabled={modeBusy} onClick={() => { setModeErr(null); setLocalPrompt(false); }}>{t("Back to Cloud sign-in")}</button>
-                  <button className="mode-secondary" type="button" disabled={modeBusy} onClick={() => void chooseMode("local")}>{modeBusy ? t("Switching…") : t("Continue locally")}</button>
-                </div>
-              </>
             ) : authView === "verify" ? (
               <>
                 <h1 id="onboarding-title">{t("Check your email")}</h1>
@@ -3567,7 +3563,6 @@ function App() {
                   {authView === "signin" && <button type="button" disabled={authBusy} onClick={() => void forgotPassword()}>{t("Forgot password?")}</button>}
                 </div>
                 {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-                <button type="button" className="continue-local" disabled={authBusy} onClick={() => { setModeErr(null); setLocalPrompt(true); }}>{t("Continue locally instead")}</button>
               </>
             )
           ) : appMode ? (
@@ -3579,11 +3574,6 @@ function App() {
                   <span className="badge"><Icon name="cloud" className="lg" /></span>
                   <strong>AliasMode Cloud</strong>
                   <span>{t("Sync your profiles across your computers and work with your team.")}</span>
-                </button>
-                <button className="mode-option" type="button" disabled={modeBusy} onClick={() => chooseMode("local")}>
-                  <span className="badge"><Icon name="laptop" className="lg" /></span>
-                  <strong>AliasMode Local</strong>
-                  <span>{t("No account. Profile data stays on this computer and analytics is off.")}</span>
                 </button>
               </div>
               {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
@@ -4697,16 +4687,18 @@ function App() {
               </div>
             </div>
           </section>
-          <section className="settings-card">
-            <header><Icon name={isCloudMode ? "laptop" : "cloud"} className="sm" /><h2>{t("Switch mode")}</h2></header>
-            <div className="card-body settings-mode">
-              <p>{isCloudMode ? t("Local mode keeps this installation offline from AliasMode Cloud.") : t("Cloud mode requires an account and does not upload Local profiles automatically.")}</p>
-              <button className="btn" type="button" disabled={modeBusy || desktopUpdateInstalling} onClick={() => requestModeSwitch(isCloudMode ? "local" : "cloud")}>
-                <Icon name={isCloudMode ? "laptop" : "cloud"} className="sm" />
-                {t("Switch to {target}", { target: isCloudMode ? t("Local") : t("Cloud") })}
-              </button>
-            </div>
-          </section>
+          {ALLOW_LOCAL_MODE && (
+            <section className="settings-card">
+              <header><Icon name="laptop" className="sm" /><h2>{t("Switch mode")}</h2></header>
+              <div className="card-body settings-mode">
+                <p>{t("Local mode keeps this installation offline from AliasMode Cloud.")}</p>
+                <button className="btn" type="button" disabled={modeBusy || desktopUpdateInstalling} onClick={() => requestModeSwitch("local")}>
+                  <Icon name="laptop" className="sm" />
+                  {t("Switch to {target}", { target: t("Local") })}
+                </button>
+              </div>
+            </section>
+          )}
           
             </>
           )}
