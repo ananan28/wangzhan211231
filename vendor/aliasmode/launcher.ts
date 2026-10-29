@@ -29,7 +29,7 @@ import {
   statSync,
   statfsSync,
 } from "node:fs";
-import { rm } from "node:fs/promises";
+import { readdir, rm, stat } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { dlopen, ptr } from "bun:ffi";
 import type { CookieRecord, LaunchInfo, Profile, ProxySpec } from "./types.ts";
@@ -3894,7 +3894,7 @@ export class Launcher {
    * state. Skips a live browser: on Windows its cache files are locked, and
    * deleting them under a running Chrome risks corruption. Never throws.
    */
-  async clearCache(profileId: string): Promise<{ cleared: boolean }> {
+  async clearCache(profileId: string): Promise<{ cleared: boolean; freedBytes: number }> {
     const dirs = this.store.getProfile(profileId)?.engine === "firefox" ? FIREFOX_CACHE_DIRS : CACHE_DIRS;
     return this.clearCacheDirs(profileId, dirs, "clearCache");
   }
@@ -3916,23 +3916,26 @@ export class Launcher {
     profileId: string,
     cacheDirs: readonly string[],
     op: string,
-  ): Promise<{ cleared: boolean }> {
+  ): Promise<{ cleared: boolean; freedBytes: number }> {
     // The id arrives from an unauthenticated local HTTP body. Only clear caches
     // for a KNOWN profile, and only inside the data root — a "../" id must never
     // let a request rm cache directories elsewhere on disk.
-    if (!this.store.getProfile(profileId)) return { cleared: false };
+    if (!this.store.getProfile(profileId)) return { cleared: false, freedBytes: 0 };
     // A retained row means teardown was not confirmed even when CDP is dead.
     // Never delete cache files under that possibly-live Chromium process.
-    if (this.store.getLaunch(profileId)) return { cleared: false };
+    if (this.store.getLaunch(profileId)) return { cleared: false, freedBytes: 0 };
     const base = this.containedUserDataDir(profileId, op);
-    if (!base) return { cleared: false };
+    if (!base) return { cleared: false, freedBytes: 0 };
     let cleared = false;
+    let freedBytes = 0;
     for (const rel of cacheDirs) {
       const dir = join(base, rel);
       try {
         if (existsSync(dir)) {
-          // Async: this thread also runs every browser's proxy relay, and a
-          // synchronous delete of a large cache stalls all of their traffic.
+          // Measure first so the caller can report what was freed; the walk is
+          // bounded because this thread also serves every browser's proxy relay.
+          freedBytes += await this.directoryBytes(dir);
+          // Async: a synchronous delete of a large cache stalls all proxy traffic.
           await rm(dir, { recursive: true, force: true });
           cleared = true;
         }
@@ -3940,7 +3943,35 @@ export class Launcher {
         /* best-effort: a locked/missing dir must not fail cleanup */
       }
     }
-    return { cleared };
+    return { cleared, freedBytes };
+  }
+
+  /** Bytes under a directory; bounded so a pathological tree cannot stall the server. */
+  private async directoryBytes(root: string, budget = 60_000): Promise<number> {
+    let total = 0;
+    const pending = [root];
+    while (pending.length > 0 && budget > 0) {
+      const current = pending.pop()!;
+      let entries;
+      try {
+        entries = await readdir(current, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (--budget <= 0) return total;
+        const child = join(current, entry.name);
+        if (entry.isDirectory()) pending.push(child);
+        else if (entry.isFile()) {
+          try {
+            total += (await stat(child)).size;
+          } catch {
+            /* the file vanished mid-walk */
+          }
+        }
+      }
+    }
+    return total;
   }
 
   /**

@@ -84,6 +84,7 @@ import {
   openProfileAtUrl,
   closeProfile,
   raiseProfile,
+  clearProfileCache,
   restoreParkedSession,
   fetchExtensions,
   installWebStoreExtension,
@@ -1334,6 +1335,11 @@ function GrantControl({ label, direct, inherited, busy, onChange }: {
     </select>
     <small>{t("Effective access: {permission}", { permission: permissionLabel(effective) })}{inherited && direct ? ` · ${t("Inherited: {permission}", { permission: permissionLabel(inherited) })}` : ""}</small>
   </label>;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  return `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`;
 }
 
 function App() {
@@ -2692,6 +2698,23 @@ function App() {
       setActionErr(String(e));
     } finally {
       setBusy((b) => ({ ...b, [id]: false }));
+    }
+  };
+  const clearCache = async (p: { id: string; name: string }) => {
+    if (!window.confirm(`清除「${p.name}」的本机缓存？
+
+只删除可重建的缓存（网页缓存、代码缓存、GPU 缓存、Service Worker），Cookie 和登录态保留。请先关闭该环境。`)) return;
+    setActionErr(null);
+    setBusy((b) => ({ ...b, [p.id]: true }));
+    try {
+      const r = await clearProfileCache(p.id);
+      if (r && r.ok === false) setActionErr(r.error || "清理缓存失败");
+      else if (r && typeof r.freedBytes === "number" && r.freedBytes > 0) flash(`已清理缓存，释放 ${formatBytes(r.freedBytes)}`);
+      else flash("缓存本来就是空的，没有可释放的空间");
+    } catch (e) {
+      setActionErr(String(e));
+    } finally {
+      setBusy((b) => ({ ...b, [p.id]: false }));
     }
   };
 
@@ -4230,6 +4253,15 @@ function App() {
                           >
                             指纹自检
                           </button>
+                        )}
+                        {!isCloudMode && !p.running && (
+                          <button
+                            className="btn sm"
+                            title="删除可重建的磁盘缓存，保留 Cookie 和登录态"
+                            aria-label={`清理 ${p.name} 的本机缓存`}
+                            disabled={busy[p.id]}
+                            onClick={() => void clearCache(p)}
+                          >清理缓存</button>
                         )}
                         {p.running ? (
                           <>

@@ -880,6 +880,7 @@ export const openProfileAtUrl = (id: string, url: string) =>
   post(`/ui/api/profiles/${encodeURIComponent(id)}/open?url=${encodeURIComponent(url)}`);
 export const closeProfile = (id: string) => post(`/ui/api/profiles/${encodeURIComponent(id)}/close`);
 export const raiseProfile = (id: string) => post(`/ui/api/profiles/${encodeURIComponent(id)}/raise`);
+export const clearProfileCache = (id: string) => post(`/ui/api/profiles/${encodeURIComponent(id)}/clear-cache`);
 export const restoreParkedSession = (id: string) =>
   post(`/ui/api/profiles/${encodeURIComponent(id)}/restore-session`);
 export const importInbox = () => post("/ui/api/import");

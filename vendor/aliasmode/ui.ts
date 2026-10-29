@@ -2687,7 +2687,7 @@ export async function handleUiRequest(
           : Response.json({ ok: false, error: "browser teardown unconfirmed" }, { status: 500 });
       }
       const r = await launcher.clearCache(id);
-      return Response.json({ ok: true, cleared: r.cleared });
+      return Response.json({ ok: true, cleared: r.cleared, freedBytes: r.freedBytes });
     } catch (e) {
       // A preflight refusal says what happened and what to do instead of its bare code.
       return Response.json({ ok: false, error: e instanceof BrowserLaunchError && e.guidance ? e.guidance : msg(e) }, { status: 500 });
