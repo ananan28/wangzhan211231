@@ -8,6 +8,37 @@
  * engine leaves to the host machine, and every patch below first reads the
  * live value so an engine answer is never overwritten twice.
  *
+ * The five surfaces this layer was asked to guarantee, and who answers each:
+ *
+ *  - navigator.webdriver: the engine, always. Its patch series drops the
+ *    AutomationControlled feature from --enable-automation, --headless,
+ *    --remote-debugging-pipe and --remote-debugging-port=0, so no launch switch
+ *    sets it; a client that asks through Emulation.setAutomationOverride still
+ *    gets it, by design. A JS answer would be a second answer to a settled
+ *    question and would hide that explicit request, so this layer has none.
+ *  - navigator.hardwareConcurrency: the engine, from
+ *    --fingerprint-hardware-concurrency or its own seed draw. The launcher caps
+ *    that flag at this computer's core count so Chromium starts at all. The only
+ *    thing left for the page is a ceiling: never report more than the profile
+ *    claims, never raise what the engine answered (see below).
+ *  - WebRTC host/mDNS candidates: mostly the engine. A proxied launch gets the
+ *    no-non-proxied-UDP page policy, and the engine's own patches rewrite
+ *    candidate text to the proxy exit IP — but only on Windows and only once an
+ *    exit IP was resolved. Until then the SDP a page reads still names the
+ *    machine (a LAN address or an mDNS UUID), and nothing above the page can
+ *    take that back out. So the page drops exactly those candidates, and keeps
+ *    every srflx/relay one so a proxied call still has a path out.
+ *  - navigator.plugins / navigator.mimeTypes: nobody. They follow whichever PDF
+ *    viewer the build shipped; a build that ships none leaves a desktop Chrome's
+ *    page looking at an empty list no desktop Chrome ever reports. Only the page
+ *    can fill them, and only while the engine's own answer is empty.
+ *  - Date.prototype.getTimezoneOffset + Intl.DateTimeFormat: the engine, at ICU
+ *    startup, in every process. A JS patch could only move some of the clocks —
+ *    Date#toString, Date#toLocaleString and worker realms would disagree with
+ *    it — which is a stronger signal than the host zone it replaced, so this
+ *    layer does not touch the clock. A zone the engine rejects is a profile-data
+ *    problem, and the probe reports it.
+ *
  * Everything here is a pure function of the stored profile. The same profile
  * produces the same directory content on every launch, and two profiles never
  * share a value drawn from the seed.
@@ -20,15 +51,22 @@ import { hostPlatformOs, seedFraction } from "./fingerprint.ts";
 import type { Profile } from "./types.ts";
 
 /** Bump when a patch or the delivered manifest changes; launch rewrites the directory. */
-export const FINGERPRINT_EXTENSION_REVISION = 1;
+export const FINGERPRINT_EXTENSION_REVISION = 2;
 
 /**
  * Master switch for the JS layer. Off by default: the engine already answers
  * most of these surfaces, and a second, unverified source can only make a
  * profile inconsistent. Set NANFU_FINGERPRINT_JS=1 for a supervised comparison
  * against the fingerprint probe before turning it on by default.
+ *
+ * The launcher reads this once, in the process that spawns the browser, so the
+ * variable must be in that process's environment at start-up.
  */
-export const FINGERPRINT_EXTENSION = process.env.NANFU_FINGERPRINT_JS === "1";
+export function fingerprintExtensionEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.NANFU_FINGERPRINT_JS === "1";
+}
+
+export const FINGERPRINT_EXTENSION = fingerprintExtensionEnabled();
 
 export const fingerprintExtensionDir = (userDataDir: string) => join(userDataDir, "nanfu-fingerprint");
 
@@ -87,6 +125,10 @@ export interface FingerprintExtensionConfig {
     groups: string[];
   };
   deviceMemory: number;
+  /** Present only when the profile claims a core count; a ceiling over the engine's answer. */
+  hardwareConcurrency?: number;
+  /** Present only when the profile has a proxy: the page drops host candidates that still name this machine. */
+  webRtc?: { filterHostCandidates: boolean };
 }
 
 interface GpuModel {
@@ -320,6 +362,10 @@ export function fingerprintExtensionConfig(profile: Profile): FingerprintExtensi
       groups: Array.from({ length: 2 }, (_, index) => hexId(seed, 1801 + index)),
     },
     deviceMemory,
+    // The engine's own launch switch carries these; they appear in config only so
+    // the ceiling and the candidate filter know what the profile already claimed.
+    ...(profile.hardware?.cores ? { hardwareConcurrency: profile.hardware.cores } : {}),
+    ...(profile.proxy ? { webRtc: { filterHostCandidates: true } } : {}),
   };
 }
 
@@ -556,6 +602,248 @@ export const FINGERPRINT_CONTENT_SOURCE = String.raw`
       });
     }
   } catch (error) {}
+
+  // ------------------------------------------------- hardwareConcurrency ceiling
+  // The engine answers this from --fingerprint-hardware-concurrency, or from its
+  // own seed draw when the launcher has nothing to pass. This block runs after
+  // the engine's bindings exist, so the live value is already the engine's
+  // answer: it only ever lowers a count the profile never claimed, and never
+  // raises the smaller number the engine had to report on this computer.
+  if (typeof CONFIG.hardwareConcurrency === "number" && CONFIG.hardwareConcurrency > 0) {
+    const ceiling = Math.floor(CONFIG.hardwareConcurrency);
+    const clamp = (original) => function hardwareConcurrency() {
+      const native = original.call(this);
+      return typeof native === "number" && native > ceiling ? ceiling : native;
+    };
+    if (typeof Navigator === "function") replace(Navigator.prototype, "hardwareConcurrency", clamp);
+    if (typeof WorkerNavigator === "function") replace(WorkerNavigator.prototype, "hardwareConcurrency", clamp);
+  }
+
+  // ------------------------------------------------------- plugins and mimeTypes
+  // No engine patch touches these two lists: they follow the PDF viewer the build
+  // ships, and a build that ships none leaves a desktop Chrome's page reporting an
+  // empty list that no desktop Chrome reports. Nothing outside the page can add
+  // them back, so fill them only while the engine's own answer is empty.
+  if (typeof PluginArray === "function" && typeof Plugin === "function"
+      && typeof MimeTypeArray === "function" && typeof MimeType === "function") {
+    const PDF_MIMES = [
+      { type: "application/pdf", suffixes: "pdf", description: "Portable Document Format" },
+      { type: "text/pdf", suffixes: "pdf", description: "Portable Document Format" },
+    ];
+    const PDF_PLUGINS = [
+      { name: "PDF Viewer", filename: "internal-pdf-viewer" },
+      { name: "Chrome PDF Viewer", filename: "internal-pdf-viewer" },
+      { name: "Chromium PDF Viewer", filename: "internal-pdf-viewer" },
+    ];
+    // A WebIDL array-like: the native prototype still supplies every member this
+    // object does not own, so instanceof holds, while each data member is own —
+    // a native accessor would throw on an object with no internal slot.
+    const arrayLike = (proto, items, keyOf, extra) => {
+      const target = Object.create(proto);
+      Object.defineProperty(target, "length", { value: items.length, enumerable: true, configurable: true });
+      items.forEach((item, index) => {
+        Object.defineProperty(target, String(index), { value: item, enumerable: true, configurable: true });
+      });
+      Object.defineProperty(target, "item", {
+        value: disguise(function item(index) {
+          const found = items[index >>> 0];
+          return found === undefined ? null : found;
+        }, { name: "item", length: 1 }),
+        writable: true, enumerable: true, configurable: true,
+      });
+      Object.defineProperty(target, "namedItem", {
+        value: disguise(function namedItem(name) {
+          const key = String(name);
+          const exact = items.find((item) => keyOf(item) === key);
+          if (exact !== undefined) return exact;
+          const loose = items.find((item) => keyOf(item).toLowerCase() === key.toLowerCase());
+          return loose === undefined ? null : loose;
+        }, { name: "namedItem", length: 1 }),
+        writable: true, enumerable: true, configurable: true,
+      });
+      if (extra) extra(target);
+      return target;
+    };
+    const rebuild = () => {
+      const mimes = PDF_MIMES.map((spec) => {
+        const mime = Object.create(MimeType.prototype);
+        for (const key of ["type", "suffixes", "description"]) {
+          Object.defineProperty(mime, key, { value: spec[key], enumerable: true, configurable: true });
+        }
+        return mime;
+      });
+      const asMimeArray = () => arrayLike(MimeTypeArray.prototype, mimes, (mime) => mime.type);
+      const plugins = PDF_PLUGINS.map((spec) => arrayLike(Plugin.prototype, mimes, (mime) => mime.type, (plugin) => {
+        Object.defineProperty(plugin, "name", { value: spec.name, enumerable: true, configurable: true });
+        Object.defineProperty(plugin, "filename", { value: spec.filename, enumerable: true, configurable: true });
+        Object.defineProperty(plugin, "description", { value: "Portable Document Format", enumerable: true, configurable: true });
+        Object.defineProperty(plugin, "mimeTypes", { value: asMimeArray(), enumerable: true, configurable: true });
+      }));
+      // Chrome names the first plugin as the one a PDF MIME type comes from.
+      for (const mime of mimes) {
+        Object.defineProperty(mime, "enabledPlugin", { value: plugins[0], enumerable: true, configurable: true });
+      }
+      const pluginArray = arrayLike(PluginArray.prototype, plugins, (plugin) => plugin.name, (target) => {
+        Object.defineProperty(target, "refresh", {
+          value: disguise(function refresh() {}, { name: "refresh", length: 0 }),
+          writable: true, enumerable: true, configurable: true,
+        });
+      });
+      return { plugins: pluginArray, mimeTypes: asMimeArray() };
+    };
+    let built = null;
+    const fill = (pick) => (original) => function filledList() {
+      const native = original.call(this);
+      try {
+        if (native && native.length > 0) return native;
+      } catch (error) {
+        return native;
+      }
+      if (!built) built = rebuild();
+      return pick(built);
+    };
+    replace(Navigator.prototype, "plugins", fill((fake) => fake.plugins));
+    replace(Navigator.prototype, "mimeTypes", fill((fake) => fake.mimeTypes));
+  }
+
+  // ------------------------------------------------------------ WebRTC candidates
+  // A proxied profile gets the no-non-proxied-UDP page policy, and the engine's
+  // own patches rewrite candidate text to the proxy exit IP — on Windows, once
+  // that exit IP was resolved. In every other case the SDP a page reads still
+  // carries this machine's LAN address or its mDNS name, and nothing above the
+  // page can take one back out. Drop exactly those host candidates and keep every
+  // srflx/relay candidate, so a proxied call keeps a path out.
+  const webRtc = CONFIG.webRtc;
+  if (webRtc && webRtc.filterHostCandidates && typeof RTCPeerConnection === "function"
+      && typeof RTCSessionDescription === "function" && typeof EventTarget === "function") {
+    const privateAddress = (address) => {
+      const value = String(address || "").toLowerCase();
+      if (!value || value === "0.0.0.0" || value === "::") return true;
+      if (/\.local$/.test(value)) return true;
+      if (/^::ffff:/.test(value)) return privateAddress(value.slice(7));
+      if (/^f[cd][0-9a-f]{0,2}:/.test(value) || /^fe[89ab][0-9a-f]:/.test(value) || value === "::1") return true;
+      if (!/^\d+\.\d+\.\d+\.\d+$/.test(value)) return false;
+      const [a, b] = value.split(".").map(Number);
+      return a === 0 || a === 10 || a === 127
+        || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
+        || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+    };
+    // A host candidate that names this machine; srflx, relay and prflx always
+    // stay, and so does an end-of-candidates event (its candidate is empty).
+    const leaks = (candidate) => {
+      if (!candidate) return false;
+      let type = candidate.type;
+      let address = candidate.address;
+      if (typeof type !== "string" || typeof address !== "string") {
+        const match = /^candidate:\S+ \d+ \S+ \d+ (\S+) \d+ typ (\S+)/.exec(String(candidate.candidate || ""));
+        if (match) {
+          if (typeof address !== "string") address = match[1];
+          if (typeof type !== "string") type = match[2];
+        }
+      }
+      return type === "host" && privateAddress(address);
+    };
+    const scrub = (sdp) => {
+      // Chrome writes CRLF; a page-built description may use LF alone.
+      const eol = sdp.indexOf("\r\n") >= 0 ? "\r\n" : "\n";
+      let dropped = false;
+      const kept = sdp.split(eol).filter((line) => {
+        const match = /^a=candidate:\S+ \d+ \S+ \d+ (\S+) \d+ typ (\S+)/.exec(line);
+        if (!match || match[2].toLowerCase() !== "host" || !privateAddress(match[1])) return true;
+        dropped = true;
+        return false;
+      });
+      return dropped ? kept.join(eol) : sdp;
+    };
+    const scrubDescription = (description) => {
+      if (!description || typeof description.sdp !== "string") return description;
+      const sdp = scrub(description.sdp);
+      if (sdp === description.sdp) return description;
+      return new RTCSessionDescription({ type: description.type, sdp });
+    };
+    for (const key of ["localDescription", "currentLocalDescription", "pendingLocalDescription"]) {
+      replace(RTCPeerConnection.prototype, key, (original) => function description() {
+        const value = original.call(this);
+        try {
+          return scrubDescription(value);
+        } catch (error) {
+          return value;
+        }
+      });
+    }
+
+    const filterEvent = (event) => {
+      try {
+        return event && event.candidate && leaks(event.candidate) ? null : event;
+      } catch (error) {
+        return event;
+      }
+    };
+    const wrapListener = (listener) => {
+      if (typeof listener === "function") {
+        return function icecandidate(event) {
+          const kept = filterEvent(event);
+          if (kept) return listener.call(this, kept);
+        };
+      }
+      if (listener && typeof listener.handleEvent === "function") {
+        return {
+          handleEvent(event) {
+            const kept = filterEvent(event);
+            if (kept) listener.handleEvent(kept);
+          },
+        };
+      }
+      return listener;
+    };
+    // One wrapper per listener, so a later removeEventListener removes ours.
+    const wrappers = new WeakMap();
+    const wrapped = (listener, create) => {
+      if (!listener || (typeof listener !== "function" && typeof listener !== "object")) return listener;
+      let wrapper = wrappers.get(listener);
+      if (!wrapper && create) {
+        wrapper = wrapListener(listener);
+        wrappers.set(listener, wrapper);
+      }
+      return wrapper || listener;
+    };
+    // A candidate event a page must not see is dropped, not rewritten: the engine
+    // would only accept an RTCIceCandidate it built itself. The wrap sits on
+    // EventTarget and is guarded by instanceof, so RTCPeerConnection.prototype
+    // gains no own member that a stock engine does not have.
+    for (const entry of [["addEventListener", true], ["removeEventListener", false]]) {
+      const method = entry[0];
+      const create = entry[1];
+      replace(EventTarget.prototype, method, (original) => function listen(type, handler, options) {
+        try {
+          if (this instanceof RTCPeerConnection && String(type).toLowerCase() === "icecandidate") {
+            return original.call(this, type, wrapped(handler, create), options);
+          }
+        } catch (error) {}
+        return original.call(this, type, handler, options);
+      });
+    }
+
+    {
+      const descriptor = Object.getOwnPropertyDescriptor(RTCPeerConnection.prototype, "onicecandidate");
+      if (descriptor && typeof descriptor.get === "function" && typeof descriptor.set === "function") {
+        const handlers = new WeakMap();
+        Object.defineProperty(RTCPeerConnection.prototype, "onicecandidate", {
+          // The page must read back the handler it assigned, not our wrapper.
+          get: disguise(function onicecandidate() {
+            return handlers.has(this) ? handlers.get(this) : descriptor.get.call(this);
+          }, descriptor.get),
+          set: disguise(function onicecandidate(handler) {
+            if (handler) handlers.set(this, handler);
+            else handlers.delete(this);
+            descriptor.set.call(this, handler ? wrapListener(handler) : handler);
+          }, descriptor.set),
+          enumerable: descriptor.enumerable,
+          configurable: descriptor.configurable,
+        });
+      }
+    }
+  }
 
   // ----------------------------------------------------------- media devices
   // Chromium salts device ids per profile but reports the machine's real device
