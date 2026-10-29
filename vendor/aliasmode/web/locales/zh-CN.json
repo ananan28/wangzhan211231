@@ -741,5 +741,6 @@
   "{size} / page": "{size} / 页",
   "{total} rows": "{total} 行",
   "➕ New group…": "➕ 新建分组…",
-  "➕ New platform…": "➕ 新建网站/平台…"
+  "➕ New platform…": "➕ 新建网站/平台…",
+  "Move {folder}": "移动「{folder}」"
 }

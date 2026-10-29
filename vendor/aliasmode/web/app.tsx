@@ -4088,7 +4088,7 @@ function App() {
               <button className="btn ghost" onClick={() => { setNewMode(false); setNewGroup(""); }}>{t("cancel")}</button>
             )}
             <button className="btn accent" disabled={!selected.size || !selectedMovable || (newMode ? !newGroup.trim() : !moveTarget)} onClick={moveSelected}>
-              <Icon name="move" className="sm" />{t("Move")}
+              <Icon name="move" className="sm" />{t("Move to group")}
             </button>
           </div>
           {!isCloudMode && extensions.length > 0 && selectedProfilesSupportChromeExtensions && (
