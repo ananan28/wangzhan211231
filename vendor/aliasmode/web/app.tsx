@@ -112,6 +112,9 @@ import {
   saveTranslationSettings,
   sendTranslationKey,
   isNanfuSignInRequired,
+  fetchNanfuState,
+  nanfuAuthAction,
+  type NanfuAccountState,
 } from "./api.ts";
 import { NanfuAccountPage } from "./nanfu-account.tsx";
 import { NanfuGate } from "./nanfu-gate.tsx";
@@ -1394,6 +1397,7 @@ function App() {
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [connErr, setConnErr] = useState<string | null>(null);
   const [nanfuSignInRequired, setNanfuSignInRequired] = useState(false);
+  const [nanfuAccount, setNanfuAccount] = useState<NanfuAccountState | null>(null);
   const [notice, setNotice] = useState<string | null>(null); // transient success banner
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -2225,6 +2229,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    fetchNanfuState().then((result) => setNanfuAccount(result.state)).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     if (restartRequired) return;
     const readiness = appMode?.mode === "local"
       ? "local"
@@ -2252,7 +2260,7 @@ function App() {
   useEffect(() => {
     if (!appMode || restartRequired || desktopUpdateCheckStarted.current) return;
     desktopUpdateCheckStarted.current = true;
-    void checkDesktopUpdate(false);
+    // 南孚版不从上游 AliasMode 仓库检查更新。
   }, [appMode?.mode, restartRequired]);
 
   useEffect(() => {
@@ -4541,23 +4549,32 @@ function App() {
               <div className="identity-card">
                 <span className="identity-avatar"><Icon name="user" className="lg" /></span>
                 <span className="identity-lines">
-                  <b>{isCloudMode ? cloudAuth?.user?.email ?? t("Cloud account") : t("Local workspace")}</b>
-                  <span>
-                    {isCloudMode
-                      ? `${t(cloudAuth?.workspace?.role ?? "member")} · ${cloudAuth?.workspace?.name ?? t("Cloud workspace")}`
-                      : t("No account · profile data stays on this computer")}
-                  </span>
+                  <b>{nanfuAccount?.email ?? t("Local workspace")}</b>
+                  <span>{nanfuAccount?.authenticated ? "南孚账号 · 环境同步到云端" : t("No account · profile data stays on this computer")}</span>
                 </span>
-                <span className="chip">{isCloudMode ? t("Cloud") : t("Local")}</span>
+                <span className="chip">南孚</span>
               </div>
 <section className="settings-card">
             <header><Icon name="user" className="sm" /><h2>{t("Account")}</h2></header>
             <div className="card-body">
-            <div className="settings-row"><span>{t("Signed in as")}</span><strong>{isCloudMode ? cloudAuth?.user?.email ?? t("Cloud account") : t("Local · no account")}</strong></div>
+            <div className="settings-row"><span>{t("Signed in as")}</span><strong>{nanfuAccount?.email ?? t("Local · no account")}</strong></div>
             <div className="settings-row"><span>{t("Profiles stored")}</span><strong>{profiles.length}</strong></div>
-            {isCloudMode && cloudAuth?.authenticated && (
-              <button className="btn danger" type="button" disabled={authBusy} onClick={() => void signOut()}>
-                <Icon name="power" className="sm" />{authBusy ? t("Signing out…") : t("Sign out / Switch account")}
+            {nanfuAccount?.authenticated && (
+              <button
+                className="btn danger"
+                type="button"
+                disabled={authBusy}
+                onClick={async () => {
+                  try {
+                    await nanfuAuthAction("signout");
+                    setNanfuAccount({ authenticated: false });
+                    window.location.reload();
+                  } catch (error) {
+                    setAuthErr(error instanceof Error ? error.message : String(error));
+                  }
+                }}
+              >
+                <Icon name="power" className="sm" />{authBusy ? t("Signing out…") : "退出登录"}
               </button>
             )}
             {authErr && <p className="modal-err" role="alert">{authErr}</p>}
@@ -4884,16 +4901,6 @@ function App() {
             {!desktopUpdate && !desktopUpdateChecking && <p>{t("AliasMode checks for updates when it starts.")}</p>}
             {desktopUpdateProgress && <DesktopUpdateProgressView progress={desktopUpdateProgress} />}
             {desktopUpdateErr && <div className="modal-err" role="alert">{t(desktopUpdateErr)}</div>}
-            <div className="update-actions">
-              <button className="btn" type="button" disabled={desktopUpdateChecking || desktopUpdateInstalling} onClick={() => void checkDesktopUpdate(true)}>
-                <Icon name="refresh" className="sm" />{desktopUpdateChecking ? t("Checking…") : t("Check for updates")}
-              </button>
-              {desktopUpdate?.state === "available" && (
-                <button className="btn primary" type="button" disabled={desktopUpdateChecking || desktopUpdateInstalling} onClick={() => void installDesktopUpdate()}>
-                  {desktopUpdateInstalling ? t("Updating…") : t("Update now")}
-                </button>
-              )}
-            </div>
             </div>
           </section>
           
