@@ -5549,3 +5549,15 @@ test("Chromium 155 beta is refused on unsupported hosts before any download", as
   expect(downloads).toBe(0);
   store.close();
 });
+
+test("platformHomeUrl opens a full URL typed into the platform field", () => {
+  expect(platformHomeUrl("https://bsky.app/")).toBe("https://bsky.app/");
+  expect(platformHomeUrl("https://ananan28.github.io/temp-mail/?v=20261011-17")).toBe("https://ananan28.github.io/temp-mail/?v=20261011-17");
+  expect(platformHomeUrl("  https://truthsocial.com/@realDonaldTrump  ")).toBe("https://truthsocial.com/@realDonaldTrump");
+  expect(platformHomeUrl("https://example.com/Keep/Case?Q=1")).toBe("https://example.com/Keep/Case?Q=1");
+  expect(platformHomeUrl("https://user:pass@example.com/")).toBeNull(); // no embedded credentials
+  expect(platformHomeUrl("file:///C:/Windows")).toBeNull();
+  expect(platformHomeUrl("javascript:alert(1)")).toBeNull();
+  expect(platformHomeUrl("bsky.app")).toBe("https://bsky.app/");
+  expect(platformHomeUrl("truth social")).toBe("https://truthsocial.com/");
+});

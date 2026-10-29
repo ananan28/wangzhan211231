@@ -238,6 +238,17 @@ function gate() {
   return { promise, release };
 }
 
+/** Fails fast instead of leaving the runner blocked on a gate that never releases. */
+function deadline<T>(promise: Promise<T>, label: string, ms = 5_000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} did not settle within ${ms}ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 for (const action of ["signin", "restore"] as const) {
   test(`late ${action} cannot revive a signed-out session`, async () => {
     const started = gate();
@@ -249,11 +260,11 @@ for (const action of ["signin", "restore"] as const) {
       return Response.json(SESSION());
     }), { credentials: store, nowMs: () => 1_000 });
     const pending = action === "signin" ? runtime.signIn("user@example.com", "secret123") : runtime.restore();
-    const rejected = expect(pending).rejects.toBeInstanceOf(NanfuAccountChangedError);
-    await started.promise;
-    await runtime.signOut();
+    const settled = pending.then(() => null, (error) => error);
+    await deadline(started.promise, "sign-in request started");
+    await deadline(runtime.signOut(), "sign-out");
     response.release();
-    await rejected;
+    expect(await deadline(settled, "late sign-in rejection")).toBeInstanceOf(NanfuAccountChangedError);
     expect(runtime.state()).toEqual({ authenticated: false });
     expect(values.token).toBeNull();
     expect(values.saves).toEqual([]);
@@ -273,7 +284,7 @@ test("concurrent restores share one refresh and one credential rotation", async 
   const second = runtime.restore();
   expect(first).toBe(second);
   response.release();
-  await Promise.all([first, second]);
+  await Promise.all([deadline(first, "first restore"), deadline(second, "second restore")]);
   expect(refreshes).toBe(1);
   expect(values.saves).toEqual(["refresh-1"]);
 });
@@ -290,12 +301,13 @@ test("logout serializes behind a pending credential save and leaves no saved ses
     nowMs: () => 1_000,
   });
   const pending = runtime.signIn("user@example.com", "secret123");
-  const rejected = expect(pending).rejects.toBeInstanceOf(NanfuAccountChangedError);
-  await started.promise;
+  const settled = pending.then(() => null, (error) => error);
+  await deadline(started.promise, "credential save started");
   const logout = runtime.signOut();
   expect(runtime.state()).toEqual({ authenticated: false });
   saved.release();
-  await Promise.all([rejected, logout]);
+  expect(await deadline(settled, "save interrupted by logout")).toBeInstanceOf(NanfuAccountChangedError);
+  await deadline(logout, "logout after pending save");
   expect(values.saves).toEqual(["refresh-1"]);
   expect(values.token).toBeNull();
 });
@@ -325,17 +337,17 @@ test("late refresh and logout responses cannot erase a newer login", async () =>
   await runtime.signIn("user@example.com", "secret123");
   now = 100_000;
   const refreshing = runtime.accessTokenOrRefresh();
-  await refreshStarted.promise;
+  await deadline(refreshStarted.promise, "refresh request started");
   await runtime.signOut();
   await runtime.signIn("user@example.com", "secret123");
   refreshResponse.release();
-  expect(await refreshing).toBeUndefined();
+  expect(await deadline(refreshing, "late refresh")).toBeUndefined();
   expect(values.token).toBe("refresh-2");
   const logout = runtime.signOut();
-  await logoutStarted.promise;
+  await deadline(logoutStarted.promise, "logout request started");
   await runtime.signIn("user@example.com", "secret123");
   logoutResponse.release();
-  await logout;
+  await deadline(logout, "logout interrupted by newer login");
   expect(values.token).toBe("refresh-3");
   expect(await runtime.accessTokenOrRefresh()).toBe("access-3");
 });

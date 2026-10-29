@@ -137,7 +137,7 @@ export function buildNewProfile(input: NewProfileInput, exists: (id: string) => 
   const firefoxScreenWidth = firefox?.config["screen.width"];
   const firefoxScreenHeight = firefox?.config["screen.height"];
   const firefoxTimezone = firefox?.config.timezone;
-  const locale = input.locale ? normalizeProfileLocale(input.locale) : undefined;
+  const locale = normalizeProfileLocale(input.locale) ?? Intl.DateTimeFormat().resolvedOptions().locale;
   const timezone = input.timezone ? parseStrictTimezone(input.timezone) : undefined;
 
   const profile = completeProfileFingerprint({

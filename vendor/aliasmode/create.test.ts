@@ -280,3 +280,12 @@ test.each(["chromium", "firefox"] as const)("new %s profiles preserve every expl
     store.close();
   }
 });
+
+test("a new profile follows the machine language even when its timezone is elsewhere", () => {
+  const machine = Intl.DateTimeFormat().resolvedOptions().locale;
+  const auto = buildNewProfile({ engine: "chromium", timezone: "Asia/Bangkok" }, () => false);
+  expect(auto.timezone).toBe("Asia/Bangkok");
+  expect(auto.locale).toBe(machine);
+  const picked = buildNewProfile({ engine: "chromium", timezone: "Asia/Bangkok", locale: "en-US" }, () => false);
+  expect(picked.locale).toBe("en-US");
+});

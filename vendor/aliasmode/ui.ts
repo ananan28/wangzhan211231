@@ -9,7 +9,7 @@
  * cookie values, or proxy credentials. Same rule the `inspect` command follows.
  */
 
-import { BrowserLaunchError, type Launcher } from "./launcher.ts";
+import { BrowserLaunchError, platformHomeUrl, type Launcher } from "./launcher.ts";
 import type { ProfileStore } from "./store.ts";
 import type { AutomationHealthStatus } from "./remote-types.ts";
 import type { RemoteCoordinator } from "./remote.ts";
@@ -44,7 +44,7 @@ import { hostChromiumRuntime, supportsChromium155Host } from "./aliasmode-chromi
 import { buildNewProfile, defaultProfileEngine, type NewProfileInput } from "./create.ts";
 import { firefoxGraphicsRenderer } from "./firefox-config.ts";
 import { attachTimezones, lookupExitLocation, type FetchLike } from "./geoip.ts";
-import { localeForCountry, localeForTimezone, normalizeProfileLocale } from "./profile-locale.ts";
+import { normalizeProfileLocale } from "./profile-locale.ts";
 import { parseUpdateFile, rowsToUpdates, serializeCsv, serializeAdsTxt, serializeXlsxRows, parseStrictProxy, parseStrictResolution, parseStrictPlatformOs, parseStrictTimezone, parseStrictCustomNo, parseStrictCores, parseStrictSeed, decodeText } from "./parse.ts";
 import type { ProfileExport } from "./parse.ts";
 import { writeXlsx, readXlsx } from "./xlsx.ts";
@@ -521,7 +521,7 @@ function applyEdits(p: Profile, set: Record<string, unknown>): boolean {
     }
     p.platformOs = platformOs;
   }
-  if ("locale" in set) p.locale = normalizeProfileLocale(set.locale) ?? p.locale;
+  if ("locale" in set) p.locale = normalizeProfileLocale(set.locale) ?? Intl.DateTimeFormat().resolvedOptions().locale;
   if ("timezone" in set) {
     p.timezone = parseStrictTimezone(set.timezone);
     // A typed timezone stays when the proxy changes and on every launch. A blank one follows the proxy.
@@ -1426,7 +1426,7 @@ export async function handleUiRequest(
       // Best-effort: match the browser clock to the proxy's exit location. A
       // failed lookup keeps the host timezone.
       if (profile.proxy) {
-        await attachTimezones([profile], options.timezoneFetch, true).catch(() => {});
+        await attachTimezones([profile], options.timezoneFetch).catch(() => {});
         syncFirefoxTimezone(profile);
       }
       const created = options.cloudBrowser ? await options.cloudBrowser.create(profile) : undefined;
@@ -2119,7 +2119,6 @@ export async function handleUiRequest(
       }
       current.timezone = location.timezone;
       delete current.timezoneManual;
-      current.locale = localeForCountry(location.country) ?? localeForTimezone(location.timezone);
       syncFirefoxTimezone(current);
       store.upsertProfile(current);
       return Response.json({ ok: true, timezone: current.timezone, locale: current.locale });
@@ -2467,7 +2466,8 @@ export async function handleUiRequest(
     if (!profile) return Response.json({ ok: false, error: "no such profile" }, { status: 404 });
     try {
       if (action[2] === "open") {
-        const r = await launcher.start(id);
+        const home = /^https?:\/\//i.test(profile.platform.trim()) ? platformHomeUrl(profile.platform) : null;
+        const r = await launcher.start(id, home ? [home] : []);
         return openResponse(profile, r);
       }
       if (action[2] === "close") {

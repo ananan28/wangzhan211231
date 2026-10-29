@@ -45,6 +45,17 @@ function profile(overrides: Record<string, unknown> = {}): Profile {
 const params = createNanfuSyncKeyParams(1024);
 const cipher = () => new NanfuSyncCipher("correct horse battery staple", params);
 
+/** Fails fast instead of leaving the runner blocked on a gate that never releases. */
+function deadline<T>(promise: Promise<T>, label: string, ms = 5_000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} did not settle within ${ms}ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 test("the exporter carries configuration only and never account secrets or cookies", () => {
   const config = exportNanfuEnvironment(
     profile(),
@@ -325,13 +336,14 @@ test("cancelling visible queries aborts the fetch and leaves personal sync usabl
         init!.signal!.addEventListener("abort", () => { aborted = true; reject(new Error("cancelled")); }, { once: true });
         started();
       });
+
     },
   });
   const pending = client.visibleEnvironments("org-1");
-  const rejected = expect(pending).rejects.toBeInstanceOf(NanfuSyncError);
-  await waiting;
+  const settled = pending.then(() => null, (error: unknown) => error);
+  await deadline(waiting, "visible request started");
   client.cancelVisibleRequests();
-  await rejected;
+  expect(await deadline(settled, "cancelled visible request")).toBeInstanceOf(NanfuSyncError);
   expect(aborted).toBe(true);
   expect(await client.list("self")).toEqual([]);
 });

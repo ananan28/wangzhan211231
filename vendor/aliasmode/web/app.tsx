@@ -3098,9 +3098,9 @@ function App() {
     setTimezoneBusy(true);
     setEditErr(null);
     try {
-      const { timezone, locale } = await refreshProfileTimezone(id);
+      const { timezone } = await refreshProfileTimezone(id);
       if (editFetchId.current !== id || generation !== editProxyCheckGeneration.current) return;
-      setEditForm((form) => ({ ...form, timezone, locale }));
+      setEditForm((form) => ({ ...form, timezone }));
       setEditInitialFingerprint((initial) => ({ ...initial, timezone }));
       await load();
     } catch (error) {
@@ -3191,7 +3191,7 @@ function App() {
   };
   const doInstallWebStoreExtension = async () => {
     const source = extSource.trim();
-    if (!source) { setExtErr("Paste a Chrome Web Store URL or extension ID"); return; }
+    if (!source) { setExtErr("请粘贴 Chrome 扩展商店链接或32位扩展编号"); return; }
     setExtInstallBusy(true);
     setExtErr(null);
     try {
@@ -4398,42 +4398,42 @@ function App() {
           <h2 className="sect-title">{t("Extensions")}</h2>
           {extErr && <div className="modal-err"><Icon name="alert" className="sm" />{extErr}</div>}
           <section className="settings-card">
-            <header><Icon name="puzzle" className="sm" /><h2>Install from Chrome Web Store</h2></header>
+            <header><Icon name="puzzle" className="sm" /><h2>从 Chrome 扩展商店安装</h2></header>
             <div className="card-body">
-              <p>Paste a Chrome Web Store extension link or its 32-character ID.</p>
+              <p>粘贴扩展商店链接或32位扩展编号；也可在下方上传 ZIP / CRX 扩展包。</p>
               <form className="fld-row" onSubmit={(event) => { event.preventDefault(); void doInstallWebStoreExtension(); }}>
                 <input
                   className="input"
                   style={{ flex: 1 }}
-                  aria-label="Chrome Web Store URL or extension ID"
+                  aria-label="Chrome 扩展商店链接或扩展编号"
                   placeholder="https://chromewebstore.google.com/detail/…"
                   value={extSource}
                   onChange={(event) => setExtSource(event.target.value)}
                 />
                 <button className="btn primary" type="submit" disabled={extInstallBusy || extBusy}>
-                  <Icon name="plus" className="sm" />{extInstallBusy ? "Installing…" : "Install"}
+                  <Icon name="plus" className="sm" />{extInstallBusy ? "正在安装…" : "安装扩展"}
                 </button>
               </form>
             </div>
           </section>
-          <p className="formnote">The in-browser Store button does not work in CloakBrowser. Paste the Store link above, or upload a ZIP/CRX archive. Chrome extensions apply only to CloakBrowser profiles.</p>
+          <p className="formnote">扩展仅用于 Chromium 环境，不适用于 Firefox。安装后不会自动分配给所有环境，只启用你选中的扩展。</p>
           <ol className="steps">
-            <li>Install the extension here. New installs stay unassigned.</li>
-            <li>Use <b>Edit &gt; Extensions</b> to assign it to a profile{!isCloudMode && ", or assign many at once from the roster toolbar"}.</li>
-            <li>Reopen the profile. AliasMode loads the extension when the browser starts.</li>
+            <li>在此安装需要的扩展，新安装项默认未分配。</li>
+            <li>在<b>编辑环境 → 扩展</b>中选择需要的扩展{!isCloudMode && "，也可在环境列表勾选多个环境后批量添加或移除"}。</li>
+            <li>关闭并重新打开目标环境后，扩展才会加载。</li>
           </ol>
           <section className="settings-card">
-            <header><Icon name="folder" className="sm" /><h2>Group defaults</h2></header>
+            <header><Icon name="folder" className="sm" /><h2>分组默认扩展（可选）</h2></header>
             <div className="card-body">
-              <p>Choose the exact extensions assigned to this group.</p>
+              <p>只勾选此分组需要的扩展；不设置分组默认值也能为单个环境分配。</p>
               {editableDefaultGroups.length === 0 ? (
-                <p className="formnote">Create an editable group before setting its extension defaults.</p>
+                <p className="formnote">先创建一个可编辑分组，再设置默认扩展。</p>
               ) : (
                 <>
                   <label className="fld">
-                    <span>Group</span>
+                    <span>分组</span>
                     <select
-                      aria-label="Extension default group"
+                      aria-label="默认扩展分组"
                       value={groupDefaultName}
                       onChange={(event) => {
                         const name = event.target.value;
@@ -4458,11 +4458,11 @@ function App() {
                       ))}
                     </div>
                   ) : (
-                    <p className="formnote">No extensions are installed. Apply an empty selection to clear this default.</p>
+                    <p className="formnote">尚未安装扩展。应用空选项会清除此分组的默认扩展。</p>
                   )}
                   <p className="formnote">
-                    Applying replaces assignments on {groupDefaultProfileCount} current profile(s). New and moved profiles inherit it.
-                    Individual profiles can differ later. Reopen browsers to apply changes.
+                    应用后会替换此分组现有 {groupDefaultProfileCount} 个环境的扩展选择，新建或移入的环境也会继承。
+                    单个环境以后仍可单独修改；重开环境生效。
                   </p>
                   <button
                     type="button"
@@ -4470,7 +4470,7 @@ function App() {
                     disabled={groupDefaultBusy || !groupDefaultName}
                     onClick={applyGroupExtensionDefault}
                   >
-                    {groupDefaultBusy ? "Applying…" : "Apply group default"}
+                    {groupDefaultBusy ? "正在应用…" : "应用分组默认扩展"}
                   </button>
                 </>
               )}
@@ -4479,10 +4479,10 @@ function App() {
           {extensions.length === 0 ? (
             <div className="emptystate">
               <span className="glyph"><Icon name="puzzle" /></span>
-              <b>No extensions yet</b>
-              <p>Uploaded extensions appear here, ready to assign to any profile.</p>
+              <b>尚未安装扩展</b>
+              <p>上传后会显示在这里，再分配给你选中的环境。</p>
               <button className="btn primary" disabled={extBusy || extInstallBusy} onClick={() => extFileRef.current?.click()}>
-                <Icon name="plus" className="sm" />{extBusy ? "Uploading…" : "Upload ZIP/CRX"}
+                <Icon name="plus" className="sm" />{extBusy ? "正在上传…" : "上传 ZIP / CRX 扩展包"}
               </button>
             </div>
           ) : (
@@ -4492,7 +4492,7 @@ function App() {
                   <Icon name="puzzle" className="sm" />
                   <span className="extname">{x.name}</span>
                   <span className="spacer" />
-                  <button className="btn xs danger" disabled={extRemoveBusy} onClick={() => setExtRemoval(x)}>Remove</button>
+                  <button className="btn xs danger" disabled={extRemoveBusy} onClick={() => setExtRemoval(x)}>移除扩展</button>
                 </div>
               ))}
             </div>
@@ -4510,7 +4510,7 @@ function App() {
           <span className="spacer" />
           {extensions.length > 0 && (
             <button className="btn primary" type="button" disabled={extBusy || extInstallBusy} onClick={() => extFileRef.current?.click()}>
-              <Icon name="plus" className="sm" />{extBusy ? "Uploading…" : "Upload ZIP/CRX"}
+              <Icon name="plus" className="sm" />{extBusy ? "正在上传…" : "上传 ZIP / CRX 扩展包"}
             </button>
           )}
         </footer>
@@ -5354,7 +5354,7 @@ function App() {
                           onClick={refreshEditedTimezone}
                         >
                           <Icon name="activity" className="sm" />
-                          {timezoneBusy ? t("Looking up timezone and language…") : editHasProxy ? t("Set timezone and language from proxy") : t("Use current connection timezone and language")}
+                          {timezoneBusy ? "正在查询时区…" : editHasProxy ? "跟随代理 IP 设置时区（不改语言）" : "使用当前连接时区（不改语言）"}
                         </button>
                       </div>
                       <p className="hint">{editProxyChanged
@@ -5363,7 +5363,7 @@ function App() {
                     </>
                   )}
                   {editForm.locale && localeTimezoneMismatch(editForm.locale, editForm.timezone ?? "") && (
-                    <p className="hint">{t("This language does not match the timezone's country. Use “Set timezone and language from proxy” to match them.")}</p>
+                    <p className="hint">网页语言与你选择的时区不同，这是允许的。访问英文页面请选择 English (US)；中文翻译不需要把网页语言改成中文。</p>
                   )}
                   <div className="fld-row">
                     <CopyField label={t("Username")} value={editForm.username ?? ""} onChange={(value) => setEF("username", value)} />

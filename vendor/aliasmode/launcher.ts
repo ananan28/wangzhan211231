@@ -434,7 +434,16 @@ export function isTelegramPlatform(platform: string | undefined): boolean {
  * platforms — those keep the browser's default new-tab page.
  */
 export function platformHomeUrl(platform: string | undefined, telegramClient: "a" | "k" = "k"): string | null {
-  const p = (platform || "").trim().toLowerCase();
+  const value = (platform || "").trim();
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      return url.hostname && !url.username && !url.password ? url.href : null;
+    } catch { return null; }
+  }
+  const p = value.toLowerCase();
+  if (p === "bsky.app" || p === "bluesky") return "https://bsky.app/";
+  if (p === "truthsocial.com" || p === "truth social") return "https://truthsocial.com/";
   if (p === "x.com" || p === "x" || p === "twitter" || p === "twitter.com") return "https://x.com/home";
   if (p === "instagram" || p === "instagram.com" || p === "www.instagram.com") return "https://www.instagram.com/";
   if (p === "facebook" || p === "facebook.com" || p === "www.facebook.com") return "https://www.facebook.com/";
@@ -1812,6 +1821,8 @@ export class Launcher {
             const tabs = opts.restoreLastSession === false ? [] : this.closedFirefoxTabs(profileId, existing) ?? [];
             await this.navigate(currentWs, startupUrls.length ? startupUrls : tabs, true);
             nativeSessionRestored = !startupUrls.length && tabs.length > 0;
+          } else if (startupUrls.length && (opts.autoNavigate ?? true)) {
+            await this.navigate(currentWs, startupUrls);
           }
           this.log(
             trackedProc
