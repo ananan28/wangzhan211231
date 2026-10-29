@@ -234,7 +234,7 @@ export function nanfuOrganizationError(error: NanfuSyncError): { status: number;
     "42501": 403, NANFU_FORBIDDEN: 403, ORG_ALREADY_MEMBER: 403, NANFU_MEMBER_INACTIVE: 403,
     NANFU_EMAIL_INVALID: 400, NANFU_PASSWORD_INVALID: 400, NANFU_PARENT_INVALID: 400, NANFU_INPUT: 400,
     NANFU_EMAIL_TAKEN: 409, NANFU_ORG_QUOTA: 409, NANFU_ENV_QUOTA: 409, NANFU_GROUP_INVALID: 409,
-    "23505": 409, INVITE_EXPIRED: 409, INVITE_USED: 409, TRANSFER_EXPIRED: 409, "P0002": 404,
+    "23505": 409, INVITE_EXPIRED: 409, INVITE_USED: 409, TRANSFER_EXPIRED: 409, "P0002": 409,
   };
   const message = error.code && messages[error.code];
   if (message) return { status: statuses[error.code!] ?? 409, body: { ok: false, error: message, code: error.code } };

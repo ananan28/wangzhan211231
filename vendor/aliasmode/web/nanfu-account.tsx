@@ -193,7 +193,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
           <p className={atOwnQuotaLimit ? "modal-err" : ""} data-testid="nanfu-member-quota">本人配额：{organization.used} / {organization.quota === 0 ? "不限" : organization.quota}</p>
           {atOwnQuotaLimit && <p className="modal-err" role="alert">窗口额度已用满，新建或接收组织云端环境会被服务端拒绝；请删除不再使用的环境，或联系管理员调整额度。本机窗口不计入组织额度。</p>}
           {organization.locked || organization.status !== "active" ? <p role="alert">账号{organization.locked ? "已锁定" : "未锁定"} / {organization.status === "active" ? "启用" : "已停用"}，不能访问组织环境。请联系管理员。</p> : <>
-            <p>仅显示服务端授权可见的元数据；未下载到本机的组织条目不可启动，本批不包含登录态迁移。</p>
+            <p>仅显示服务端授权可见的元数据；未下载到本机的组织条目不可启动。要把整个环境连同登录态搬到另一台电脑，请到「环境转移」。</p>
             <div className="nanfu-filters">
               <label className="fld"><span>搜索组织环境</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="环境编号、归属人或分组" /></label>
               <label className="fld"><span>可见分组</span><select value={group} onChange={event => setGroup(event.target.value)}><option value="all">全部可见分组</option>{groups.map(id => <option key={id} value={id}>{id}</option>)}</select></label>
