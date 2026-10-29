@@ -587,7 +587,7 @@ const PLATFORM_MARKS: Record<string, { key: string; path: string }> = {
 };
 
 const KNOWN_PLATFORMS: { value: string; label: string }[] = [
-  { value: "", label: "(none)" },
+  { value: "", label: "（不指定）" },
   { value: "x.com", label: "Twitter / X" },
   { value: "instagram.com", label: "Instagram" },
   { value: "facebook.com", label: "Facebook" },
@@ -3987,7 +3987,7 @@ function App() {
         <div className="filterbar">
           <select
             className="select group-filter"
-            aria-label={isCloudMode ? "Folder filter" : "Group filter"}
+            aria-label={isCloudMode ? "文件夹筛选" : "分组筛选"}
             value={group}
             onChange={(e) => selectFolder(e.target.value)}
           >
@@ -4141,7 +4141,7 @@ function App() {
                 return (
                 <tr key={p.id} className={`${p.running ? "running" : ""}${selected.has(p.id) ? " selected" : ""}`}>
                   <td className="chk">
-                    <input type="checkbox" aria-label={`Select ${p.name}`} checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
+                    <input type="checkbox" aria-label={`选择 ${p.name}`} checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
                   </td>
                   {columnVisible("no") && (
                     <td className="col-no">
@@ -4495,7 +4495,7 @@ function App() {
                 <span className="identity-avatar"><Icon name="user" className="lg" /></span>
                 <span className="identity-lines">
                   <b>{nanfuAccount?.email ?? t("Local workspace")}</b>
-                  <span>{nanfuAccount?.authenticated ? "南孚账号 · 环境同步到云端" : t("No account · profile data stays on this computer")}</span>
+                  <span>{nanfuAccount?.authenticated ? "南孚账号 · 环境保存在本机" : t("No account · profile data stays on this computer")}</span>
                 </span>
                 <span className="chip">南孚</span>
               </div>
