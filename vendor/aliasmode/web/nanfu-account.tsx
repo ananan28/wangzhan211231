@@ -4,7 +4,7 @@ import {
   fetchNanfuLoginName, setNanfuLoginName, clearNanfuLoginName,
   type NanfuAccountState, type NanfuOrganization, type NanfuVisibleEnvironment, type NanfuMutations,
 } from "./api.ts";
-import { NANFU_MIN_PASSWORD_LENGTH } from "./nanfu-account.ts";
+import { NANFU_MIN_PASSWORD_LENGTH } from "../nanfu-account.ts";
 import { nanfuIdentityName } from "./nanfu-management.tsx";
 
 export function NanfuAccountPage({ active, localCount, onLocal }: { active: boolean; localCount: number | null; onLocal: () => void }) {
