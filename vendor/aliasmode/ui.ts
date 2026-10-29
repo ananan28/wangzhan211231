@@ -22,6 +22,7 @@ import { NANFU_LOGIN_SUFFIX, NanfuAccountChangedError, NanfuAuthError, NanfuEmai
 import { NanfuSyncError, isNanfuUuid } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
 import { NANFU_TRANSFER_ROUTE_PREFIX, handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
+import { fingerprintSelfCheck } from "./nanfu-fingerprint-selfcheck.ts";
 import { loadOrCreateTransferIdentity } from "./nanfu-cloud-transfer.ts";
 import type { CloudConnectionRuntime } from "./cloud-connection.ts";
 import type {
@@ -626,6 +627,26 @@ export async function handleUiRequest(
   // and organization handlers below stay untouched.
   if (pathname.startsWith(NANFU_TRANSFER_ROUTE_PREFIX)) {
     return handleNanfuTransferRequest(req, { nanfu: options.nanfu, store, paths: options.paths, launcher });
+  }
+
+  // 指纹自检：在目标环境自己的浏览器里跑探针，再由这里比对档案声明。
+  // 复用 launcher 记录的调试端口，不另开 CDP 通道。
+  if (pathname === "/ui/api/fingerprint-selfcheck") {
+    if (req.method !== "POST") return noStoreJson({ ok: false, error: "仅支持 POST" }, 405);
+    const rejected = rejectUntrustedJsonMutation(req);
+    if (rejected) {
+      rejected.headers.set("Cache-Control", "no-store");
+      return rejected;
+    }
+    let body: { profileId?: unknown } | null = null;
+    try { body = await req.json() as { profileId?: unknown }; } catch { body = null; }
+    const profileId = typeof body?.profileId === "string" ? body.profileId : "";
+    const outcome = await fingerprintSelfCheck(profileId, {
+      getProfile: id => store.getProfile(id),
+      getLaunch: id => store.getLaunch(id),
+      active: id => launcher.active(id),
+    });
+    return noStoreJson(outcome.body, outcome.status);
   }
 
   if (pathname.startsWith("/ui/api/nanfu/")) {

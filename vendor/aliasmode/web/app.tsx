@@ -21,6 +21,7 @@ import {
   type FavoriteSite,
 } from "./favorites.ts";
 import { ScriptRunPanel, ScriptsPage } from "./scripts.tsx";
+import { NanfuFingerprintSelfCheck } from "./nanfu-fingerprint-selfcheck.tsx";
 import { I18nProvider, availableLanguages, languageNativeName, useTranslation } from "./i18n.tsx";
 import { localeTimezoneMismatch } from "../profile-locale.ts";
 import { DEFAULT_TRANSLATION_SETTINGS, type TranslationEngine, type TranslationSettings } from "../translation-core.ts";
@@ -1410,6 +1411,7 @@ function App() {
   const [logErr, setLogErr] = useState<string | null>(null);
   const [diag, setDiag] = useState<DiagnoseReport | null>(null);
   const [showDiag, setShowDiag] = useState(false);
+  const [selfCheckProfile, setSelfCheckProfile] = useState<{ id: string; name: string } | null>(null);
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("all");
   const [profilePage, setProfilePage] = useState(0);
@@ -4219,6 +4221,16 @@ function App() {
                             <Icon name="edit" className="sm" />
                           </button>
                         )}
+                        {p.engine === "chromium" && (
+                          <button
+                            className="btn sm"
+                            title="在该环境自己的浏览器里采集指纹，并与档案声明逐项比对"
+                            aria-label={`对 ${p.name} 进行指纹自检`}
+                            onClick={() => setSelfCheckProfile({ id: p.id, name: p.name })}
+                          >
+                            指纹自检
+                          </button>
+                        )}
                         {p.running ? (
                           <>
                             {p.engine === "chromium" && <>
@@ -4319,6 +4331,10 @@ function App() {
               <div className="v" key={i}>{v}</div>
             ))}
           </div>
+        )}
+
+        {selfCheckProfile && (
+          <NanfuFingerprintSelfCheck profile={selfCheckProfile} onClose={() => setSelfCheckProfile(null)} />
         )}
 
         <footer className="statusbar">
