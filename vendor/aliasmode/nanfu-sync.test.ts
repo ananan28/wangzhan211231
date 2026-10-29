@@ -12,6 +12,12 @@ import {
   type NanfuLocalRecord,
   type NanfuRemoteRecord,
 } from "./nanfu-sync.ts";
+import {
+  NANFU_ORGANIZATION_ACTIONS,
+  NanfuInputError,
+  mutateNanfuOrganization,
+  nanfuOrganizationError,
+} from "./nanfu-organization.ts";
 import type { Profile } from "./types.ts";
 
 function profile(overrides: Record<string, unknown> = {}): Profile {
@@ -346,4 +352,87 @@ test("cancelling visible queries aborts the fetch and leaves personal sync usabl
   expect(await deadline(settled, "cancelled visible request")).toBeInstanceOf(NanfuSyncError);
   expect(aborted).toBe(true);
   expect(await client.list("self")).toEqual([]);
+});
+
+test("organization overview only asks for columns the service actually exposes", async () => {
+  const requests: URL[] = [];
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async (url) => {
+      const query = new URL(String(url));
+      requests.push(query);
+      if (query.pathname === "/rpc/nanfu_org_overview") {
+        return Response.json([{ user_id: "user-1", email: "owner@fixture.test", identity: "owner", role_id: null, role_name: null,
+          env_quota: 0, used: 3, status: "active", locked: false, manager_user_id: null }]);
+      }
+      if (query.pathname === "/nanfu_org_roles") return Response.json([{ id: "role-1", name: "运营", permissions: ["env.create", 7] }]);
+      if (query.pathname === "/nanfu_org_groups") return Response.json([{ id: "group-1", name: "默认" }]);
+      if (query.pathname === "/nanfu_org_group_grants") return Response.json([{ group_id: "group-1", user_id: "user-1" }]);
+      if (query.pathname === "/nanfu_org_invites") return Response.json([{ code: "AAAA", identity: "member", expires_at: "2026-11-01T00:00:00Z", redeemed_by: null }]);
+      return Response.json([]);
+    },
+  });
+  const overview = await client.orgOverview("org-1");
+  expect(overview.members).toEqual([{ userId: "user-1", email: "owner@fixture.test", identity: "owner", roleId: null, roleName: null,
+    managerUserId: null, quota: 0, used: 3, status: "active", locked: false }]);
+  expect(overview.roles[0]?.permissions).toEqual(["env.create"]);
+  expect(overview.invites).toEqual([{ code: "AAAA", identity: "member", expiresAt: "2026-11-01T00:00:00Z", redeemedBy: null }]);
+  const invites = requests.find((item) => item.pathname === "/nanfu_org_invites")!;
+  expect(invites.searchParams.get("select")).toBe("code,identity,expires_at,redeemed_by");
+  expect(invites.searchParams.get("order")).toBe("code.asc");
+  expect(invites.searchParams.get("org_id")).toBe("eq.org-1");
+  expect(requests.some((item) => item.pathname === "/nanfu_org_group_grants" && item.searchParams.get("order") === "group_id.asc,user_id.asc")).toBe(true);
+  expect(JSON.stringify(overview)).not.toContain("payload");
+});
+
+test("organization calls reject malformed service results and keep known refusal codes", async () => {
+  let refusal: { status: number; body: unknown } | null = null;
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async () => (refusal ? Response.json(refusal.body, { status: refusal.status }) : Response.json("synthetic-org")),
+  });
+  expect(await client.createOrg("合成组织")).toBe("synthetic-org");
+  refusal = { status: 400, body: { code: "P0001", message: "NANFU_FORBIDDEN: this account already belongs to an organization" } };
+  await expect(client.createOrg("合成组织")).rejects.toMatchObject({ code: "ORG_ALREADY_MEMBER", status: 400 });
+  refusal = { status: 400, body: { code: "P0001", message: "this invite has expired" } };
+  await expect(client.redeemInvite("AAAA")).rejects.toMatchObject({ code: "INVITE_EXPIRED" });
+  refusal = { status: 400, body: { code: "P0001", message: "this invite does not exist" } };
+  await expect(client.redeemInvite("AAAA")).rejects.toMatchObject({ code: "P0002" });
+  refusal = { status: 400, body: { code: "P0001", message: "this transfer has expired" } };
+  await expect(client.forceTransfer("env-1", "00000000-0000-4000-8000-000000000002", "note")).rejects.toMatchObject({ code: "TRANSFER_EXPIRED" });
+  refusal = null;
+  await expect(client.removeMember("00000000-0000-4000-8000-000000000002", true)).rejects.toBeInstanceOf(NanfuSyncError);
+});
+
+test("organization mutations validate input before reaching the service", async () => {
+  const calls: string[] = [];
+  const client = {
+    createOrg: async (name: string) => { calls.push(`create:${name}`); return "org-1"; },
+    setQuota: async (userId: string, quota: number) => { calls.push(`quota:${userId}:${quota}`); },
+    createRole: async (name: string, permissions: string[]) => { calls.push(`role:${name}:${permissions.join("|")}`); return "role-1"; },
+  } as unknown as NanfuSyncClient;
+  expect(await mutateNanfuOrganization(client, "create-organization", { name: " 合成组织 " })).toEqual({ orgId: "org-1" });
+  expect(await mutateNanfuOrganization(client, "set-quota", { userId: "00000000-0000-4000-8000-000000000001", quota: 5 })).toEqual({});
+  expect(await mutateNanfuOrganization(client, "create-role", { name: "运营", permissions: ["env.create", "env.create"] })).toEqual({ roleId: "role-1" });
+  expect(calls).toEqual(["create:合成组织", "quota:00000000-0000-4000-8000-000000000001:5", "role:运营:env.create"]);
+  expect(NANFU_ORGANIZATION_ACTIONS).toContain("remove-member");
+  await expect(mutateNanfuOrganization(client, "create-organization", { name: "   " })).rejects.toBeInstanceOf(NanfuInputError);
+  await expect(mutateNanfuOrganization(client, "create-organization", "not-an-object")).rejects.toBeInstanceOf(NanfuInputError);
+  await expect(mutateNanfuOrganization(client, "set-quota", { userId: "not-a-uuid", quota: 5 })).rejects.toBeInstanceOf(NanfuInputError);
+  await expect(mutateNanfuOrganization(client, "set-quota", { userId: "00000000-0000-4000-8000-000000000001", quota: 1.5 })).rejects.toBeInstanceOf(NanfuInputError);
+  await expect(mutateNanfuOrganization(client, "create-role", { name: "x", permissions: ["delete.everything"] })).rejects.toBeInstanceOf(NanfuInputError);
+  await expect(mutateNanfuOrganization(client, "create-invite", { identity: "member", quota: 0, hours: 0 })).rejects.toBeInstanceOf(NanfuInputError);
+  await expect(mutateNanfuOrganization(client, "grant-group", { groupId: "00000000-0000-4000-8000-000000000001", userId: "00000000-0000-4000-8000-000000000002", granted: "yes" })).rejects.toBeInstanceOf(NanfuInputError);
+  expect(calls).toHaveLength(3);
+});
+
+test("organization failures become fixed copy that never repeats the service text", () => {
+  expect(nanfuOrganizationError(new NanfuSyncError("upstream detail", 400, false, "ORG_ALREADY_MEMBER")))
+    .toEqual({ status: 403, body: { ok: false, error: "当前账号已属于组织，不能重复创建或加入组织。", code: "ORG_ALREADY_MEMBER" } });
+  expect(nanfuOrganizationError(new NanfuSyncError("upstream detail", 400, false, "NANFU_ORG_QUOTA")).status).toBe(409);
+  expect(nanfuOrganizationError(new NanfuSyncError("upstream detail", 404, false, "P0002")).status).toBe(409);
+  expect(nanfuOrganizationError(new NanfuSyncError("upstream detail", 401, true))).toEqual({ status: 401, body: { ok: false, error: "请重新登录南孚账号。" } });
+  expect(nanfuOrganizationError(new NanfuSyncError("upstream detail", 503, false)))
+    .toEqual({ status: 503, body: { ok: false, error: expect.stringContaining("操作结果未确认"), retryable: true } });
+  expect(JSON.stringify(nanfuOrganizationError(new NanfuSyncError("upstream detail", 500, false)))).not.toContain("upstream detail");
 });

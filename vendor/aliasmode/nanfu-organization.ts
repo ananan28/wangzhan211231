@@ -70,12 +70,13 @@ export function nanfuOrganizationError(error: NanfuSyncError): { status: number;
     NANFU_ENV_QUOTA: "目标成员窗口配额不足，操作被拒绝。",
     NANFU_MEMBER_INACTIVE: "成员已锁定或停用，不能写入或接收环境。",
     NANFU_GROUP_INVALID: "分组或成员不属于当前组织。",
-    NANFU_FORBIDDEN: "当前账号无权执行此操作（42501）。",
-    ORG_ALREADY_MEMBER: "当前账号已属于组织，不能重复创建或加入组织（42501）。",
+    NANFU_FORBIDDEN: "当前账号无权执行此操作，请联系组织所有者或管理员。",
+    ORG_ALREADY_MEMBER: "当前账号已属于组织，不能重复创建或加入组织。",
     "42501": "操作被拒绝（42501）：权限不足、账号已属于组织，或目标受保护，请刷新确认。",
     "23505": "记录已存在或发生冲突（23505），请刷新确认；角色或分组名称也可能已存在。",
     INVITE_EXPIRED: "邀请码已过期，请向管理员申请新码。",
     INVITE_USED: "邀请码已使用，每个邀请码只能兑换一次。",
+    TRANSFER_EXPIRED: "转移请求已过期，请重新发起。",
     "P0002": "目标记录或邀请码不存在。",
   };
   const message = error.code && messages[error.code];

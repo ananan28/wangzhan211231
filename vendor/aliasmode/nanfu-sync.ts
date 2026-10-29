@@ -298,7 +298,7 @@ export class NanfuSyncClient {
       this.readOrgTable("nanfu_org_roles", "id,name,permissions", orgId, signal),
       this.readOrgTable("nanfu_org_groups", "id,name", orgId, signal),
       this.readOrgTable("nanfu_org_group_grants", "group_id,user_id", orgId, signal, "group_id.asc,user_id.asc"),
-      this.readOrgTable("nanfu_org_invites", "id,code,identity,expires_at,redeemed_by", orgId, signal),
+      this.readOrgTable("nanfu_org_invites", "code,identity,expires_at,redeemed_by", orgId, signal, "code.asc"),
     ]);
     if (!Array.isArray(members)) throw new NanfuSyncError("Invalid member response", 502);
     return {
@@ -521,6 +521,8 @@ export class NanfuSyncClient {
             if (body.message === "NANFU_FORBIDDEN: this account already belongs to an organization") code = "ORG_ALREADY_MEMBER";
             if (body.message === "this invite has expired") code = "INVITE_EXPIRED";
             if (body.message === "this invite has already been used") code = "INVITE_USED";
+            if (body.message === "this invite does not exist") code = "P0002";
+            if (body.message === "this transfer has expired") code = "TRANSFER_EXPIRED";
           }
         } catch {}
         throw new NanfuSyncError(

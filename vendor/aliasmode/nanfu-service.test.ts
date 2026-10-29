@@ -125,6 +125,16 @@ function accountFixture() {
         env_quota: 2, used: 1, status: disabled ? "disabled" : "active", locked,
       }]);
       if (url.pathname === "/rest/v1/nanfu_orgs") return Response.json([{ id: "org-1", name: "Synthetic organization" }]);
+      if (url.pathname === "/rest/v1/rpc/nanfu_org_create") {
+        const body = await req.json() as any;
+        if (body.p_name === "已存在") return Response.json({ code: "P0001", message: "NANFU_FORBIDDEN: this account already belongs to an organization" }, { status: 400 });
+        return Response.json(`org-${String(body.p_name).length}`);
+      }
+      if (url.pathname === "/rest/v1/rpc/nanfu_org_overview") {
+        return Response.json([{ user_id: "a", email: "a@fixture.test", identity: "member", role_id: null, role_name: null,
+          env_quota: 2, used: 1, status: "active", locked: false, manager_user_id: null }]);
+      }
+      if (["/rest/v1/nanfu_org_roles", "/rest/v1/nanfu_org_groups", "/rest/v1/nanfu_org_group_grants", "/rest/v1/nanfu_org_invites"].includes(url.pathname)) return Response.json([]);
       if (url.pathname === "/rest/v1/nanfu_environments") {
         await pauseEnvironments?.();
         return Response.json([{
@@ -303,4 +313,30 @@ test("the frontend Nanfu client reaches real local routes with no-store and canc
     expect(logout.init?.body).toBe("{}");
     expect(new Headers(logout.init?.headers).get("content-type")).toBe("application/json");
   } finally { fetchSpy.mockRestore(); f.close(); }
+});
+
+test("organization management routes need a session, validate input and map refusals", async () => {
+  const f = accountFixture();
+  try {
+    expect((await f.call("create-organization", { name: "合成组织" })).status).toBe(401);
+    await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" });
+    const created = await f.call("create-organization", { name: "synthetic" });
+    expect(created.body).toEqual({ ok: true, result: { orgId: "org-9" }, userId: "a" });
+    expect(JSON.stringify(created.body)).not.toContain("synthetic-access");
+    expect((await f.call("create-organization", { name: "" })).body.error).toContain("name");
+    expect((await f.call("create-organization", { name: "" })).status).toBe(400);
+    const refusal = await f.call("create-organization", { name: "已存在" });
+    expect(refusal.status).toBe(403);
+    expect(refusal.body).toMatchObject({ ok: false, code: "ORG_ALREADY_MEMBER", error: "当前账号已属于组织，不能重复创建或加入组织。" });
+    expect(JSON.stringify(refusal.body)).not.toContain("NANFU_FORBIDDEN");
+    const overview = await f.call("organization-overview");
+    expect(overview.status).toBe(200);
+    expect(overview.body.result.members[0]).toMatchObject({ userId: "a", email: "a@fixture.test", quota: 2, used: 1 });
+    expect((await f.call("set-quota", { userId: "not-a-uuid", quota: 3 })).status).toBe(400);
+    const missing = await f.call("set-quota", { userId: "00000000-0000-4000-8000-000000000002", quota: 3 });
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toBe("服务端拒绝操作，请检查参数、目标状态或联系管理员。");
+    await f.call("signout", {});
+    expect((await f.call("organization-overview")).status).toBe(401);
+  } finally { f.close(); }
 });
