@@ -1,0 +1,52 @@
+Subject: [PATCH] base: a compiled-in nanfu kernel stamp
+
+Adds base/nanfu/kernel_stamp.h, the one place a Nanfu build states which
+upstream tag and which series revision it came from. Nothing includes it
+yet: wiring it into a compiled target is a separate change that has to be
+written on a checkout, because it edits existing BUILD.gn files. Until
+then this patch is inert, and that is deliberate - it is the first entry
+of the series, so it proves the series applies on a clean checkout at the
+declared tag without touching a single line of upstream code.
+
+The stamp is not exposed to page script anywhere in this series.
+
+Nanfu-Patch-Applies-To: 155.0.8059.85
+Nanfu-Patch-Promise: base/nanfu/kernel_stamp.h::nanfu-kernel-series:1;upstream=155.0.8059.85
+Nanfu-Patch-Surfaces: none
+
+diff --git a/base/nanfu/kernel_stamp.h b/base/nanfu/kernel_stamp.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..bfcfaef9292587bfdede8b2dfa81a42d0ca28c68
+--- /dev/null
++++ b/base/nanfu/kernel_stamp.h
+@@ -0,0 +1,30 @@
++// Copyright 2026 The Nanfu Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef BASE_NANFU_KERNEL_STAMP_H_
++#define BASE_NANFU_KERNEL_STAMP_H_
++
++#include <string_view>
++
++namespace base::nanfu {
++
++// The upstream Chromium tag this series is written against. Changing it needs
++// the whole series re-verified by kernel/verify-patches.sh against the new tag;
++// a patch never bumps this on its own.
++inline constexpr char kUpstreamTag[] = "155.0.8059.85";
++
++// Identifies the series, not a build. Bump when a patch is added or dropped, so
++// a shipped binary names the exact series it was built from.
++inline constexpr int kSeriesRevision = 1;
++
++// A string stock Chromium does not contain. Once a wiring patch includes this
++// header in a compiled target, a build is checked with
++//   strings -a chrome | grep nanfu-kernel-series
++// Nothing in this series exposes it to page script.
++inline constexpr char kKernelStamp[] =
++    "nanfu-kernel-series:1;upstream=155.0.8059.85";
++
++}  // namespace base::nanfu
++
++#endif  // BASE_NANFU_KERNEL_STAMP_H_

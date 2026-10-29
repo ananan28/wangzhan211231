@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nanfu fingerprint probe</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #14161a;
+    --panel: #1c1f26;
+    --line: #2c313a;
+    --text: #d7dce3;
+    --dim: #8b94a3;
+    --accent: #6aa9ff;
+    --ok: #5ec27a;
+    --warn: #e0b050;
+    --bad: #e06c6c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px 20px 40px;
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 2px; letter-spacing: .02em; }
+  .sub { color: var(--dim); margin-bottom: 14px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+  button, label.file {
+    font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; cursor: pointer;
+  }
+  button:hover, label.file:hover { border-color: var(--accent); }
+  button:disabled { color: var(--dim); cursor: default; border-color: var(--line); }
+  input[type=file] { display: none; }
+  .hashbox {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 14px;
+  }
+  .hashbox .label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  .hashbox .value { font-size: 17px; color: var(--accent); word-break: break-all; }
+  .hashbox .meta { color: var(--dim); font-size: 11px; margin-top: 4px; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 980px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  section > h2 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line);
+  }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 3px 12px; vertical-align: top; border-bottom: 1px solid #23272e; }
+  tr:last-child td { border-bottom: 0; }
+  td.k { color: var(--dim); white-space: nowrap; width: 42%; }
+  td.v { word-break: break-word; }
+  .v.bad { color: var(--bad); }
+  .v.warn { color: var(--warn); }
+  .v.ok { color: var(--ok); }
+  textarea {
+    width: 100%; min-height: 520px; resize: vertical;
+    background: #101216; color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px; font: inherit; line-height: 1.45;
+  }
+  .diff { margin-top: 14px; }
+  .diff .row { padding: 2px 12px; border-bottom: 1px solid #23272e; }
+  .diff .path { color: var(--dim); }
+  .diff .was { color: var(--bad); }
+  .diff .now { color: var(--ok); }
+  .note { color: var(--dim); font-size: 11px; margin-top: 8px; }
+  .spin { color: var(--dim); }
+</style>
+</head>
+<body>
+
+<h1>Nanfu fingerprint probe</h1>
+<div class="sub">
+  Offline probe. No network, no external assets, runs from <code>file://</code>.
+  Same build + same seed must produce the same stable hash; a different hash with
+  the same inputs is a finding.
+</div>
+
+<div class="bar">
+  <button id="rerun" type="button">Re-run</button>
+  <button id="copy" type="button" disabled>Copy JSON</button>
+  <button id="download" type="button" disabled>Download JSON</button>
+  <label class="file" for="compare">Compare with saved JSON</label>
+  <input id="compare" type="file" accept="application/json,.json">
+  <span id="status" class="spin">running…</span>
+</div>
+
+<div class="hashbox">
+  <div class="label">stable hash</div>
+  <div class="value" id="stable">—</div>
+  <div class="meta" id="stablemeta"></div>
+</div>
+
+<div class="cols">
+  <section>
+    <h2>Signals</h2>
+    <table id="table"><tbody></tbody></table>
+  </section>
+  <section>
+    <h2>JSON</h2>
+    <textarea id="json" readonly spellcheck="false"></textarea>
+  </section>
+</div>
+
+<section class="diff" id="diffwrap" hidden>
+  <h2>Diff against saved JSON</h2>
+  <div id="diff"></div>
+</section>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ */
+/* hashing                                                             */
+/* ------------------------------------------------------------------ */
+
+const FNV_OFFSET = 0xcbf29ce484222325n;
+const FNV_PRIME = 0x100000001b3n;
+const MASK64 = (1n << 64n) - 1n;
+
+function fnvBytes(bytes) {
+  let h = FNV_OFFSET;
+  for (let i = 0; i < bytes.length; i++) {
+    h ^= BigInt(bytes[i]);
+    h = (h * FNV_PRIME) & MASK64;
+  }
+  return h.toString(16).padStart(16, "0");
+}
+
+function fnvString(str) {
+  return fnvBytes(new TextEncoder().encode(str));
+}
+
+async function sha256Hex(str) {
+  try {
+    if (!globalThis.crypto || !crypto.subtle) return null;
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  } catch (_) {
+    return null; // file:// in a browser without WebCrypto
+  }
+}
+
+/* Deterministic serialisation: object keys sorted at every level. */
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value).sort()) out[key] = canonical(value[key]);
+    return out;
+  }
+  return value;
+}
+
+/* ------------------------------------------------------------------ */
+/* helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+const notes = [];
+function note(msg) { notes.push(msg); }
+
+function withTimeout(promise, ms, fallback, what) {
+  return Promise.race([
+    promise.catch(err => { note(`${what}: ${err && err.message ? err.message : err}`); return fallback; }),
+    new Promise(resolve => setTimeout(() => { note(`${what}: timed out after ${ms}ms`); resolve(fallback); }, ms))
+  ]);
+}
+
+function round(n, digits) {
+  if (typeof n !== "number" || !isFinite(n)) return n;
+  const f = Math.pow(10, digits);
+  return Math.round(n * f) / f;
+}
+
+function hex32(n) { return "0x" + (n >>> 0).toString(16).padStart(8, "0"); }
+
+/* ------------------------------------------------------------------ */
+/* individual probes                                                   */
+/* ------------------------------------------------------------------ */
+
+function probeCanvas() {
+  const width = 300, height = 90;
+
+  function draw(ctx) {
+    ctx.fillStyle = "#f4f5f7";
+    ctx.fillRect(0, 0, width, height);
+    const grad = ctx.createLinearGradient(0, 0, width, height);
+    grad.addColorStop(0, "#1b6ca8");
+    grad.addColorStop(0.5, "#d1495b");
+    grad.addColorStop(1, "#2a9d8f");
+    ctx.fillStyle = grad;
+    ctx.fillRect(4, 4, width - 8, 34);
+    ctx.fillStyle = "#111";
+    ctx.font = "13px sans-serif";
+    ctx.fillText("Nanfu probe \u00e1\u00e9\u00e7 \u4e2d\u6587 \u2713", 8, 60);
+    ctx.font = "italic 12px serif";
+    ctx.fillText("0123456789 !@#$%^&*()", 8, 78);
+    ctx.beginPath();
+    ctx.arc(252, 64, 15, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(20,80,160,0.55)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.stroke();
+    ctx.shadowBlur = 3;
+    ctx.shadowColor = "rgba(0,0,0,0.6)";
+    ctx.fillStyle = "#333";
+    ctx.fillRect(196, 44, 26, 12);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  draw(ctx);
+  const data = ctx.getImageData(0, 0, width, height).data;
+  const hash = fnvBytes(data);
+
+  // Second surface: an emoji + CJK run, which hits different font fallbacks.
+  const c2 = document.createElement("canvas");
+  c2.width = 120; c2.height = 40;
+  const ctx2 = c2.getContext("2d");
+  ctx2.fillStyle = "#fff"; ctx2.fillRect(0, 0, 120, 40);
+  ctx2.fillStyle = "#000"; ctx2.font = "16px sans-serif";
+  ctx2.fillText("\uD83D\uDE00 \u3042 \uD55C \uA000", 4, 26);
+  const hash2 = fnvBytes(ctx2.getImageData(0, 0, 120, 40).data);
+
+  let dataUrlLength = null;
+  try { dataUrlLength = canvas.toDataURL().length; } catch (e) { note("canvas toDataURL: " + e.message); }
+
+  return {
+    hash: hash,
+    hash_emoji: hash2,
+    dataurl_length: dataUrlLength,
+    text_width: round(ctx.measureText("Nanfu probe \u00e1\u00e9\u00e7").width, 3),
+    width: width,
+    height: height
+  };
+}
+
+function probeWebGL() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64; canvas.height = 64;
+  let gl = null;
+  for (const kind of ["webgl2", "webgl", "experimental-webgl"]) {
+    try { gl = canvas.getContext(kind, { antialias: false, depth: true, preserveDrawingBuffer: true }); } catch (_) { gl = null; }
+    if (gl) { canvas.__kind = kind; break; }
+  }
+  if (!gl) {
+    note("WebGL: no context");
+    return { context: null };
+  }
+
+  const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+  const unmaskedVendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : null;
+  const unmaskedRenderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null;
+
+  const extensions = (gl.getSupportedExtensions() || []).slice().sort();
+
+  const limits = {};
+  const wanted = [
+    "MAX_TEXTURE_SIZE", "MAX_RENDERBUFFER_SIZE", "MAX_VIEWPORT_DIMS",
+    "MAX_VERTEX_UNIFORM_VECTORS", "MAX_FRAGMENT_UNIFORM_VECTORS", "MAX_VARYING_VECTORS",
+    "MAX_COMBINED_TEXTURE_IMAGE_UNITS", "MAX_VERTEX_ATTRIBS", "MAX_TEXTURE_IMAGE_UNITS",
+    "ALIASED_LINE_WIDTH_RANGE", "ALIASED_POINT_SIZE_RANGE", "MAX_CUBE_MAP_TEXTURE_SIZE"
+  ];
+  for (const name of wanted) {
+    const id = gl[name];
+    if (id === undefined) continue;
+    const v = gl.getParameter(id);
+    limits[name] = (v && typeof v.length === "number") ? Array.from(v) : v;
+  }
+
+  /* Draw, then read back: a gradient triangle plus a point. */
+  const vs = "attribute vec2 p; varying vec2 v; void main(){ v=p; gl_Position=vec4(p,0.0,1.0); }";
+  const fs = "precision mediump float; varying vec2 v; void main(){ gl_FragColor=vec4(v.x,v.y,0.5,1.0); }";
+  let hash = null, error = null;
+  try {
+    const compile = (type, src) => {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    };
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-0.8, -0.8, 0.9, -0.4, 0.0, 0.9]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, "p");
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.viewport(0, 0, 64, 64);
+    gl.clearColor(0.02, 0.03, 0.04, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.finish();
+    const px = new Uint8Array(64 * 64 * 4);
+    gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    hash = fnvBytes(px);
+  } catch (e) {
+    error = e.message || String(e);
+    note("WebGL draw: " + error);
+  }
+
+  return {
+    context: canvas.__kind,
+    vendor: gl.getParameter(gl.VENDOR),
+    renderer: gl.getParameter(gl.RENDERER),
+    unmasked_vendor: unmaskedVendor,
+    unmasked_renderer: unmaskedRenderer,
+    version: gl.getParameter(gl.VERSION),
+    shading_language_version: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+    max_texture_size: limits.MAX_TEXTURE_SIZE !== undefined ? limits.MAX_TEXTURE_SIZE : null,
+    limits: limits,
+    extension_count: extensions.length,
+    extensions_hash: fnvString(extensions.join(",")),
+    extensions: extensions,
+    render_hash: hash,
+    draw_error: error
+  };
+}
+
+async function probeWebGPU() {
+  if (!navigator.gpu) return null;
+  return withTimeout((async () => {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) return { adapter: null };
+    const info = adapter.info || (adapter.requestAdapterInfo ? await adapter.requestAdapterInfo() : {});
+    return {
+      adapter: {
+        vendor: info.vendor || null,
+        architecture: info.architecture || null,
+        device: info.device || null,
+        description: info.description || null
+      },
+      limits: {
+        maxTextureDimension2D: adapter.limits.maxTextureDimension2D,
+        maxBindGroups: adapter.limits.maxBindGroups,
+        maxStorageBuffersPerShaderStage: adapter.limits.maxStorageBuffersPerShaderStage,
+        maxComputeWorkgroupStorageSize: adapter.limits.maxComputeWorkgroupStorageSize
+      },
+      features: Array.from(adapter.features || []).sort()
+    };
+  })(), 3000, null, "WebGPU");
+}
+
+async function probeAudio() {
+  const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!Ctx) { note("Audio: no OfflineAudioContext"); return null; }
+  try {
+    const ctx = new Ctx(1, 8192, 44100);
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = 10000;
+    const comp = ctx.createDynamicsCompressor();
+    for (const [k, v] of [["threshold", -50], ["knee", 40], ["ratio", 12], ["attack", 0], ["release", 0.25]]) {
+      if (comp[k]) comp[k].value = v;
+    }
+    const gain = ctx.createGain();
+    gain.gain.value = 0.6;
+    osc.connect(comp); comp.connect(gain); gain.connect(ctx.destination);
+    osc.start(0);
+    const rendered = await ctx.startRendering();
+    const data = rendered.getChannelData(0);
+    const quant = new Uint8Array(data.length);
+    for (let i = 0; i < data.length; i++) {
+      quant[i] = Math.max(0, Math.min(255, Math.round((data[i] + 1) * 127.5)));
+    }
+    return {
+      sample_rate: ctx.sampleRate,
+      hash: fnvBytes(quant),
+      peak: round(Math.max.apply(null, Array.from(data).slice(0, 2048).map(Math.abs)), 8)
+    };
+  } catch (e) {
+    note("Audio: " + e.message);
+    return null;
+  }
+}
+
+async function probeWebRTC() {
+  if (!window.RTCPeerConnection) return { supported: false };
+  return withTimeout(new Promise(resolve => {
+    const ips = new Set();
+    const names = new Set();
+    let pc;
+    try {
+      pc = new RTCPeerConnection({ iceServers: [] });
+    } catch (e) {
+      resolve({ supported: false, error: e.message });
+      return;
+    }
+    const collect = (line) => {
+      /* ICE candidate: "candidate:<foundation> <component> <proto> <priority> <addr> <port> typ <type> ..." */
+      const m = /\b(?:udp|tcp)\s+\d+\s+(\S+)\s+(\d+)\s+typ\b/i.exec(line || "");
+      if (m) add(m[1]);
+    };
+    const add = (addr) => {
+      if (!addr) return;
+      if (/\.local$/i.test(addr)) names.add(addr);
+      else ips.add(addr);
+    };
+    pc.onicecandidate = (ev) => {
+      if (!ev.candidate) return;
+      collect(ev.candidate.candidate);
+    };
+    const done = () => {
+      try { pc.close(); } catch (_) {}
+      resolve({
+        supported: true,
+        local_ips: Array.from(ips).sort(),
+        mdns_names: names.size,
+        has_any_candidate: ips.size + names.size > 0
+      });
+    };
+    try {
+      pc.createDataChannel("probe");
+      pc.createOffer().then(o => pc.setLocalDescription(o)).catch(err => { note("WebRTC offer: " + err.message); done(); });
+      setTimeout(done, 2500);
+    } catch (e) {
+      note("WebRTC: " + e.message);
+      done();
+    }
+  }), 3000, { supported: true, timed_out: true }, "WebRTC");
+}
+
+function probeFonts() {
+  const families = [
+    "Arial", "Arial Black", "Calibri", "Cambria", "Candara", "Consolas", "Courier New",
+    "Georgia", "Segoe UI", "Segoe UI Variable", "Tahoma", "Times New Roman", "Trebuchet MS",
+    "Verdana", "Microsoft YaHei", "Microsoft JhengHei", "SimSun", "SimHei", "DengXian",
+    "PingFang SC", "Hiragino Sans GB", "STHeiti", "Helvetica Neue", "Helvetica", "Geneva",
+    "Menlo", "Monaco", "Lucida Grande", "SF Pro Text", "Roboto", "Noto Sans", "Noto Sans CJK SC",
+    "DejaVu Sans", "Liberation Sans", "Ubuntu", "Cantarell", "Nimbus Sans", "WenQuanYi Micro Hei"
+  ];
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const probe = "mmmmmmmmmmlliWQ@#\u4e2d\u6587";
+  const generics = ["monospace", "sans-serif", "serif"];
+  const baseline = {};
+  for (const g of generics) {
+    ctx.font = "72px " + g;
+    baseline[g] = ctx.measureText(probe).width;
+  }
+  const available = [];
+  for (const family of families) {
+    let present = false;
+    for (const g of generics) {
+      ctx.font = "72px \"" + family + "\", " + g;
+      if (Math.abs(ctx.measureText(probe).width - baseline[g]) > 0.5) { present = true; break; }
+    }
+    if (present) available.push(family);
+  }
+  return {
+    available: available,
+    available_count: available.length,
+    probed_count: families.length,
+    hash: fnvString(available.join("|"))
+  };
+}
+
+function probeChromeObject() {
+  const c = window.chrome;
+  const keys = c && typeof c === "object" ? Object.keys(c).sort() : [];
+  const runtime = c && c.runtime ? c.runtime : null;
+  return {
+    present: !!c,
+    keys: keys,
+    runtime_present: !!runtime,
+    runtime_id: runtime && typeof runtime.id === "string" ? (runtime.id ? "<set>" : "") : null,
+    load_times: !!(c && typeof c.loadTimes === "function"),
+    csi: !!(c && typeof c.csi === "function"),
+    app_present: !!(c && c.app)
+  };
+}
+
+async function probeUACh() {
+  const uad = navigator.userAgentData;
+  if (!uad) return { supported: false };
+  const low = {
+    brands: (uad.brands || []).map(b => ({ brand: b.brand, version: b.version })),
+    mobile: uad.mobile,
+    platform: uad.platform
+  };
+  let high = null;
+  try {
+    high = await uad.getHighEntropyValues([
+      "architecture", "bitness", "model", "platformVersion", "uaFullVersion",
+      "fullVersionList", "wow64", "formFactors"
+    ]);
+  } catch (e) {
+    note("UA-CH high entropy: " + e.message);
+  }
+  return { supported: true, low: low, high: high };
+}
+
+async function probeStorage() {
+  if (!navigator.storage || !navigator.storage.estimate) return null;
+  try {
+    const est = await navigator.storage.estimate();
+    return {
+      quota: est.quota,
+      usage: est.usage,
+      quota_mib: est.quota ? round(est.quota / 1048576, 2) : null,
+      persisted: navigator.storage.persisted ? await navigator.storage.persisted() : null
+    };
+  } catch (e) {
+    note("Storage estimate: " + e.message);
+    return null;
+  }
+}
+
+function probeSpeech() {
+  if (!window.speechSynthesis) return { supported: false };
+  const voices = speechSynthesis.getVoices() || [];
+  const langs = Array.from(new Set(voices.map(v => v.lang))).sort();
+  return {
+    supported: true,
+    voice_count: voices.length,
+    languages: langs,
+    names_hash: fnvString(voices.map(v => v.name).sort().join("|")),
+    local_service: voices.filter(v => v.localService).length
+  };
+}
+
+/* Voice lists are populated asynchronously in Chrome; an empty first read is
+   not "no voices installed", so wait briefly for voiceschanged. */
+function probeSpeechAsync() {
+  if (!window.speechSynthesis) return Promise.resolve({ supported: false });
+  if ((speechSynthesis.getVoices() || []).length) return Promise.resolve(probeSpeech());
+  return withTimeout(new Promise(resolve => {
+    const done = () => { speechSynthesis.removeEventListener("voiceschanged", done); resolve(probeSpeech()); };
+    speechSynthesis.addEventListener("voiceschanged", done);
+    setTimeout(done, 900);
+  }), 1200, probeSpeech(), "speechSynthesis");
+}
+
+async function probeMediaDevices() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return { supported: false };
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const kinds = {};
+    for (const d of devices) kinds[d.kind] = (kinds[d.kind] || 0) + 1;
+    return {
+      supported: true,
+      total: devices.length,
+      by_kind: kinds,
+      labelled: devices.filter(d => d.label).length
+    };
+  } catch (e) {
+    note("enumerateDevices: " + e.message);
+    return { supported: true, error: e.message };
+  }
+}
+
+function probeScreen() {
+  const s = screen;
+  const o = s.orientation || {};
+  return {
+    width: s.width,
+    height: s.height,
+    avail_width: s.availWidth,
+    avail_height: s.availHeight,
+    avail_top: s.availTop,
+    avail_left: s.availLeft,
+    color_depth: s.colorDepth,
+    pixel_depth: s.pixelDepth,
+    orientation: { type: o.type || null, angle: o.angle === undefined ? null : o.angle },
+    is_extended: typeof s.isExtended === "boolean" ? s.isExtended : null,
+    device_pixel_ratio: round(window.devicePixelRatio, 3),
+    outer_width: window.outerWidth,
+    outer_height: window.outerHeight,
+    inner_width: window.innerWidth,
+    inner_height: window.innerHeight,
+    chrome_height: window.outerHeight - window.innerHeight,
+    chrome_width: window.outerWidth - window.innerWidth
+  };
+}
+
+function probeMediaQueries() {
+  const tests = {
+    "pointer:fine": "(pointer: fine)",
+    "pointer:coarse": "(pointer: coarse)",
+    "pointer:none": "(pointer: none)",
+    "hover:hover": "(hover: hover)",
+    "hover:none": "(hover: none)",
+    "any-pointer:fine": "(any-pointer: fine)",
+    "prefers-color-scheme:dark": "(prefers-color-scheme: dark)",
+    "prefers-color-scheme:light": "(prefers-color-scheme: light)",
+    "prefers-reduced-motion:reduce": "(prefers-reduced-motion: reduce)",
+    "color-gamut:p3": "(color-gamut: p3)",
+    "color-gamut:rec2020": "(color-gamut: rec2020)",
+    "dynamic-range:high": "(dynamic-range: high)",
+    "forced-colors:active": "(forced-colors: active)"
+  };
+  const out = {};
+  for (const [k, q] of Object.entries(tests)) {
+    try { out[k] = matchMedia(q).matches; } catch (_) { out[k] = null; }
+  }
+  return out;
+}
+
+function probeTimeIntl() {
+  /* Every value here must be identical on two runs of the same profile, so the
+     formatted samples use a fixed instant, never "now". */
+  const jan = new Date(Date.UTC(2026, 0, 15, 12, 34, 56));
+  const jul = new Date(Date.UTC(2026, 6, 15, 12, 34, 56));
+  const resolved = (Intl.DateTimeFormat().resolvedOptions()) || {};
+  let dtf = null, nf = null;
+  try {
+    dtf = new Intl.DateTimeFormat(undefined, {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "long"
+    }).format(jan);
+  } catch (e) { note("Intl.DateTimeFormat: " + e.message); }
+  try {
+    nf = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(1234567.891);
+  } catch (e) { note("Intl.NumberFormat: " + e.message); }
+  return {
+    intl_timezone: resolved.timeZone || null,
+    intl_locale: resolved.locale || null,
+    intl_calendar: resolved.calendar || null,
+    intl_numbering_system: resolved.numberingSystem || null,
+    intl_hour_cycle: resolved.hourCycle || null,
+    offset_minutes_january: -jan.getTimezoneOffset(),
+    offset_minutes_july: -jul.getTimezoneOffset(),
+    date_sample: dtf,
+    number_sample: nf,
+    date_string: jan.toString(),
+    date_locale_string: jan.toLocaleString()
+  };
+}
+
+function probePlugins() {
+  const plugins = [];
+  for (let i = 0; i < navigator.plugins.length; i++) {
+    const p = navigator.plugins[i];
+    plugins.push({ name: p.name, filename: p.filename, description: p.description });
+  }
+  return {
+    plugin_count: navigator.plugins.length,
+    mime_type_count: navigator.mimeTypes.length,
+    plugins: plugins,
+    pdf_viewer_enabled: typeof navigator.pdfViewerEnabled === "boolean" ? navigator.pdfViewerEnabled : null
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* assembly                                                            */
+/* ------------------------------------------------------------------ */
+
+async function collect() {
+  const started = performance.now();
+
+  const canvas = probeCanvas();
+  const webgl = probeWebGL();
+  const audio = await probeAudio();
+  const uach = await probeUACh();
+  const webrtc = await probeWebRTC();
+  const webgpu = await probeWebGPU();
+  const storage = await probeStorage();
+  const media = await probeMediaDevices();
+  const fonts = probeFonts();
+  const speech = await probeSpeechAsync();
+
+  const signals = {
+    /* automation */
+    webdriver: navigator.webdriver,
+    /* identity */
+    user_agent: navigator.userAgent,
+    app_version: navigator.appVersion,
+    vendor: navigator.vendor,
+    product: navigator.product,
+    platform: navigator.platform,
+    user_agent_data: uach,
+    languages: (navigator.languages || []).slice(),
+    language: navigator.language,
+    do_not_track: navigator.doNotTrack,
+    cookie_enabled: navigator.cookieEnabled,
+    /* hardware */
+    hardware_concurrency: navigator.hardwareConcurrency,
+    device_memory: typeof navigator.deviceMemory === "number" ? navigator.deviceMemory : null,
+    max_touch_points: navigator.maxTouchPoints,
+    /* time */
+    time: probeTimeIntl(),
+    /* display */
+    screen_geometry: probeScreen(),
+    media_queries: probeMediaQueries(),
+    /* browser surface */
+    plugins: probePlugins(),
+    chrome_runtime: probeChromeObject(),
+    /* readback */
+    canvas_readback: canvas,
+    webgl: webgl,
+    webgpu: webgpu,
+    audio_readback: audio,
+    /* environment */
+    webrtc: webrtc,
+    storage_quota: storage,
+    notification_permission: typeof Notification !== "undefined" ? Notification.permission : "unsupported",
+    fonts: fonts,
+    speech_voices: speech,
+    media_devices: media,
+    /* volatile, excluded from the hash */
+    performance_memory: (performance && performance.memory) ? {
+      js_heap_size_limit: performance.memory.jsHeapSizeLimit,
+      used: performance.memory.usedJSHeapSize
+    } : null,
+    page: { origin: location.origin, protocol: location.protocol, href_is_file: location.protocol === "file:" }
+  };
+
+  return {
+    probe: {
+      version: "1.0.0",
+      generated_at: new Date().toISOString(),
+      duration_ms: Math.round(performance.now() - started),
+      secure_context: window.isSecureContext
+    },
+    signals: signals,
+    notes: notes.slice()
+  };
+}
+
+/* Keys whose value legitimately changes between two runs of the same profile
+   and must not move the stable hash. */
+function hashable(doc) {
+  const copy = JSON.parse(JSON.stringify(doc));
+  delete copy.probe.generated_at;
+  delete copy.probe.duration_ms;
+  delete copy.signals.performance_memory;
+  if (copy.signals.storage_quota) delete copy.signals.storage_quota.usage;
+  if (copy.signals.storage_quota) delete copy.signals.storage_quota.persisted;
+  if (copy.signals.webrtc) delete copy.signals.webrtc.mdns_names;
+  return copy;
+}
+
+/* ------------------------------------------------------------------ */
+/* rendering                                                           */
+/* ------------------------------------------------------------------ */
+
+const el = (id) => document.getElementById(id);
+
+function short(value, max) {
+  if (value === null) return "null";
+  if (typeof value === "string") {
+    if (value.length > (max || 90)) return value.slice(0, max || 90) + "… (" + value.length + ")";
+    return value;
+  }
+  if (typeof value === "object") {
+    const s = JSON.stringify(value);
+    return s.length > (max || 90) ? s.slice(0, max || 90) + "…" : s;
+  }
+  return String(value);
+}
+
+const TABLE_ROWS = [
+  ["navigator.webdriver", d => d.signals.webdriver, v => v === false ? "ok" : "bad"],
+  ["userAgent", d => d.signals.user_agent, () => ""],
+  ["UA-CH brands", d => d.signals.user_agent_data.supported ? d.signals.user_agent_data.low.brands.map(b => b.brand + " " + b.version).join(", ") : "unsupported", () => ""],
+  ["UA-CH fullVersionList", d => d.signals.user_agent_data.high ? (d.signals.user_agent_data.high.fullVersionList || []).map(b => b.brand + " " + b.version).join(", ") : "n/a", () => ""],
+  ["UA-CH platform / version", d => d.signals.user_agent_data.high ? d.signals.user_agent_data.high.platform + " " + d.signals.user_agent_data.high.platformVersion : "n/a", () => ""],
+  ["UA-CH arch / bitness / model", d => { const h = d.signals.user_agent_data.high; return h ? [h.architecture, h.bitness, h.model || "(no model)"].join(" / ") : "n/a"; }, () => ""],
+  ["navigator.platform", d => d.signals.platform, () => ""],
+  ["hardwareConcurrency", d => d.signals.hardware_concurrency, () => ""],
+  ["deviceMemory", d => d.signals.device_memory, () => ""],
+  ["languages", d => d.signals.languages.join(","), () => ""],
+  ["Intl timezone", d => d.signals.time.intl_timezone, () => ""],
+  ["timezone offsets jan/jul", d => d.signals.time.offset_minutes_january + " / " + d.signals.time.offset_minutes_july, () => ""],
+  ["plugin / mime counts", d => d.signals.plugins.plugin_count + " / " + d.signals.plugins.mime_type_count, () => ""],
+  ["chrome object", d => d.signals.chrome_runtime.present ? "present: " + d.signals.chrome_runtime.keys.join(",") : "absent", v => v === "absent" ? "bad" : ""],
+  ["canvas hash", d => d.signals.canvas_readback.hash, () => ""],
+  ["canvas emoji hash", d => d.signals.canvas_readback.hash_emoji, () => ""],
+  ["WebGL context", d => d.signals.webgl.context || "none", v => v === "none" ? "bad" : ""],
+  ["WebGL renderer (unmasked)", d => d.signals.webgl.unmasked_renderer || d.signals.webgl.renderer || "n/a", () => ""],
+  ["WebGL vendor (unmasked)", d => d.signals.webgl.unmasked_vendor || d.signals.webgl.vendor || "n/a", () => ""],
+  ["WebGL max texture", d => d.signals.webgl.max_texture_size, () => ""],
+  ["WebGL extensions", d => d.signals.webgl.extension_count + " (" + short(d.signals.webgl.extensions_hash) + ")", () => ""],
+  ["WebGL render hash", d => d.signals.webgl.render_hash, () => ""],
+  ["WebGPU adapter", d => d.signals.webgpu ? short(d.signals.webgpu.adapter) : "not exposed", () => ""],
+  ["audio hash", d => d.signals.audio_readback ? d.signals.audio_readback.hash : "n/a", () => ""],
+  ["WebRTC local IPs", d => d.signals.webrtc.local_ips ? (d.signals.webrtc.local_ips.join(", ") || "(none)") : "unsupported", v => v === "(none)" ? "warn" : ""],
+  ["screen w×h / avail", d => d.signals.screen_geometry.width + "×" + d.signals.screen_geometry.height + " / " + d.signals.screen_geometry.avail_width + "×" + d.signals.screen_geometry.avail_height, () => ""],
+  ["devicePixelRatio", d => d.signals.screen_geometry.device_pixel_ratio, () => ""],
+  ["outer-inner (chrome height)", d => d.signals.screen_geometry.chrome_height, () => ""],
+  ["pointer / hover", d => d.signals.media_queries["pointer:fine"] ? "fine" : d.signals.media_queries["pointer:coarse"] ? "coarse" : "none", () => ""],
+  ["storage quota (MiB)", d => d.signals.storage_quota ? d.signals.storage_quota.quota_mib : "n/a", () => ""],
+  ["notification permission", d => d.signals.notification_permission, v => v === "denied" ? "warn" : ""],
+  ["fonts available", d => d.signals.fonts.available_count + " / " + d.signals.fonts.probed_count, () => ""],
+  ["speech voices", d => d.signals.speech_voices.supported ? d.signals.speech_voices.voice_count + " (" + d.signals.speech_voices.languages.join(",") + ")" : "unsupported", () => ""],
+  ["media devices", d => d.signals.media_devices.supported ? d.signals.media_devices.total + " " + short(d.signals.media_devices.by_kind) : "unsupported", () => ""]
+];
+
+function render(doc) {
+  const tbody = el("table").querySelector("tbody");
+  tbody.textContent = "";
+  for (const [label, get, cls] of TABLE_ROWS) {
+    let value;
+    try { value = get(doc); } catch (_) { value = "error"; }
+    const tr = document.createElement("tr");
+    const k = document.createElement("td");
+    k.className = "k"; k.textContent = label;
+    const v = document.createElement("td");
+    v.className = "v " + (cls ? cls(value) : "");
+    v.textContent = short(value, 120);
+    tr.appendChild(k); tr.appendChild(v);
+    tbody.appendChild(tr);
+  }
+  el("json").value = JSON.stringify(doc, null, 2);
+}
+
+function renderNotes(doc) {
+  el("stablemeta").textContent =
+    doc.probe.version + " · " + doc.probe.duration_ms + " ms · " +
+    doc.notes.length + " note(s)" + (doc.notes.length ? ": " + doc.notes.join(" | ") : "");
+}
+
+/* ------------------------------------------------------------------ */
+/* diff against a saved run                                            */
+/* ------------------------------------------------------------------ */
+
+function flatten(value, prefix, out) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const k of Object.keys(value)) flatten(value[k], prefix ? prefix + "." + k : k, out);
+  } else {
+    out[prefix] = value;
+  }
+  return out;
+}
+
+function renderDiff(a, b) {
+  const wrap = el("diffwrap");
+  const box = el("diff");
+  box.textContent = "";
+  const fa = flatten(a, "", {});
+  const fb = flatten(b, "", {});
+  const skip = /^(probe\.(generated_at|duration_ms)|signals\.(performance_memory|storage_quota\.usage|storage_quota\.persisted))/;
+  const keys = Array.from(new Set(Object.keys(fa).concat(Object.keys(fb)))).sort();
+  let count = 0;
+  for (const key of keys) {
+    if (skip.test(key)) continue;
+    const va = JSON.stringify(fa[key]);
+    const vb = JSON.stringify(fb[key]);
+    if (va === vb) continue;
+    count++;
+    const row = document.createElement("div");
+    row.className = "row";
+    const p = document.createElement("span");
+    p.className = "path"; p.textContent = key + ": ";
+    const was = document.createElement("span");
+    was.className = "was"; was.textContent = short(va, 70);
+    const now = document.createElement("span");
+    now.className = "now"; now.textContent = "  →  " + short(vb, 70);
+    row.appendChild(p); row.appendChild(was); row.appendChild(now);
+    box.appendChild(row);
+  }
+  if (!count) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.textContent = "identical: every hashed signal matches";
+    box.appendChild(row);
+  }
+  wrap.hidden = false;
+}
+
+/* ------------------------------------------------------------------ */
+/* main                                                                */
+/* ------------------------------------------------------------------ */
+
+let current = null;
+
+async function run() {
+  notes.length = 0;
+  el("status").textContent = "running…";
+  el("rerun").disabled = true;
+  el("copy").disabled = true;
+  el("download").disabled = true;
+
+  const doc = await collect();
+  const canonicalJson = JSON.stringify(canonical(hashable(doc)));
+  const stable = fnvString(canonicalJson);
+  const sha = await sha256Hex(canonicalJson);
+
+  doc.hashes = {
+    stable_fnv64: stable,
+    stable_sha256: sha,
+    canvas: doc.signals.canvas_readback.hash,
+    webgl: doc.signals.webgl.render_hash,
+    audio: doc.signals.audio_readback ? doc.signals.audio_readback.hash : null,
+    fonts: doc.signals.fonts.hash,
+    webgl_extensions: doc.signals.webgl.extensions_hash,
+    speech_voices: doc.signals.speech_voices.names_hash || null
+  };
+
+  current = doc;
+  el("stable").textContent = "fnv64 " + stable + (sha ? "  ·  sha256 " + sha.slice(0, 32) + "…" : "");
+  el("json").value = JSON.stringify(doc, null, 2);
+  render(doc);
+  renderNotes(doc);
+  el("status").textContent = "done in " + doc.probe.duration_ms + " ms";
+  el("rerun").disabled = false;
+  el("copy").disabled = false;
+  el("download").disabled = false;
+  el("diffwrap").hidden = true;
+}
+
+el("rerun").addEventListener("click", () => { run(); });
+
+el("copy").addEventListener("click", async () => {
+  const text = el("json").value;
+  try {
+    await navigator.clipboard.writeText(text);
+    el("status").textContent = "copied " + text.length + " bytes";
+  } catch (_) {
+    const ta = el("json");
+    ta.focus(); ta.select();
+    el("status").textContent = "selected; press Ctrl+C";
+  }
+});
+
+el("download").addEventListener("click", () => {
+  if (!current) return;
+  const blob = new Blob([JSON.stringify(current, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "nanfu-probe-" + current.hashes.stable_fnv64 + ".json";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+});
+
+el("compare").addEventListener("change", async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file || !current) return;
+  try {
+    const text = await file.text();
+    const other = JSON.parse(text);
+    if (!other || !other.signals) throw new Error("not a probe JSON");
+    renderDiff(other, current);
+  } catch (e) {
+    el("status").textContent = "compare failed: " + e.message;
+  } finally {
+    ev.target.value = "";
+  }
+});
+
+/* Exposed so a driver (CDP, Playwright) can wait for the run and read the
+   result without parsing the DOM. Harmless when nobody is driving. */
+window.__nanfuProbe = { run: run, promise: run() };
+</script>
+</body>
+</html>
