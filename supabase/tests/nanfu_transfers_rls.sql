@@ -16,6 +16,9 @@ begin
   if not exists (select 1 from pg_roles where rolname = 'anon') then
     create role anon nologin;
   end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then
+    create role service_role nologin bypassrls;
+  end if;
 end $$;
 
 create schema if not exists auth;
@@ -42,6 +45,15 @@ grant usage on schema auth to authenticated;
 grant execute on function auth.uid() to authenticated;
 grant execute on function auth.jwt() to authenticated;
 
+-- Minimal stand-in for the Supabase storage schema: the release migration only
+-- needs storage.buckets to exist.
+create schema if not exists storage;
+create table if not exists storage.buckets (
+  id text primary key,
+  name text not null,
+  public boolean not null default false
+);
+
 -- Applied twice on purpose: the operator pastes this file after every update.
 \i supabase/migrations/20261029_nanfu_environments.sql
 \i supabase/migrations/20261029_nanfu_environments.sql
@@ -49,6 +61,10 @@ grant execute on function auth.jwt() to authenticated;
 \i supabase/migrations/20261029_nanfu_function_grants.sql
 \i supabase/migrations/20261029_nanfu_self_join.sql
 \i supabase/migrations/20261029_nanfu_self_join.sql
+\i supabase/migrations/20261029_nanfu_releases.sql
+\i supabase/migrations/20261029_nanfu_releases.sql
+\i supabase/migrations/20261029_nanfu_signup_attempts.sql
+\i supabase/migrations/20261029_nanfu_signup_attempts.sql
 
 do $$
 declare signature text; target regprocedure;
@@ -1102,6 +1118,42 @@ end $$;
 commit;
 
 drop table if exists public.nanfu_test_codes;
+
+-- ---------------------------------------------------------------------------
+-- Releases: anonymous cannot read the table; the service role can. Downloads
+-- are only issued as signed URLs by the nanfu-release Edge Function.
+-- ---------------------------------------------------------------------------
+begin;
+set local role anon;
+do $$
+declare n bigint;
+begin
+  begin
+    select count(*) into n from public.nanfu_releases;
+    if n <> 0 then raise exception 'anon read % release rows', n; end if;
+  exception when insufficient_privilege then
+    null; -- no table grant at all is equally unreadable
+  end;
+end $$;
+commit;
+
+begin;
+set local role service_role;
+insert into public.nanfu_releases
+  (version, platform, file_name, object_key, byte_size, sha256)
+values
+  ('0.1.0-beta.70', 'win-x64', 'Nanfu-setup.exe',
+   'releases/0.1.0-beta.70/win-x64/Nanfu-setup.exe', 1024, repeat('a', 64))
+on conflict (object_key) do update set byte_size = excluded.byte_size;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_releases where platform = 'win-x64';
+  if n <> 1 then
+    raise exception 'service_role should read the release row, saw %', n;
+  end if;
+end $$;
+commit;
 
 select 'nanfu RLS proof passed' as result;
 

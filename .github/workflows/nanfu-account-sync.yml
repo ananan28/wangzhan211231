@@ -2,7 +2,9 @@ name: Nanfu account and sync tests
 on:
   workflow_dispatch:
   push:
-    branches: [qoder/nanfu-usability-20261028]
+    branches:
+      - qoder/nanfu-usability-20261028
+      - qoder/nanfu-release-20261029
     paths:
       - .github/workflows/nanfu-account-sync.yml
       - vendor/aliasmode/nanfu-*.ts
@@ -52,9 +54,21 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      - name: Row-level security proof (two tenants, orgs, transfers)
+      - name: Row-level security proof (tenants, orgs, transfers, releases)
         env:
           PGPASSWORD: postgres
         run: >-
           psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1
           -f supabase/tests/nanfu_transfers_rls.sql
+  functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check the release channel functions
+        run: >-
+          deno check
+          supabase/functions/nanfu-release/index.ts
+          supabase/functions/nanfu-signup/index.ts
