@@ -1,0 +1,140 @@
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index 853d197..2f797ec 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -3913,6 +3913,8 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
+       switches::kEnableWebGLDeveloperExtensions,
+       switches::kEnableWebGLDraftExtensions,
+       switches::kEnableWebGPUDeveloperFeatures,
++      blink::switches::kFingerprintClientRectsJitter,
++      blink::switches::kFingerprintSeed,
+       blink::switches::kFingerprintWebGLRenderer,
+       blink::switches::kFingerprintWebGLVendor,
+       switches::kFileUrlPathAlias,
+diff --git a/third_party/blink/common/switches.cc b/third_party/blink/common/switches.cc
+index 2868858..08a7c58 100644
+--- a/third_party/blink/common/switches.cc
++++ b/third_party/blink/common/switches.cc
+@@ -99,6 +99,13 @@ const char kEnableOverlaysAndLowLatencyUsageForWebGL[] =
+ // Enable rasterizer that writes directly to GPU memory associated with tiles.
+ const char kEnableZeroCopy[] = "enable-zero-copy";
+ 
++// Maximum sub-pixel offset applied to getClientRects()/getBoundingClientRect().
++const char kFingerprintClientRectsJitter[] =
++    "fingerprint-client-rects-jitter";
++
++// Seed for renderer-side fingerprint perturbations.
++const char kFingerprintSeed[] = "fingerprint-seed";
++
+ // Overrides the WebGL renderer string reported to JavaScript.
+ const char kFingerprintWebGLRenderer[] = "fingerprint-webgl-renderer";
+ 
+diff --git a/third_party/blink/public/common/switches.h b/third_party/blink/public/common/switches.h
+index 2b12587..79e011f 100644
+--- a/third_party/blink/public/common/switches.h
++++ b/third_party/blink/public/common/switches.h
+@@ -41,6 +41,13 @@ BLINK_COMMON_EXPORT extern const char
+ #endif
+ BLINK_COMMON_EXPORT extern const char kEnableZeroCopy[];
+ 
++// Maximum sub-pixel offset, in CSS pixels, applied to getClientRects() and
++// getBoundingClientRect(). 0 or absent disables the perturbation.
++BLINK_COMMON_EXPORT extern const char kFingerprintClientRectsJitter[];
++
++// 32-bit seed shared by renderer-side fingerprint perturbations.
++BLINK_COMMON_EXPORT extern const char kFingerprintSeed[];
++
+ // Substitutes the strings reported by WebGL getParameter(VENDOR/RENDERER) and
+ // by WEBGL_debug_renderer_info's UNMASKED_* queries. Values are UTF-8.
+ BLINK_COMMON_EXPORT extern const char kFingerprintWebGLRenderer[];
+diff --git a/third_party/blink/renderer/core/dom/element.cc b/third_party/blink/renderer/core/dom/element.cc
+index 91d2390..cbfafcd 100644
+--- a/third_party/blink/renderer/core/dom/element.cc
++++ b/third_party/blink/renderer/core/dom/element.cc
+@@ -28,15 +28,18 @@
+ 
+ #include <algorithm>
+ #include <bitset>
++#include <cstdint>
+ #include <limits>
+ #include <memory>
+ #include <utility>
+ 
+ #include "base/containers/adapters.h"
+ #include "base/feature_list.h"
++#include "base/strings/string_number_conversions.h"
+ #include "cc/input/snap_selection_strategy.h"
+ #include "components/viz/common/surfaces/tracked_element_rects.h"
+ #include "third_party/blink/public/common/features.h"
++#include "third_party/blink/public/common/switches.h"
+ #include "third_party/blink/public/mojom/scroll/scroll_enums.mojom-blink.h"
+ #include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink.h"
+ #include "third_party/blink/public/web/web_autofill_state.h"
+@@ -331,6 +334,42 @@ namespace blink {
+ 
+ namespace {
+ 
++// Fingerprint hardening: returns a deterministic sub-pixel offset derived from
++// the process seed, the node id and the axis, or 0 when the feature is off.
++// Bounded to +/-0.5 CSS px (amplitude is capped at 1.0) so that hit-testing
++// and layout-adjacent APIs remain usable.
++float FingerprintRectJitter(Element& element, int axis) {
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++  if (!command_line->HasSwitch(
++          blink::switches::kFingerprintClientRectsJitter)) {
++    return 0.0f;
++  }
++  double amplitude = 0.0;
++  if (!base::StringToDouble(
++          command_line->GetSwitchValueASCII(
++              blink::switches::kFingerprintClientRectsJitter),
++          &amplitude) ||
++      amplitude <= 0.0) {
++    return 0.0f;
++  }
++  amplitude = std::min(amplitude, 1.0);
++
++  uint32_t seed = 0;
++  base::StringToUint(
++      command_line->GetSwitchValueASCII(blink::switches::kFingerprintSeed),
++      &seed);
++
++  uint32_t hash = seed ^ (static_cast<uint32_t>(element.GetDomNodeId()) *
++                          0x9e3779b9u) ^
++                  (static_cast<uint32_t>(axis) * 0x85ebca6bu);
++  hash ^= hash >> 16;
++  hash *= 0x7feb352du;
++  hash ^= hash >> 15;
++  const double unit = static_cast<double>(hash) / 4294967296.0 - 0.5;
++  return static_cast<float>(unit * amplitude);
++}
++
+ class DisplayLockStyleScope {
+   STACK_ALLOCATED();
+ 
+@@ -3392,6 +3431,10 @@ DOMRectList* Element::getClientRects() {
+     GetDocument().AdjustRectForScrollAndAbsoluteZoom(rect,
+                                                      *element_layout_object);
+   }
++  for (size_t i = 0; i < rects.size(); ++i) {
++    rects[i].Offset(FingerprintRectJitter(*this, static_cast<int>(2 * i)),
++                    FingerprintRectJitter(*this, static_cast<int>(2 * i + 1)));
++  }
+   return MakeGarbageCollected<DOMRectList>(rects);
+ }
+ 
+@@ -3481,7 +3524,12 @@ gfx::RectF Element::GetBoundingClientRectNoLifecycleUpdate() const {
+ DOMRect* Element::GetBoundingClientRect() {
+   GetDocument().UpdateStyleAndLayoutForNode(this,
+                                             DocumentUpdateReason::kJavaScript);
+-  return DOMRect::FromRectF(GetBoundingClientRectNoLifecycleUpdate());
++  gfx::RectF rect = GetBoundingClientRectNoLifecycleUpdate();
++  if (rect != gfx::RectF()) {
++    rect.Offset(FingerprintRectJitter(*this, 0),
++                FingerprintRectJitter(*this, 1));
++  }
++  return DOMRect::FromRectF(rect);
+ }
+ 
+ DOMRect* Element::GetBoundingClientRectForBinding() {

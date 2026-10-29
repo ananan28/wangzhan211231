@@ -22,8 +22,13 @@ import type { Profile } from "./types.ts";
 /** Bump when a patch or the delivered manifest changes; launch rewrites the directory. */
 export const FINGERPRINT_EXTENSION_REVISION = 1;
 
-/** Master switch for the JS layer. The engine keeps its own coverage either way. */
-export const FINGERPRINT_EXTENSION = true;
+/**
+ * Master switch for the JS layer. Off by default: the engine already answers
+ * most of these surfaces, and a second, unverified source can only make a
+ * profile inconsistent. Set NANFU_FINGERPRINT_JS=1 for a supervised comparison
+ * against the fingerprint probe before turning it on by default.
+ */
+export const FINGERPRINT_EXTENSION = process.env.NANFU_FINGERPRINT_JS === "1";
 
 export const fingerprintExtensionDir = (userDataDir: string) => join(userDataDir, "nanfu-fingerprint");
 

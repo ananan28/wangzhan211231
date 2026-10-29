@@ -1,0 +1,138 @@
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index b8d41ae..853d197 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -3913,6 +3913,8 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
+       switches::kEnableWebGLDeveloperExtensions,
+       switches::kEnableWebGLDraftExtensions,
+       switches::kEnableWebGPUDeveloperFeatures,
++      blink::switches::kFingerprintWebGLRenderer,
++      blink::switches::kFingerprintWebGLVendor,
+       switches::kFileUrlPathAlias,
+       switches::kForceDeviceScaleFactor,
+       switches::kForceDisplayColorProfile,
+diff --git a/third_party/blink/common/switches.cc b/third_party/blink/common/switches.cc
+index 6fb78b3..2868858 100644
+--- a/third_party/blink/common/switches.cc
++++ b/third_party/blink/common/switches.cc
+@@ -99,6 +99,12 @@ const char kEnableOverlaysAndLowLatencyUsageForWebGL[] =
+ // Enable rasterizer that writes directly to GPU memory associated with tiles.
+ const char kEnableZeroCopy[] = "enable-zero-copy";
+ 
++// Overrides the WebGL renderer string reported to JavaScript.
++const char kFingerprintWebGLRenderer[] = "fingerprint-webgl-renderer";
++
++// Overrides the WebGL vendor string reported to JavaScript.
++const char kFingerprintWebGLVendor[] = "fingerprint-webgl-vendor";
++
+ // Sets the total amount of memory that may be allocated for GPU resources in
+ // cc.
+ const char kForceGpuMemAvailableMb[] = "force-gpu-mem-available-mb";
+diff --git a/third_party/blink/public/common/switches.h b/third_party/blink/public/common/switches.h
+index 0cedd17..2b12587 100644
+--- a/third_party/blink/public/common/switches.h
++++ b/third_party/blink/public/common/switches.h
+@@ -40,6 +40,11 @@ BLINK_COMMON_EXPORT extern const char
+     kEnableOverlaysAndLowLatencyUsageForWebGL[];
+ #endif
+ BLINK_COMMON_EXPORT extern const char kEnableZeroCopy[];
++
++// Substitutes the strings reported by WebGL getParameter(VENDOR/RENDERER) and
++// by WEBGL_debug_renderer_info's UNMASKED_* queries. Values are UTF-8.
++BLINK_COMMON_EXPORT extern const char kFingerprintWebGLRenderer[];
++BLINK_COMMON_EXPORT extern const char kFingerprintWebGLVendor[];
+ BLINK_COMMON_EXPORT extern const char
+     kGpuMemoryBufferReadbackFromTextureForceDisabledForDebugging[];
+ BLINK_COMMON_EXPORT extern const char kGpuRasterizationMSAASampleCount[];
+diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+index b452298..4733a2a 100644
+--- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
++++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+@@ -32,6 +32,7 @@
+ 
+ #include "base/bit_cast.h"
+ #include "base/byte_size.h"
++#include "base/command_line.h"
+ #include "base/compiler_specific.h"
+ #include "base/feature_list.h"
+ #include "base/memory/scoped_refptr.h"
+@@ -64,6 +65,7 @@
+ #include "media/renderers/paint_canvas_video_renderer.h"
+ #include "media/renderers/video_frame_shared_image_cache.h"
+ #include "third_party/blink/public/common/features.h"
++#include "third_party/blink/public/common/switches.h"
+ #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
+ #include "third_party/blink/public/mojom/gpu/gpu.mojom-blink.h"
+ #include "third_party/blink/public/platform/platform.h"
+@@ -206,6 +208,19 @@ unsigned WebGLRenderingContextBase::max_active_webgl_contexts_on_worker_ = 0;
+ 
+ namespace {
+ 
++// Fingerprint hardening: lets the launcher pin the vendor/renderer strings
++// exposed by WebGL, including WEBGL_debug_renderer_info's UNMASKED_* queries.
++// Without the switches the upstream strings are returned unchanged.
++String FingerprintWebGLString(const char* switch_name,
++                              const String& fallback) {
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++  if (!command_line->HasSwitch(switch_name)) {
++    return fallback;
++  }
++  return String::FromUTF8(command_line->GetSwitchValueASCII(switch_name));
++}
++
+ enum class WebGLANGLEImplementation {
+   // These values are persisted to logs. Entries should not be renumbered and
+   // numeric values should never be reused.
+@@ -4120,7 +4135,10 @@ ScriptValue WebGLRenderingContextBase::getParameter(ScriptState* script_state,
+     case GL_RENDERBUFFER_BINDING:
+       return WebGLAny(script_state, renderbuffer_binding_.Get());
+     case GL_RENDERER:
+-      return WebGLAny(script_state, String("WebKit WebGL"));
++      return WebGLAny(script_state,
++                      FingerprintWebGLString(
++                          blink::switches::kFingerprintWebGLRenderer,
++                          String("WebKit WebGL")));
+     case GL_SAMPLE_ALPHA_TO_COVERAGE:
+       return GetBooleanParameter(script_state, pname);
+     case GL_SAMPLE_BUFFERS:
+@@ -4198,7 +4216,10 @@ ScriptValue WebGLRenderingContextBase::getParameter(ScriptState* script_state,
+     case GC3D_UNPACK_COLORSPACE_CONVERSION_WEBGL:
+       return WebGLAny(script_state, unpack_colorspace_conversion_);
+     case GL_VENDOR:
+-      return WebGLAny(script_state, String("WebKit"));
++      return WebGLAny(script_state,
++                      FingerprintWebGLString(
++                          blink::switches::kFingerprintWebGLVendor,
++                          String("WebKit")));
+     case GL_VERSION:
+       return WebGLAny(
+           script_state,
+@@ -4216,8 +4237,11 @@ ScriptValue WebGLRenderingContextBase::getParameter(ScriptState* script_state,
+       return ScriptValue::CreateNull(script_state->GetIsolate());
+     case WebGLDebugRendererInfo::kUnmaskedRendererWebgl:
+       if (ExtensionEnabled(kWebGLDebugRendererInfoName)) {
+-        return WebGLAny(script_state,
+-                        String(ContextGL()->GetString(GL_RENDERER)));
++        return WebGLAny(
++            script_state,
++            FingerprintWebGLString(
++                blink::switches::kFingerprintWebGLRenderer,
++                String(ContextGL()->GetString(GL_RENDERER))));
+       }
+       SynthesizeGLError(
+           GL_INVALID_ENUM, "getParameter",
+@@ -4225,8 +4249,11 @@ ScriptValue WebGLRenderingContextBase::getParameter(ScriptState* script_state,
+       return ScriptValue::CreateNull(script_state->GetIsolate());
+     case WebGLDebugRendererInfo::kUnmaskedVendorWebgl:
+       if (ExtensionEnabled(kWebGLDebugRendererInfoName)) {
+-        return WebGLAny(script_state,
+-                        String(ContextGL()->GetString(GL_VENDOR)));
++        return WebGLAny(
++            script_state,
++            FingerprintWebGLString(
++                blink::switches::kFingerprintWebGLVendor,
++                String(ContextGL()->GetString(GL_VENDOR))));
+       }
+       SynthesizeGLError(
+           GL_INVALID_ENUM, "getParameter",

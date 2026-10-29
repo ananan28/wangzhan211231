@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "chromium": {
+    "version": "155.0.8059.85",
+    "source_repo": "https://chromium.googlesource.com/chromium/src",
+    "source_ref": "refs/tags/155.0.8059.85",
+    "source_commit": "0e66b94549a8bd85f03fbdf189b752d6e7b63c32",
+    "verified_at": "2026-10-30",
+    "verified_with": "GET https://chromium.googlesource.com/chromium/src/+/refs/tags/155.0.8059.85?format=JSON"
+  },
+  "upstream_binaries": {
+    "windows": "155.0.8059.85-aliasmode.4",
+    "macos_linux": "155.0.8059.31"
+  },
+  "patch_series": {
+    "applies_to": "refs/tags/155.0.8059.85",
+    "directory": "kernel/patches",
+    "order": [
+      "0001-add-webgl-vendor-renderer-switches.patch",
+      "0002-add-client-rects-jitter-seed.patch"
+    ]
+  }
+}
