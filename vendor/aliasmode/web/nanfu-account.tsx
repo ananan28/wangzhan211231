@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  nanfuAuthAction, nanfuSelfJoin, fetchNanfuEnvironments, nanfuOrganizationAction, nanfuLoginName, normalizeNanfuLogin, NanfuApiError,
+  nanfuAuthAction, nanfuSelfJoin, fetchNanfuEnvironments, nanfuOrganizationAction, nanfuLoginName, normalizeNanfuLogin, NanfuApiError, changeNanfuPassword,
   fetchNanfuLoginName, setNanfuLoginName, clearNanfuLoginName,
   type NanfuAccountState, type NanfuOrganization, type NanfuVisibleEnvironment, type NanfuMutations,
 } from "./api.ts";
+import { NANFU_MIN_PASSWORD_LENGTH } from "./nanfu-account.ts";
 import { nanfuIdentityName } from "./nanfu-management.tsx";
 
 export function NanfuAccountPage({ active, localCount, onLocal }: { active: boolean; localCount: number | null; onLocal: () => void }) {
@@ -27,6 +28,9 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
   const [loginName, setLoginNameState] = useState<string | null>(null);
   const [loginDraft, setLoginDraft] = useState("");
   const [loginManaged, setLoginManaged] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [nextPassword, setNextPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const request = useRef({ generation: 0, controller: new AbortController() });
 
   const begin = (clear = true) => {
@@ -158,6 +162,25 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
       setError(failure instanceof Error ? failure.message : "用户名清除失败，请稍后重试");
     } finally { if (current(generation)) setBusy(false); }
   };
+  const changePassword = async () => {
+    if (busy) return;
+    if (nextPassword.length < NANFU_MIN_PASSWORD_LENGTH) { setError(`新密码至少 ${NANFU_MIN_PASSWORD_LENGTH} 位`); return; }
+    if (nextPassword !== confirmPassword) { setError("两次输入的新密码不一致"); return; }
+    const { generation, controller } = begin(false);
+    setNotice(null);
+    try {
+      const result = await changeNanfuPassword(currentPassword, nextPassword, controller.signal);
+      if (!current(generation)) return;
+      if (result.state) setAccount(result.state);
+      setNotice("密码已修改，下次登录请使用新密码。");
+    } catch (failure) {
+      if (!current(generation)) return;
+      if (failure instanceof NanfuApiError && failure.status === 401) setAccount({ authenticated: false });
+      setError(failure instanceof Error ? failure.message : "密码修改失败，请稍后重试");
+    } finally {
+      if (current(generation)) { setCurrentPassword(""); setNextPassword(""); setConfirmPassword(""); setBusy(false); }
+    }
+  };
   const mutate = async <K extends keyof NanfuMutations,>(action: K, input: NanfuMutations[K]["input"]): Promise<void> => {
     if (!account.userId || busy) return;
     const userId = account.userId;
@@ -226,6 +249,15 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
           </form>
           <p className="nanfu-hint">用户名只用于登录，不改变组织里的显示名称；管理员创建的员工账号沿用管理员分配的登录名。</p>
         </>}
+      </div></section>}
+      {account.authenticated && <section className="settings-card" data-testid="nanfu-password-card"><header><h3>修改密码</h3></header><div className="card-body">
+        <form className="nanfu-form" aria-label="修改登录密码" onSubmit={event => { event.preventDefault(); void changePassword(); }}>
+          <label className="fld"><span>当前密码</span><input type="password" autoComplete="current-password" required value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} disabled={busy} /></label>
+          <label className="fld"><span>新密码</span><input type="password" autoComplete="new-password" minLength={NANFU_MIN_PASSWORD_LENGTH} maxLength={72} required value={nextPassword} onChange={event => setNextPassword(event.target.value)} disabled={busy} /></label>
+          <label className="fld"><span>再输一次新密码</span><input type="password" autoComplete="new-password" minLength={NANFU_MIN_PASSWORD_LENGTH} maxLength={72} required value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} disabled={busy} /></label>
+          <button className="btn primary" type="submit" disabled={busy || !currentPassword || nextPassword.length < NANFU_MIN_PASSWORD_LENGTH || nextPassword !== confirmPassword}>保存新密码</button>
+        </form>
+        <p className="nanfu-hint">忘记密码不能自助找回：请联系组织管理员在「员工管理」里重置；所有者账号由平台方重置。</p>
       </div></section>}
       {account.authenticated && <section className="settings-card"><header><h3>当前组织与可见环境</h3></header><div className="card-body">
         <button className="btn" disabled={busy} onClick={() => void refresh()}>刷新组织列表</button>

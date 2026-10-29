@@ -92,6 +92,7 @@ function accountFixture() {
   let canViewMembers = false;
   let loginName: string | null = null;
   let signedInEmail: string | null = null;
+  let password = "synthetic-password";
   let pauseEnvironments: (() => Promise<void>) | undefined;
   const requests: URL[] = [];
   const credentials: NanfuCredentialStore = {
@@ -118,11 +119,19 @@ function accountFixture() {
           if (rejectRefresh) return Response.json({}, { status: 400 });
           return Response.json(session(String(body.refresh_token).replace("synthetic-refresh-", "")));
         }
-        if (body.password !== "synthetic-password") return Response.json({ message: "do not expose upstream errors" }, { status: 400 });
+        if (body.password !== password) return Response.json({ message: "do not expose upstream errors" }, { status: 400 });
         signedInEmail = String(body.email);
         return Response.json(session(body.email.split("@")[0], body.email));
       }
       if (url.pathname === "/auth/v1/logout") return new Response(null, { status: 204 });
+      if (url.pathname === "/auth/v1/user" && req.method === "PUT") {
+        const body = await req.json() as any;
+        if (typeof body.password !== "string" || body.password.length < 8) {
+          return Response.json({ error_code: "weak_password" }, { status: 422 });
+        }
+        password = body.password;
+        return Response.json({ id: "a", email: "a@fixture.test" });
+      }
       const id = req.headers.get("authorization")?.replace("Bearer synthetic-access-", "");
       if (!id || id.startsWith("Bearer")) return Response.json({}, { status: 401 });
       if (url.pathname === "/rest/v1/rpc/nanfu_org_me") return Response.json(emptyOrg ? [] : [{
@@ -265,6 +274,26 @@ test("the profile page reads and changes the sign-in name, and a sub-account can
     expect(managed.body.managed).toBe(true);
     expect((await f.call("set-login-name", { name: "another" })).status).toBe(403);
     expect((await f.call("set-login-name", { name: "another" })).body.error).toContain("管理员");
+  } finally { f.close(); }
+});
+
+test("the signed-in account changes its own password before anything else can", async () => {
+  const f = accountFixture();
+  try {
+    expect((await f.call("change-password", { currentPassword: "synthetic-password", nextPassword: "another-password" })).status).toBe(401);
+    await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" });
+    expect((await f.call("change-password", {})).status).toBe(400);
+    expect((await f.call("change-password", { currentPassword: "wrong-password", nextPassword: "another-password" })).status).toBe(400);
+    expect((await f.call("change-password", { currentPassword: "synthetic-password", nextPassword: "short" })).status).toBe(400);
+    expect((await f.call("change-password", { currentPassword: "synthetic-password", nextPassword: "synthetic-password" })).status).toBe(400);
+    const changed = await f.call("change-password", { currentPassword: "synthetic-password", nextPassword: "another-password" });
+    expect(changed.body.ok).toBe(true);
+    expect(changed.body.state.userId).toBe("a");
+    // The session survives the change: the runtime rotated its own tokens.
+    expect((await f.call("state")).body.state.authenticated).toBe(true);
+    await f.call("signout", {});
+    expect((await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" })).status).toBe(401);
+    expect((await f.call("signin", { email: "a@fixture.test", password: "another-password" })).body.state.userId).toBe("a");
   } finally { f.close(); }
 });
 

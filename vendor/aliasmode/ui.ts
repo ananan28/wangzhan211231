@@ -18,7 +18,7 @@ import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from
 import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import type { NanfuRuntime } from "./nanfu-service.ts";
-import { NANFU_LOGIN_SUFFIX, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword, normalizeNanfuLogin } from "./nanfu-account.ts";
+import { NANFU_LOGIN_SUFFIX, NANFU_MIN_PASSWORD_LENGTH, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword, normalizeNanfuLogin } from "./nanfu-account.ts";
 import { NanfuSyncError, isNanfuUuid } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
 import { NANFU_TRANSFER_ROUTE_PREFIX, handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
@@ -705,6 +705,30 @@ export async function handleUiRequest(
         const saved = await client.setLoginName(name, req.signal);
         account.assertCurrent(revision);
         return noStoreJson({ ok: true, name: saved, userId: account.state().userId });
+      }
+      // The signed-in account may change its own password. The current password
+      // is re-checked by a fresh sign-in, so a stolen token alone cannot lock the
+      // owner out of the account.
+      if (req.method === "POST" && action === "change-password") {
+        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孳账号" }, 401);
+        const body = await req.json().catch(() => null) as { currentPassword?: unknown; nextPassword?: unknown } | null;
+        const currentPassword = typeof body?.currentPassword === "string" ? body.currentPassword : "";
+        const nextPassword = typeof body?.nextPassword === "string" ? body.nextPassword : "";
+        if (!currentPassword) return noStoreJson({ ok: false, error: "请输入当前密码" }, 400);
+        if (!isValidNanfuPassword(nextPassword)) return noStoreJson({ ok: false, error: `新密码至少 ${NANFU_MIN_PASSWORD_LENGTH} 位` }, 400);
+        if (nextPassword.length > 72) return noStoreJson({ ok: false, error: "新密码最多 72 位" }, 400);
+        if (currentPassword === nextPassword) return noStoreJson({ ok: false, error: "新密码不能与当前密码相同" }, 400);
+        const revision = account.revision();
+        try {
+          await account.changePassword(currentPassword, nextPassword);
+        } catch (error) {
+          if (error instanceof NanfuAuthError && [400, 401, 409].includes(error.failure.kind === "http" ? error.failure.status : 0)) {
+            throw new NanfuInputError("当前密码不正确，请重新输入");
+          }
+          throw error;
+        }
+        account.assertCurrent(revision);
+        return noStoreJson({ ok: true, state: account.state(), persistent, userId: account.state().userId });
       }
       if (req.method === "POST" && ["signup", "signin", "restore", "signout"].includes(action)) {
         client.cancelVisibleRequests();

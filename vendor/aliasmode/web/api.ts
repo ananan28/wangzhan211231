@@ -82,6 +82,20 @@ export function nanfuAuthAction(
   return nanfuJson(action, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal });
 }
 
+/** Changes the signed-in account's password after proving the current one. */
+export function changeNanfuPassword(
+  currentPassword: string,
+  nextPassword: string,
+  signal?: AbortSignal,
+): Promise<{ state?: NanfuAccountState; persistent?: boolean; userId?: string }> {
+  return nanfuJson("change-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ currentPassword, nextPassword }),
+    signal,
+  });
+}
+
 /** Attaches the signed-in account to the default organization, or re-reads the one it already has. */
 export function nanfuSelfJoin(signal?: AbortSignal): Promise<{ orgId: string; organization: NanfuOrganization | null; userId: string }> {
   return nanfuJson("self-join", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", signal });
