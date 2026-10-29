@@ -49,7 +49,7 @@ export async function compileSidecar(cwd: string, output: string, target = WINDO
 }
 
 const AGENT_PACKAGE_VERSIONS: Record<string, string> = {
-  "@modelcontextprotocol/sdk": "1.30.0",
+  "@modelcontextprotocol/sdk": "1.32.2",
   "@playwright/mcp": "0.0.56",
   "playwright": "1.58.0-alpha-2026-01-16",
   "playwright-core": "1.62.1",
