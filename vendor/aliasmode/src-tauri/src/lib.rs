@@ -467,8 +467,8 @@ pub fn run() {
                 return Err(boxed("packaged Playwright and MCP runtime is incomplete"));
             }
             for (package, expected) in [
-                ("playwright-core", "1.58.2"),
-                ("@modelcontextprotocol/sdk", "1.30.0"),
+                ("playwright-core", "1.62.1"),
+                ("@modelcontextprotocol/sdk", "1.32.2"),
                 ("@playwright/mcp", "0.0.56"),
                 ("playwright", "1.58.0-alpha-2026-01-16"),
             ] {
