@@ -31,8 +31,8 @@ test("identity cards load stored Chromium and Firefox metadata without egress lo
   try {
     for (const [profile, browser] of [
       [chromium, "CloakBrowser"],
-      [firefox, "AliasMode Firefox"],
-      [chromium155, process.platform === "win32" ? "AliasMode Chromium" : "Chromium 155 beta"],
+      [firefox, "南孚 Firefox"],
+      [chromium155, process.platform === "win32" ? "南孚 Chromium" : "Chromium 155 beta"],
     ] as const) {
       const response = await fetch(`http://127.0.0.1:${server.port}/card?id=${profile.id}`);
       expect(response.status).toBe(200);

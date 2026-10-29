@@ -607,18 +607,25 @@ const KNOWN_PLATFORMS: { value: string; label: string }[] = [
   { value: "etsy.com", label: "Etsy" },
 ];
 
+/** Profiles store the platform as typed, often a full URL; show just the host. */
+function platformHost(value: string): string {
+  const host = value.trim().replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "").replace(/^www\./i, "");
+  return host.split(/[/?#]/)[0] ?? "";
+}
+
 function PlatformPill({ platform }: { platform: string }) {
   if (!platform) return <span className="muted">—</span>;
-  const known = KNOWN_PLATFORMS.find((candidate) => candidate.value === platform);
-  const mark = PLATFORM_MARKS[platform];
+  const host = platformHost(platform) || platform;
+  const known = KNOWN_PLATFORMS.find((candidate) => candidate.value === host || candidate.value === platform);
+  const mark = PLATFORM_MARKS[host];
   return (
-    <span className="platform-pill" title={platform}>
+    <span className="platform-pill" title={host}>
       <span className={`glyph pm-${mark?.key ?? "other"}`}>
         {mark
           ? <svg className="brandmark" viewBox="0 0 24 24" aria-hidden="true"><path d={mark.path} /></svg>
-          : platform.slice(0, 1).toUpperCase()}
+          : (host.slice(0, 1) || "?").toUpperCase()}
       </span>
-      {known?.label ?? platform}
+      {known?.label ?? host}
     </span>
   );
 }
@@ -654,14 +661,38 @@ function GroupPicker({ value, onChange, groups, allowCreate = true }: { value: s
   );
 }
 
+const CUSTOM_PLATFORMS_KEY = "nanfu.custom-platforms";
+
+function readCustomPlatforms(): string[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_PLATFORMS_KEY);
+    const list: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Keep the host the operator typed so it shows up in the dropdown next time. */
+function rememberPlatform(value: string): string[] {
+  const host = platformHost(value);
+  if (!host.includes(".") || KNOWN_PLATFORMS.some((p) => p.value === host)) return readCustomPlatforms();
+  const list = [host, ...readCustomPlatforms().filter((item) => item !== host)].slice(0, 40);
+  try {
+    localStorage.setItem(CUSTOM_PLATFORMS_KEY, JSON.stringify(list));
+  } catch {}
+  return list;
+}
+
 function PlatformPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { t } = useTranslation();
   const known = KNOWN_PLATFORMS.some((p) => p.value === value);
   const [creating, setCreating] = useState(false);
+  const [custom, setCustom] = useState<string[]>(readCustomPlatforms);
   if (creating || (!!value && !known)) {
     return (
       <div className="grouppick">
-        <input autoFocus placeholder={t("new platform (e.g. linkedin.com)")} value={value} onChange={(e) => onChange(e.target.value)} />
+        <input autoFocus placeholder={t("new platform (e.g. linkedin.com)")} value={value} onChange={(e) => onChange(e.target.value)} onBlur={() => setCustom(rememberPlatform(value))} />
         <button type="button" className="btn gp-back tip" data-tip={t("Pick a known platform")} title={t("Pick a known platform")} onClick={() => { setCreating(false); onChange(""); }}><Icon name="chevronLeft" /></button>
       </div>
     );
@@ -669,6 +700,7 @@ function PlatformPicker({ value, onChange }: { value: string; onChange: (v: stri
   return (
     <select value={value} onChange={(e) => { if (e.target.value === "__new__") { setCreating(true); onChange(""); } else onChange(e.target.value); }}>
       {KNOWN_PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+      {custom.filter((host) => !KNOWN_PLATFORMS.some((p) => p.value === host)).map((host) => <option key={host} value={host}>{host}</option>)}
       <option value="__new__">{t("➕ New platform…")}</option>
     </select>
   );
@@ -880,11 +912,11 @@ Save fingerprint changes?`;
 
 const CLOAKBROWSER_NOTE = "CloakBrowser profiles on one computer can be linked to each other. Use AliasMode Chromium or AliasMode Firefox for separate identities.";
 
-/** Chromium 155 is AliasMode Chromium where it is this computer's default engine (Windows), and a beta elsewhere. */
+/** Chromium 155 is 南孚 Chromium where it is this computer's default engine (Windows), and a beta elsewhere. */
 function browserLabel(engine: "chromium" | "firefox", chromiumRuntime?: string, ownChromium = false): string {
-  if (engine === "firefox") return "AliasMode Firefox";
+  if (engine === "firefox") return "南孚 Firefox";
   if (!chromiumRuntime) return "CloakBrowser";
-  return ownChromium ? "AliasMode Chromium" : "Chromium 155 beta";
+  return ownChromium ? "南孚 Chromium" : "Chromium 155 beta";
 }
 
 function FingerprintSettings({
@@ -3959,7 +3991,7 @@ function App() {
             value={group}
             onChange={(e) => selectFolder(e.target.value)}
           >
-            <option value="all">All {isCloudMode ? "folders" : "groups"}</option>
+            <option value="all">全部{isCloudMode ? "文件夹" : "分组"}</option>
             {existingGroups.map((g) => <option key={g} value={g}>{g}</option>)}
           </select>
           <div className="searchfield">
@@ -4177,7 +4209,7 @@ function App() {
                         )}
                         {isCloudMode && canManageCloudFolders && <button className="iconbtn tip" data-tip={t("Manage access")} aria-label={t("Manage access for {profile}", { profile: p.name })} onClick={() => openAccess({ kind: "profile", id: p.id, name: p.name, folder: p.group })}><Icon name="user" className="sm" /></button>}
                         {canEditRow && (
-                          <button className="iconbtn tip" data-tip={t("Edit profile")} aria-label={`Edit ${p.name}`} onClick={() => openEdit(p.id)}>
+                          <button className="iconbtn tip" data-tip={t("Edit profile")} aria-label={`编辑 ${p.name}`} onClick={() => openEdit(p.id)}>
                             <Icon name="edit" className="sm" />
                           </button>
                         )}
@@ -4221,7 +4253,7 @@ function App() {
                             </button>
                             <button
                               className="btn sm primary"
-                              aria-label={`Open ${p.name}`}
+                              aria-label={`打开 ${p.name}`}
                               disabled={busy[p.id]}
                               onClick={() => act(p.id, openProfile)}
                             >
@@ -4231,7 +4263,7 @@ function App() {
                         ) : (
                           <button
                             className="btn sm primary"
-                            aria-label={`Open ${p.name}`}
+                            aria-label={`打开 ${p.name}`}
                             title={p.lockedBy ? `Open — session writer: ${p.lockedBy}; this browser will not save its session back` : undefined}
                             disabled={busy[p.id]}
                             onClick={() => act(p.id, openProfile)}
