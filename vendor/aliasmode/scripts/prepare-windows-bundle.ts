@@ -52,7 +52,7 @@ const AGENT_PACKAGE_VERSIONS: Record<string, string> = {
   "@modelcontextprotocol/sdk": "1.30.0",
   "@playwright/mcp": "0.0.56",
   "playwright": "1.58.0-alpha-2026-01-16",
-  "playwright-core": "1.58.2",
+  "playwright-core": "1.62.1",
 };
 
 function packageDirectory(root: string, name: string): string {

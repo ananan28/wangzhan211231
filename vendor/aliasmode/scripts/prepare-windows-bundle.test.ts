@@ -46,7 +46,7 @@ function workspace(): string {
     writeFileSync(join(cwd, "agent", file), file);
   }
   const dependencies: Record<string, { version: string; dependencies?: Record<string, string> }> = {
-    "playwright-core": { version: "1.58.2" },
+    "playwright-core": { version: "1.62.1" },
     "ws": { version: "8.21.0" },
     "@modelcontextprotocol/sdk": { version: "1.30.0", dependencies: { zod: "1.0.0" } },
     "@playwright/mcp": {
@@ -99,7 +99,7 @@ test("Windows bundle prepares Chromium without Firefox input or resources", asyn
     expect(readFileSync(join(resources, "playwright", "worker.mjs"), "utf8")).toBe("worker");
     expect(readFileSync(join(resources, "playwright", "playwright-worker.mjs"), "utf8")).toBe("worker");
     for (const [name, version] of Object.entries({
-      "playwright-core": "1.58.2", "ws": "8.21.0", "@modelcontextprotocol/sdk": "1.30.0",
+      "playwright-core": "1.62.1", "ws": "8.21.0", "@modelcontextprotocol/sdk": "1.30.0",
       "@playwright/mcp": "0.0.56", "playwright": "1.58.0-alpha-2026-01-16", "zod": "1.0.0",
     })) {
       const manifest = JSON.parse(readFileSync(join(resources, "playwright", "node_modules", ...name.split("/"), "package.json"), "utf8"));

@@ -1,0 +1,201 @@
+diff --git a/lib/coreBundle.js b/lib/coreBundle.js
+index d9041dd..f5a827e 100644
+--- a/lib/coreBundle.js
++++ b/lib/coreBundle.js
+@@ -37395,7 +37395,9 @@ var init_crPage = __esm({
+           const skipDefaultOverrides = this._crPage._browserContext._browser.options.noDefaults && this._crPage._browserContext === this._crPage._browserContext._browser._defaultContext;
+           if (this._crPage._browserContext.needsPlaywrightBinding())
+             promises2.push(this.exposePlaywrightBinding());
+-          if (this._isMainFrame() && !skipDefaultOverrides)
++          // Focus emulation makes every attached tab read document.hasFocus() as true and fire focus
++          // and blur events. AliasMode's own helpers turn it off, so the user's tabs never see them.
++          if (this._isMainFrame() && !skipDefaultOverrides && globalThis[Symbol.for("aliasmode.playwrightFocusEmulation")] !== false)
+             promises2.push(this._client.send("Emulation.setFocusEmulationEnabled", { enabled: true }));
+           const options = this._crPage._browserContext._options;
+           if (options.bypassCSP)
+@@ -38338,7 +38340,7 @@ var init_crBrowser = __esm({
+         return this._crPages().map((crPage) => crPage._page);
+       }
+       async doCreateNewPage() {
+-        const { targetId } = await this._browser._session.send("Target.createTarget", { url: "about:blank", browserContextId: this._browserContextId });
++        const { targetId } = await this._browser._session.send("Target.createTarget", { url: "about:blank", browserContextId: this._browserContextId, background: true });
+         return this._browser._crPages.get(targetId)._page;
+       }
+       async doGetCookies(urls) {
+@@ -39219,21 +39221,22 @@ var init_transport = __esm({
+     init_happyEyeballs();
+     init_task();
+     ws = require("./utilsBundle").ws;
+-    perMessageDeflate2 = {
+-      clientNoContextTakeover: true,
+-      zlibDeflateOptions: {
+-        level: 3
+-      },
+-      zlibInflateOptions: {
+-        chunkSize: 10 * 1024
+-      },
+-      threshold: 10 * 1024
++    perMessageDeflate2 = false;
++    const kWebSocketCloseTimeout = 5e3;
++    const webSocketTransportStats = globalThis[Symbol.for("aliasmode.playwrightTransportStats")] ??= {
++      opened: 0,
++      closed: 0,
++      forced: 0,
++      active: 0
+     };
+     WebSocketTransport = class _WebSocketTransport {
+       constructor(progress2, url3, logUrl, options) {
+         this.headers = [];
+         this.wsEndpoint = url3;
+         this._logUrl = logUrl;
++        this._closeTimer = void 0;
++        this._closeRequested = false;
++        this._closed = false;
+         this._ws = new ws(url3, [], {
+           maxPayload: 256 * 1024 * 1024,
+           // 256Mb,
+@@ -39242,6 +39245,8 @@ var init_transport = __esm({
+           agent: /^(https|wss):\/\//.test(url3) ? httpsHappyEyeballsAgent : httpHappyEyeballsAgent,
+           perMessageDeflate: perMessageDeflate2
+         });
++        webSocketTransportStats.opened++;
++        webSocketTransportStats.active++;
+         this._ws.on("upgrade", (response2) => {
+           for (let i = 0; i < response2.rawHeaders.length; i += 2) {
+             this.headers.push({ name: response2.rawHeaders[i], value: response2.rawHeaders[i + 1] });
+@@ -39259,7 +39264,7 @@ var init_transport = __esm({
+               parsedJson = JSON.parse(eventData);
+             } catch (e) {
+               this._progress?.log(`<closing ws> Closing websocket due to malformed JSON. eventData=${eventData} e=${e?.message}`);
+-              this._ws.close();
++              this.close();
+               return;
+             }
+             try {
+@@ -39267,11 +39272,12 @@ var init_transport = __esm({
+                 this.onmessage.call(null, parsedJson);
+             } catch (e) {
+               this._progress?.log(`<closing ws> Closing websocket due to failed onmessage callback. eventData=${eventData} e=${e?.message}`);
+-              this._ws.close();
++              this.close();
+             }
+           });
+         });
+         this._ws.addEventListener("close", (event) => {
++          this._didClose();
+           this._progress?.log(`<ws disconnected> ${logUrl} code=${event.code} reason=${event.reason}`);
+           if (this.onclose)
+             this.onclose.call(null, event.reason);
+@@ -39299,12 +39305,12 @@ var init_transport = __esm({
+           transport._ws.on("error", (event) => {
+             progress2?.log(`<ws connect error> ${logUrl} ${event.message}`);
+             reject(new Error("WebSocket error: " + event.message));
+-            transport._ws.close();
++            transport.close();
+           });
+           transport._ws.on("unexpected-response", (request2, response2) => {
+             if (options.followRedirects && !hadRedirects && (response2.statusCode === 301 || response2.statusCode === 302 || response2.statusCode === 307 || response2.statusCode === 308)) {
+               fulfill({ redirect: response2 });
+-              transport._ws.close();
++              transport.close();
+               return;
+             }
+             for (let i = 0; i < response2.rawHeaders.length; i += 2) {
+@@ -39319,7 +39325,7 @@ var init_transport = __esm({
+ ${Buffer.concat(chunks)}` : errorPrefix;
+               progress2?.log(`<ws unexpected response> ${error}`);
+               reject(new Error("WebSocket error: " + error));
+-              transport._ws.close();
++              transport.close();
+             });
+           });
+         });
+@@ -39346,15 +39352,43 @@ ${Buffer.concat(chunks)}` : errorPrefix;
+       send(message) {
+         this._ws.send(JSON.stringify(message));
+       }
+-      close() {
++      _didClose() {
++        if (this._closeTimer)
++          clearTimeout(this._closeTimer);
++        this._closeTimer = void 0;
++        if (this._closed)
++          return;
++        this._closed = true;
++        webSocketTransportStats.closed++;
++        webSocketTransportStats.active = Math.max(0, webSocketTransportStats.active - 1);
++      }
++      close(forceTimeout = kWebSocketCloseTimeout) {
++        if (this._ws.readyState === ws.CLOSED) {
++          this._didClose();
++          return;
++        }
++        if (this._closeRequested)
++          return;
++        this._closeRequested = true;
+         this._progress?.log(`<ws disconnecting> ${this._logUrl}`);
++        this._closeTimer = setTimeout(() => {
++          if (this._ws.readyState === ws.CLOSED) {
++            this._didClose();
++            return;
++          }
++          webSocketTransportStats.forced++;
++          this._ws.terminate();
++        }, Math.max(1, forceTimeout));
++        this._closeTimer.unref?.();
+         this._ws.close();
+       }
+-      async closeAndWait() {
+-        if (this._ws.readyState === ws.CLOSED)
++      async closeAndWait(forceTimeout = kWebSocketCloseTimeout) {
++        if (this._ws.readyState === ws.CLOSED) {
++          this._didClose();
+           return;
++        }
+         const promise = new Promise((f) => this._ws.once("close", f));
+-        this.close();
++        this.close(forceTimeout);
+         await promise;
+       }
+     };
+@@ -42853,8 +42887,14 @@ ${remoteDebuggingHint(channel)}`);
+         };
+         try {
+           const browserProcess = { close: doClose, kill: doClose };
++          // Attaching to the user's browser never changes the colour scheme, motion, forced colours or
++          // contrast its open pages see: Playwright's defaults would emulate light, no-preference and none.
+           const persistent = {
+             noDefaultViewport: true,
++            colorScheme: "no-override",
++            reducedMotion: "no-override",
++            forcedColors: "no-override",
++            contrast: "no-override",
+             ...options.noDefaults ? { acceptDownloads: "internal-browser-default" } : {}
+           };
+           const browserOptions = {
+@@ -45445,7 +45485,8 @@ var init_ffBrowser = __esm({
+       }
+       async doCreateNewPage() {
+         const { targetId } = await this._browser.session.send("Browser.newPage", {
+-          browserContextId: this._browserContextId
++          browserContextId: this._browserContextId,
++          ...this._creatingStorageStatePage ? { hidden: true } : {}
+         }).catch((e) => {
+           if (e.message.includes("Failed to override timezone"))
+             throw new Error(`Invalid timezone ID: ${this._options.timezoneId}`);
+diff --git a/lib/utilsBundle.js b/lib/utilsBundle.js
+index 55a9cfc..a59aa5d 100644
+--- a/lib/utilsBundle.js
++++ b/lib/utilsBundle.js
+@@ -90622,8 +90622,9 @@ var mime = src_default;
+ var minimatch2 = minimatch;
+ var open2 = open_default;
+ var progress = import_progress.default;
+-var ws = wrapper_default;
+-var wsServer = import_websocket_server.default;
++var _rawWs = require("ws");
++var ws = _rawWs.default || _rawWs;
++var wsServer = _rawWs.WebSocketServer || _rawWs.Server;
+ var wsReceiver = import_receiver.default;
+ var wsSender = import_sender.default;
+ var yaml = import_yaml.default;

@@ -7,11 +7,11 @@
         "@modelcontextprotocol/sdk": "1.30.0",
         "@playwright/mcp": "0.0.56",
         "@tauri-apps/api": "2.11.1",
-        "camoufox-js": "0.12.0",
+        "camoufox-js": "0.13.0",
         "cross-spawn": "7.0.6",
         "csv-parse": "^7.0.2",
         "playwright": "1.58.0-alpha-2026-01-16",
-        "playwright-core": "1.58.2",
+        "playwright-core": "1.62.1",
         "react": "^19.2.7",
         "react-dom": "^19.2.7",
         "ws": "8.21.0",
@@ -30,9 +30,9 @@
     },
   },
   "patchedDependencies": {
-    "playwright-core@1.58.2": "patches/playwright-core@1.58.2.patch",
-    "fingerprint-generator@2.1.88": "patches/fingerprint-generator@2.1.88.patch",
-    "header-generator@2.1.88": "patches/header-generator@2.1.88.patch",
+    "playwright-core@1.62.1": "patches/playwright-core@1.62.1.patch",
+    "fingerprint-generator@2.1.89": "patches/fingerprint-generator@2.1.89.patch",
+    "header-generator@2.1.89": "patches/header-generator@2.1.89.patch",
   },
   "packages": {
     "@hono/node-server": ["@hono/node-server@2.1.1", "", { "peerDependencies": { "hono": "^4" } }, "sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg=="],
@@ -113,7 +113,7 @@
 
     "callsites": ["callsites@3.1.0", "", {}, "sha512-P8BjAsXvZS+VIDUI11hHCQEv74YT67YUi5JJFNWIqL235sBmjX4+qx9Muvls5ivyNENctx46xQLQ3aTuE7ssaQ=="],
 
-    "camoufox-js": ["camoufox-js@0.12.0", "", { "dependencies": { "adm-zip": "^0.6.0", "better-sqlite3": "^13.0.1", "cli-progress": "^3.12.0", "commander": "^14.0.0", "fingerprint-generator": "^2.1.86", "glob": "^13.0.0", "impit": "^0.14.1", "language-tags": "^2.0.1", "maxmind": "^5.0.0", "pretty-bytes": "^7.1.0", "ua-parser-js": "^2.0.10", "xml2js": "^0.6.2" }, "peerDependencies": { "playwright-core": "<1.61.0" }, "bin": { "camoufox-js": "dist/__main__.js" } }, "sha512-WvWrSL6IH7NixrmB4PM1NODx9cY2R+V/jv9jrmHMVlR4IHP3uheP6whhv0xsoVhFlKIErky5aYx7uA7oECA/Tg=="],
+    "camoufox-js": ["camoufox-js@0.13.0", "", { "dependencies": { "adm-zip": "^0.6.0", "better-sqlite3": "^13.0.1", "cli-progress": "^3.12.0", "commander": "^14.0.0", "fingerprint-generator": "^2.1.86", "glob": "^13.0.0", "impit": "^0.14.1", "language-tags": "^2.0.1", "maxmind": "^5.0.0", "pretty-bytes": "^7.1.0", "ua-parser-js": "^2.0.10", "xml2js": "^0.6.2" }, "peerDependencies": { "playwright-core": "<1.63.0" }, "bin": { "camoufox-js": "dist/__main__.js" } }, "sha512-XVT9ErgpLaDyUKA/R/mGsDhiVtcE14TaJHELmKNZxGCCwkXBjFdyx6JG3D2KX+MwdGnfKGWE96otSO3FfVh44w=="],
 
     "caniuse-lite": ["caniuse-lite@1.0.30001810", "", {}, "sha512-TITQPUkaz+aVk5GL6NhOdwk1aEaNTSDPsGFWrTuhKGtjTF70jL/Oht2W4c6rXUe5fu7Ie19VIahAXHIIiWWNeg=="],
 
@@ -181,7 +181,7 @@
 
     "finalhandler": ["finalhandler@2.1.1", "", { "dependencies": { "debug": "^4.4.0", "encodeurl": "^2.0.0", "escape-html": "^1.0.3", "on-finished": "^2.4.1", "parseurl": "^1.3.3", "statuses": "^2.0.1" } }, "sha512-S8KoZgRZN+a5rNwqTxlZZePjT/4cnm0ROV70LedRHZ0p8u9fRID0hJUZQpkKLzro8LfmC8sx23bY6tVNxv8pQA=="],
 
-    "fingerprint-generator": ["fingerprint-generator@2.1.88", "", { "dependencies": { "generative-bayesian-network": "2.1.88", "header-generator": "2.1.88", "tslib": "^2.4.0" } }, "sha512-rwYKE/UZTAnfu3DoBgFH+otrRewvkscG8TkiDY8xw7QBga0evHoL7H70HrtP/CBqjspVrfqE7ZYt7qDM3dYk+g=="],
+    "fingerprint-generator": ["fingerprint-generator@2.1.89", "", { "dependencies": { "generative-bayesian-network": "2.1.89", "header-generator": "2.1.89", "tslib": "^2.4.0" } }, "sha512-rDczTTrnAKlqkFNt9mFkO6fNCqYX+Xv1QKJsuPZ5L509mtT7be9a6IsI5RPsk3Af+wg4wrhAdeT8OPaL6tJBXw=="],
 
     "forwarded": ["forwarded@0.2.0", "", {}, "sha512-buRG0fpBtRHSTCOASe6hD258tEubFoRLb4ZNA6NxMVHNw2gOcwHo9wyablzMzOA5z9xA9L1KNjk/Nt6MT9aYow=="],
 
@@ -191,7 +191,7 @@
 
     "function-bind": ["function-bind@1.1.2", "", {}, "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA=="],
 
-    "generative-bayesian-network": ["generative-bayesian-network@2.1.88", "", { "dependencies": { "adm-zip": "^0.6.0", "tslib": "^2.4.0" } }, "sha512-kxbW6CCsiEAVdBYPont/6ZVOa47Pyfv5ldYFIvj8wmOx9uQOZ4c8wdR0jEf2pE6DeVuIAfmolm+91bYne6/3uA=="],
+    "generative-bayesian-network": ["generative-bayesian-network@2.1.89", "", { "dependencies": { "adm-zip": "^0.6.0", "tslib": "^2.4.0" } }, "sha512-oP5D5PsWpbM30dyAGPsyyZ4jogQA2aopy8TStSyCAtLRz85msdbh0l5tJ70pgeEXnQkaPWMhhvgxd7/qoss0FA=="],
 
     "get-intrinsic": ["get-intrinsic@1.3.0", "", { "dependencies": { "call-bind-apply-helpers": "^1.0.2", "es-define-property": "^1.0.1", "es-errors": "^1.3.0", "es-object-atoms": "^1.1.1", "function-bind": "^1.1.2", "get-proto": "^1.0.1", "gopd": "^1.2.0", "has-symbols": "^1.1.0", "hasown": "^2.0.2", "math-intrinsics": "^1.1.0" } }, "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ=="],
 
@@ -205,7 +205,7 @@
 
     "hasown": ["hasown@2.0.4", "", { "dependencies": { "function-bind": "^1.1.2" } }, "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A=="],
 
-    "header-generator": ["header-generator@2.1.88", "", { "dependencies": { "browserslist": "^4.21.1", "generative-bayesian-network": "2.1.88", "ow": "^0.28.1", "tslib": "^2.4.0" } }, "sha512-12GkTL1CDaPTQ6gkd8TPwxNtn7t3wSExnWU9qgWfEDh8IqpD1NAVcvzfHphIzULez8WP2DK9YQsDegajjDdTKQ=="],
+    "header-generator": ["header-generator@2.1.89", "", { "dependencies": { "browserslist": "^4.28.8", "generative-bayesian-network": "2.1.89", "ow": "^0.28.1", "tslib": "^2.4.0" } }, "sha512-FQL09ESlBWbHpG1lC0l3Au0uXHkje7d2z65o3lhbK1nR4bqIayAa0UT+i32hsXFZbE4vu8J4DMqPDm/MGCrpvg=="],
 
     "hono": ["hono@4.13.3", "", {}, "sha512-r8AO2mYHoLxSHkgafNeC/BXyb2vWRxD3jem4Ts+ptav8oTG5FIRifAjuJEmZI4bSvvc2ns0GxmIYiZnHqN3mMw=="],
 
@@ -311,7 +311,7 @@
 
     "playwright": ["playwright@1.58.0-alpha-2026-01-16", "", { "dependencies": { "playwright-core": "1.58.0-alpha-2026-01-16" }, "optionalDependencies": { "fsevents": "2.3.2" }, "bin": { "playwright": "cli.js" } }, "sha512-Ix0VALX+fNrXICSNnrfsvTMch0LA3WdVY8q71ReQzQ+UF0lCK9YbtRwBz65BJLBsWE1j38vBLR+YYE93MezYZA=="],
 
-    "playwright-core": ["playwright-core@1.58.2", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg=="],
+    "playwright-core": ["playwright-core@1.62.1", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw=="],
 
     "pretty-bytes": ["pretty-bytes@7.1.3", "", {}, "sha512-U2KZ675nqba6XSBppSjU2pRgc9Ffx9+uUtd/RTWYmOawVkZuUbBYuwdtFZQmLv+yMgQ2TQxWWuOpyNje67J9tg=="],
 

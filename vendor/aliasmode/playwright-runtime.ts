@@ -309,7 +309,7 @@ export async function verifyPlaywrightRuntime(root?: string): Promise<void> {
     const action = runtime.kind === "source" ? "; run `bun install --frozen-lockfile`" : "";
     throw new Error(`${runtime.kind} Playwright runtime is incomplete${action}`);
   }
-  if (playwright?.name !== "playwright-core" || playwright?.version !== "1.58.2"
+  if (playwright?.name !== "playwright-core" || playwright?.version !== "1.62.1"
       || ws?.name !== "ws" || ws?.version !== "8.21.0") {
     throw new Error(`${runtime.kind} Playwright runtime has unexpected dependencies`);
   }

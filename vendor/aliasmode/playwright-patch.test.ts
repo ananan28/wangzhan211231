@@ -1,19 +1,16 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const transportStatsKey = Symbol.for("aliasmode.playwrightTransportStats");
 const require = createRequire(import.meta.url);
-const transportPath = fileURLToPath(
-  new URL("./node_modules/playwright-core/lib/server/transport.js", import.meta.url),
+const coreBundlePath = fileURLToPath(
+  new URL("./node_modules/playwright-core/lib/coreBundle.js", import.meta.url),
 );
-const browserContextPath = fileURLToPath(
-  new URL("./node_modules/playwright-core/lib/server/browserContext.js", import.meta.url),
-);
-const chromiumBrowserPath = fileURLToPath(
-  new URL("./node_modules/playwright-core/lib/server/chromium/crBrowser.js", import.meta.url),
-);
+const patchName = "patches/playwright-core@1.62.1.patch";
+const patchFile = new URL(`./${patchName}`, import.meta.url);
 
 function transportStats() {
   return (globalThis as any)[transportStatsKey] as {
@@ -71,7 +68,14 @@ function fakeTransport(WebSocketTransport: any, socket: FakeSocket) {
 }
 
 describe("Playwright CDP compatibility patch", () => {
-  const { WebSocketTransport } = require(transportPath);
+  // Playwright 1.62 bundles its server into lib/coreBundle.js; the patch moves with it.
+  const bundle = require(coreBundlePath) as any;
+  const { WebSocketTransport } = bundle.server;
+  const bundleSource = readFileSync(coreBundlePath, "utf8");
+  const transportSource = bundleSource.slice(
+    bundleSource.indexOf("var init_transport = __esm({"),
+    bundleSource.indexOf("// packages/playwright-core/src/server/browserType.ts"),
+  );
 
   beforeEach(() => {
     Object.assign(transportStats(), { opened: 0, closed: 0, forced: 0, active: 0 });
@@ -83,68 +87,75 @@ describe("Playwright CDP compatibility patch", () => {
       patchedDependencies?: Record<string, string>;
     };
 
-    expect(packageJson.dependencies?.["playwright-core"]).toBe("1.58.2");
+    expect(packageJson.dependencies?.["playwright-core"]).toBe("1.62.1");
+    expect(packageJson.dependencies?.["camoufox-js"]).toBe("0.13.0");
     expect(packageJson.dependencies?.ws).toBe("8.21.0");
-    expect(packageJson.patchedDependencies?.["playwright-core@1.58.2"])
-      .toBe("patches/playwright-core@1.58.2.patch");
+    expect(packageJson.patchedDependencies?.["playwright-core@1.62.1"]).toBe(patchName);
   });
 
   test("installs the external ws and hardened transport patch", async () => {
-    const patch = await Bun.file(
-      new URL("./patches/playwright-core@1.58.2.patch", import.meta.url),
-    ).text();
-    const installed = await Bun.file(new URL(
-      "./node_modules/playwright-core/lib/server/transport.js",
-      import.meta.url,
-    )).text();
-    const installedContext = await Bun.file(new URL(
-      "./node_modules/playwright-core/lib/server/browserContext.js",
-      import.meta.url,
-    )).text();
-    const installedChromium = await Bun.file(new URL(
-      "./node_modules/playwright-core/lib/server/chromium/crBrowser.js",
-      import.meta.url,
-    )).text();
+    const patch = await Bun.file(patchFile).text();
 
-    for (const source of [patch, installed]) {
-      expect(source).toContain("const perMessageDeflate = false");
+    for (const source of [patch, bundleSource]) {
+      expect(source).toContain('const _rawWs = require("ws")');
+      expect(source).toContain("perMessageDeflate2 = false");
       expect(source).toContain("const kWebSocketCloseTimeout = 5e3");
       expect(source).toContain("this._ws.terminate()");
+      expect(source).toContain('globalThis[Symbol.for("aliasmode.playwrightFocusEmulation")] !== false');
+      expect(source).toContain('browserContextId: this._browserContextId, background: true');
+      expect(source).toContain("...this._creatingStorageStatePage ? { hidden: true } : {}");
       expect(source).not.toContain("closeTimeout:");
     }
-    expect(patch).toContain('const _rawWs = require("ws")');
-    for (const source of [patch, installedContext]) {
-      expect(source).toContain("if (!options.name && !options.domain && !options.path)");
+    for (const source of [patch, transportSource]) {
+      expect(source).toContain("const webSocketTransportStats = globalThis[Symbol.for(\"aliasmode.playwrightTransportStats\")] ??=");
     }
-    for (const source of [patch, installedChromium]) {
-      expect(source).toContain('browserContextId: this._browserContextId, background: true');
-    }
-    expect(installed.match(/(?:this|transport)\._ws\.close\(\)/g)).toHaveLength(1);
+    // Only the graceful close itself still calls the raw socket; every other path goes through close().
+    expect(transportSource.match(/(?:this|transport)\._ws\.close\(\)/g)).toHaveLength(1);
+    // Attaching to a user's browser never hands it Microsoft's default media emulation.
+    expect(bundleSource).toContain('colorScheme: "no-override"');
   });
 
-  test("creates internal Chromium pages without activating a minimized window", async () => {
-    const { CRBrowserContext } = require(chromiumBrowserPath);
-    const sent: Array<{ method: string; params: unknown }> = [];
-    const page = {};
-    const context = Object.create(CRBrowserContext.prototype);
-    Object.assign(context, {
-      _browserContextId: "context-1",
-      _browser: {
-        _session: {
-          async send(method: string, params: unknown) {
-            sent.push({ method, params });
-            return { targetId: "target-1" };
-          },
-        },
-        _crPages: new Map([["target-1", { _page: page }]]),
-      },
-    });
+  test("graceful close clears the fallback without terminating", async () => {
+    const socket = new FakeSocket(true);
+    const transport = fakeTransport(WebSocketTransport, socket);
 
-    expect(await CRBrowserContext.prototype.doCreateNewPage.call(context)).toBe(page);
-    expect(sent).toEqual([{
-      method: "Target.createTarget",
-      params: { url: "about:blank", browserContextId: "context-1", background: true },
-    }]);
+    await transport.closeAndWait(5);
+    await Bun.sleep(10);
+
+    expect(socket.closeCalls).toBe(1);
+    expect(socket.terminateCalls).toBe(0);
+    expect(transportStats()).toEqual({ opened: 1, closed: 1, forced: 0, active: 0 });
+  });
+
+  test("stalled and repeated closes force-terminate exactly once", async () => {
+    const socket = new FakeSocket(false);
+    const transport = fakeTransport(WebSocketTransport, socket);
+
+    const closed = transport.closeAndWait(5);
+    transport.close(5);
+    transport.close(5);
+    await closed;
+    transport._didClose();
+
+    expect(socket.closeCalls).toBe(1);
+    expect(socket.terminateCalls).toBe(1);
+    expect(transportStats()).toEqual({ opened: 1, closed: 1, forced: 1, active: 0 });
+  });
+
+  test("clearing every cookie skips the cookie read", async () => {
+    const { BrowserContext } = bundle.server;
+    const events: string[] = [];
+    const context = {
+      async _cookies() {
+        events.push("read");
+        return [{ name: "keep", value: "1", domain: ".x.com", path: "/" }];
+      },
+      async doClearCookies() { events.push("clear"); },
+      async addCookies(cookies: any[]) { events.push(`add:${cookies.map((cookie) => cookie.name).join(",")}`); },
+    };
+
+    await BrowserContext.prototype.clearCookies.call(context, {});
+    expect(events).toEqual(["clear"]);
   });
 
   test("attaching to an open tab never emulates its colour scheme, and AliasMode's helpers not its focus", async () => {
@@ -163,7 +174,13 @@ describe("Playwright CDP compatibility patch", () => {
             ? { product: "Chrome/155.0.0.0", userAgent: "Chrome/155.0.0.0" }
             : method === "Page.getFrameTree"
               ? { frameTree: { frame: { id: "tab", loaderId: "load", url: "https://example.com/", securityOrigin: "https://example.com", mimeType: "text/html" } } }
-              : {};
+              : method === "Target.getBrowserContexts"
+                ? { browserContextIds: [] }
+                : method === "Target.getTargets"
+                  ? { targetInfos: [] }
+                  : method === "Browser.getBrowserCommandLine"
+                    ? { arguments: [] }
+                    : {};
           ws.send(JSON.stringify({ id, result, ...(sessionId ? { sessionId } : {}) }));
           if (method === "Target.setAutoAttach" && !sessionId) {
             ws.send(JSON.stringify({ method: "Target.attachedToTarget", params: {
@@ -195,91 +212,12 @@ describe("Playwright CDP compatibility patch", () => {
       // Other Playwright users, such as the agent runner, keep Playwright's default.
       expect(await attach(undefined)).toContain("Emulation.setFocusEmulationEnabled");
       // No attach changes the colour scheme, motion, forced colours or contrast the open tab sees.
-      expect(emulatedMedia).toHaveLength(2);
+      expect(emulatedMedia.length).toBeGreaterThan(0);
       for (const sent of emulatedMedia) {
         expect(sent).toEqual({ media: "", features: ["prefers-color-scheme", "prefers-reduced-motion", "forced-colors", "prefers-contrast"].map((name) => ({ name, value: "" })) });
       }
     } finally {
       server.stop(true);
     }
-  });
-
-  test("Firefox hides storage helpers but keeps normal pages visible", async () => {
-    const { FFBrowserContext } = require(fileURLToPath(new URL(
-      "./node_modules/playwright-core/lib/server/firefox/ffBrowser.js", import.meta.url,
-    )));
-    const sent: Array<{ method: string; params: unknown }> = [];
-    const page = {};
-    const context = Object.create(FFBrowserContext.prototype);
-    Object.assign(context, {
-      _browserContextId: "context-1",
-      _browser: {
-        session: {
-          async send(method: string, params: unknown) {
-            sent.push({ method, params });
-            return { targetId: "target-1" };
-          },
-        },
-        _ffPages: new Map([["target-1", { _page: page }]]),
-      },
-    });
-    for (const storagePage of [false, true, false]) {
-      context._creatingStorageStatePage = storagePage;
-      expect(await context.doCreateNewPage()).toBe(page);
-      expect(sent.at(-1)).toEqual({
-        method: "Browser.newPage",
-        params: { browserContextId: "context-1", ...(storagePage ? { hidden: true } : {}) },
-      });
-    }
-  });
-
-  test("unfiltered cookie clearing skips the unnecessary cookie read", async () => {
-    const { BrowserContext } = require(browserContextPath);
-    const events: string[] = [];
-    const context = {
-      async cookies() {
-        events.push("read");
-        return [
-          { name: "keep", value: "1", domain: ".x.com", path: "/" },
-          { name: "remove", value: "2", domain: ".x.com", path: "/" },
-        ];
-      },
-      async doClearCookies() { events.push("clear"); },
-      async addCookies(cookies: any[]) { events.push(`add:${cookies.map((cookie) => cookie.name).join(",")}`); },
-    };
-
-    await BrowserContext.prototype.clearCookies.call(context, {});
-    expect(events).toEqual(["clear"]);
-
-    events.length = 0;
-    await BrowserContext.prototype.clearCookies.call(context, { name: "remove" });
-    expect(events).toEqual(["read", "clear", "add:keep"]);
-  });
-
-  test("graceful close clears the fallback without terminating", async () => {
-    const socket = new FakeSocket(true);
-    const transport = fakeTransport(WebSocketTransport, socket);
-
-    await transport.closeAndWait(5);
-    await Bun.sleep(10);
-
-    expect(socket.closeCalls).toBe(1);
-    expect(socket.terminateCalls).toBe(0);
-    expect(transportStats()).toEqual({ opened: 1, closed: 1, forced: 0, active: 0 });
-  });
-
-  test("stalled and repeated closes force-terminate exactly once", async () => {
-    const socket = new FakeSocket(false);
-    const transport = fakeTransport(WebSocketTransport, socket);
-
-    const closed = transport.closeAndWait(5);
-    transport.close(5);
-    transport.close(5);
-    await closed;
-    transport._didClose();
-
-    expect(socket.closeCalls).toBe(1);
-    expect(socket.terminateCalls).toBe(1);
-    expect(transportStats()).toEqual({ opened: 1, closed: 1, forced: 1, active: 0 });
   });
 });

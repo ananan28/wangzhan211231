@@ -239,11 +239,11 @@ export async function verifyScriptRuntime(language: ScriptLanguage, options: Scr
 
   const env = scriptRunnerEnvironment(options.env);
   const available = language === "javascript"
-    ? await sourceCommandAvailable(resolved.executable, ["-e", "const p = require('playwright-core/package.json'); if (+process.versions.node.split('.')[0] < 18 || p.version !== '1.58.2') process.exit(1)"], runtime, env)
+    ? await sourceCommandAvailable(resolved.executable, ["-e", "const p = require('playwright-core/package.json'); if (+process.versions.node.split('.')[0] < 18 || p.version !== '1.62.1') process.exit(1)"], runtime, env)
     : await sourceCommandAvailable(resolved.executable, ["-c", "from playwright.async_api import async_playwright\nfrom playwright._repo_version import version\nraise SystemExit(not version.startswith('1.58.'))"], runtime, env);
   if (!available) {
     throw new ScriptError(language === "javascript"
-      ? "Source JavaScript scripts require Node.js 18 or newer and compatible Playwright 1.58.2 installed"
+      ? "Source JavaScript scripts require Node.js 18 or newer and compatible Playwright 1.62.1 installed"
       : "Source Python scripts require Python 3 with compatible Playwright 1.58.x installed", 503);
   }
   return resolved;
