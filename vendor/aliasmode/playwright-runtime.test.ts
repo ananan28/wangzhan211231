@@ -797,7 +797,7 @@ bunAsNodeTest("worker imports all sites without replacing existing cookies and r
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     const jar = join(root, "jar.json");
     const events = join(root, "events.json");
     await writeFile(jar, JSON.stringify([existing, partitioned]));
@@ -848,7 +848,7 @@ bunAsNodeTest("worker adds exactly one cookie without clearing the live jar", as
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       let added = false;
       const expected = ${JSON.stringify({
@@ -914,7 +914,7 @@ bunAsNodeTest("installed worker loads its packaged ESM dependency", async () => 
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), "export const chromium = {};\n");
     await chmod(join(root, "node", PACKAGED_NODE), 0o755);
 
@@ -935,7 +935,7 @@ bunAsNodeTest("worker retries until the persistent context appears without creat
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       let connects = 0;
       const page = { evaluate: async () => "delayed-context" };
@@ -967,7 +967,7 @@ bunAsNodeTest("search provider uses the managed browser and closes only its temp
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       import { appendFile } from "node:fs/promises";
       let mode = "";
@@ -1071,7 +1071,7 @@ bunAsNodeTest("profile card setup preserves a minimized browser window", async (
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       let mode = "normal";
       let created = false;
@@ -1205,7 +1205,7 @@ bunAsNodeTest("worker restore failures preserve operation and outcome details", 
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       const context = { pages: () => [], async clearCookies() { throw new Error("secret"); } };
       export const chromium = { async connectOverCDP() { return { contexts: () => [context], async close() {} }; } };
@@ -1240,7 +1240,7 @@ bunAsNodeTest("capture failures identify connection, context, cookies, and detac
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       export const chromium = { async connectOverCDP(endpoint) {
         const mode = endpoint.split("//")[1];
@@ -1281,7 +1281,7 @@ bunAsNodeTest("worker captures arbitrary web sessions, rejects malformed capture
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       const cookie = { name: "custom_auth", value: "value", domain: ".example.com", path: "/", partitionKey: "https://example.com", _crHasCrossSiteAncestor: false };
       let captureMode = "valid";
@@ -1425,7 +1425,7 @@ bunAsNodeTest("worker replaces stale pages and attempts every restored tab after
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       import { appendFile } from "node:fs/promises";
       const log = (event) => appendFile(${JSON.stringify(join(root, "events.log"))}, event + "\\n");
@@ -1495,7 +1495,7 @@ bunAsNodeTest("worker reuses startup pages and removes only the exact first-run 
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       import { appendFile } from "node:fs/promises";
       const log = (event) => appendFile(${JSON.stringify(join(root, "events.log"))}, event + "\\n");
@@ -1596,7 +1596,7 @@ bunAsNodeTest("worker leaves Telegram unread when its IndexedDB read fails and a
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       let mode = "capture";
       const routes = new Map();
@@ -1688,7 +1688,7 @@ bunAsNodeTest("worker captures current localStorage for a closed known origin", 
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       const storage = {
         "https://closed.example": [{ name: "token", value: "fresh-closed-value" }],
@@ -1793,7 +1793,7 @@ bunAsNodeTest("worker proves hidden target identity through marker collisions an
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       import { appendFile } from "node:fs/promises";
       import { join } from "node:path";
@@ -2028,7 +2028,7 @@ bunAsNodeTest("worker preserves Telegram direct-CDP allowlists through a hidden 
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       const anchor = { url: () => "about:blank" };
       let hiddenPage;
@@ -2174,7 +2174,7 @@ bunAsNodeTest("worker falls back safely when a live page changes origin during c
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       const livePage = {
         url: () => "https://race.example/start",
@@ -2269,7 +2269,7 @@ bunAsNodeTest("worker leaves an attached Telegram page unread when it cannot be 
     await mkdir(join(root, "node_modules", "playwright-core"), { recursive: true });
     await fakePackagedNode(root);
     await writeFile(join(root, "worker.mjs"), await Bun.file(join(import.meta.dir, "playwright-worker.mjs")).text());
-    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.58.2", type: "module" }));
+    await writeFile(join(root, "node_modules", "playwright-core", "package.json"), JSON.stringify({ name: "playwright-core", version: "1.62.1", type: "module" }));
     await writeFile(join(root, "node_modules", "playwright-core", "index.mjs"), `
       const page = { url: () => "https://web.telegram.org/a/", async evaluate() { throw new Error("unavailable"); } };
       const context = { async storageState() { return { cookies: [], origins: [] }; }, pages: () => [page] };
@@ -2304,7 +2304,7 @@ test("loads the installed Playwright ESM entrypoint", async () => {
     await mkdir(wsRoot, { recursive: true });
     await writeFile(join(packageRoot, "package.json"), JSON.stringify({
       name: "playwright-core",
-      version: "1.58.2",
+      version: "1.62.1",
     }));
     await writeFile(join(wsRoot, "package.json"), JSON.stringify({
       name: "ws",
@@ -2330,7 +2330,7 @@ test("rejects an installed runtime without its ESM entrypoint", async () => {
     await mkdir(wsRoot, { recursive: true });
     await writeFile(join(packageRoot, "package.json"), JSON.stringify({
       name: "playwright-core",
-      version: "1.58.2",
+      version: "1.62.1",
     }));
     await writeFile(join(wsRoot, "package.json"), JSON.stringify({
       name: "ws",

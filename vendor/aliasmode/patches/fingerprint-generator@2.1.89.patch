@@ -1,8 +1,8 @@
 diff --git a/fingerprint-generator.js b/fingerprint-generator.js
-index f9d5697f00a56f07242debb69f50ab2e7e0c7271..8774015b8e06b993928a1d19f896a2d41da2f6c9 100644
+index 135e80f..901d892 100644
 --- a/fingerprint-generator.js
 +++ b/fingerprint-generator.js
-@@ -1,4 +1,13 @@
+@@ -1,4 +1,12 @@
  "use strict";
 +function bundledAssetPath(name) {
 +    const asset = globalThis.__aliasmodeGeneratorAssets?.[name];
@@ -12,11 +12,10 @@ index f9d5697f00a56f07242debb69f50ab2e7e0c7271..8774015b8e06b993928a1d19f896a2d4
 +    return `${__dirname}/data_files/${name}`;
 +}
 +const fingerprintNetworkDefinitionPath = bundledAssetPath("fingerprint-network-definition.zip");
-+
  Object.defineProperty(exports, "__esModule", { value: true });
  exports.FingerprintGenerator = void 0;
  const generative_bayesian_network_1 = require("generative-bayesian-network");
-@@ -31,7 +40,7 @@ class FingerprintGenerator extends header_generator_1.HeaderGenerator {
+@@ -46,7 +54,7 @@ class FingerprintGenerator extends header_generator_1.HeaderGenerator {
              slim: options.slim,
          };
          this.fingerprintGeneratorNetwork = new generative_bayesian_network_1.BayesianNetwork({
