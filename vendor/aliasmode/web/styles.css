@@ -5,7 +5,14 @@
 .nanfu-account-page p { overflow-wrap: anywhere; margin: 12px 0; }
 .nanfu-table-wrap { overflow: auto; max-width: 100%; }
 .nanfu-table { width: 100%; border-collapse: collapse; text-align: left; }
-.nanfu-table th, .nanfu-table td { padding: 10px; border-bottom: 1px solid currentColor; overflow-wrap: anywhere; }
+.nanfu-table th, .nanfu-table td { padding: 10px; border-bottom: 1px solid currentColor; overflow-wrap: anywhere; vertical-align: top; }
+.nanfu-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 14px 0; }
+.nanfu-form .fld { flex: 1 1 170px; min-width: 150px; }
+.nanfu-controls { border: 0; padding: 0; min-width: 0; }
+.nanfu-controls legend { font-weight: 600; }
+.nanfu-permissions { display: flex; flex-wrap: wrap; gap: 10px; }
+.nanfu-invites li { margin: 12px 0; overflow-wrap: anywhere; }
+.nanfu-invites .btn { margin-left: 10px; }
 
 /* ============================================================================
    Typeface

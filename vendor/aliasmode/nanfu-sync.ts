@@ -185,6 +185,7 @@ export class NanfuSyncError extends Error {
     message: string,
     readonly status: number,
     readonly unauthorized = status === 401 || status === 403,
+    readonly code?: string,
   ) {
     super(message);
     this.name = "NanfuSyncError";
@@ -199,6 +200,7 @@ export interface NanfuOrganization {
   permissions: string[];
   quota: number;
   used: number;
+  planQuota: number;
   status: string;
   locked: boolean;
 }
@@ -210,6 +212,33 @@ export interface NanfuVisibleEnvironment {
   groupId: string | null;
   version: number;
   updatedAt: string;
+}
+
+export interface NanfuMember {
+  userId: string; email: string; identity: string; roleId: string | null; roleName: string | null;
+  managerUserId: string | null; quota: number; used: number; status: string; locked: boolean;
+}
+
+export interface NanfuOrgOverview {
+  members: NanfuMember[];
+  roles: { id: string; name: string; permissions: string[] }[];
+  groups: { id: string; name: string }[];
+  grants: { groupId: string; userId: string }[];
+  invites: { code: string; identity: string; expiresAt: string; redeemedBy: string | null }[];
+}
+
+export interface NanfuEnvTransfer {
+  id: string; environmentId: string; fromUserId: string; toUserId: string; status: string;
+  forced: boolean; note: string; createdAt: string;
+}
+
+export interface NanfuMemberInput {
+  userId: string; identity?: "admin" | "manager" | "member"; roleId?: string;
+  managerUserId?: string; status?: "active" | "disabled"; locked?: boolean;
+}
+
+export interface NanfuInviteInput {
+  identity: "admin" | "manager" | "member"; roleId?: string; managerUserId?: string; quota: number; hours: number;
 }
 
 export class NanfuSyncClient {
@@ -231,7 +260,13 @@ export class NanfuSyncClient {
     this.visibleRequests.clear();
   }
 
-  async organization(signal?: AbortSignal): Promise<NanfuOrganization | null> {
+  async createOrg(name: string, signal?: AbortSignal): Promise<string> {
+    const orgId = await this.visibleRequest("/rpc/nanfu_org_create", { method: "POST", body: JSON.stringify({ p_name: name }), signal });
+    if (typeof orgId !== "string" || !orgId) throw new NanfuSyncError("Invalid organization creation response", 502);
+    return orgId;
+  }
+
+  async orgMe(signal?: AbortSignal): Promise<NanfuOrganization | null> {
     const rows = await this.visibleRequest("/rpc/nanfu_org_me", { method: "POST", body: "{}", signal });
     if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid organization response", 502);
     const row = rows[0];
@@ -239,7 +274,7 @@ export class NanfuSyncClient {
     if (typeof row.org_id !== "string" || typeof row.identity !== "string" || typeof row.status !== "string" || typeof row.locked !== "boolean") {
       throw new NanfuSyncError("Invalid organization response", 502);
     }
-    const query = new URLSearchParams({ select: "id,name", id: `eq.${row.org_id}` });
+    const query = new URLSearchParams({ select: "id,name,plan_env_max", id: `eq.${row.org_id}` });
     const organizations = row.locked || row.status !== "active"
       ? [] : await this.visibleRequest(`/nanfu_orgs?${query}`, { method: "GET", signal });
     if (!Array.isArray(organizations)) throw new NanfuSyncError("Invalid organization response", 502);
@@ -251,9 +286,116 @@ export class NanfuSyncClient {
       permissions: Array.isArray(row.permissions) ? row.permissions.filter((v: unknown) => typeof v === "string") : [],
       quota: Number(row.env_quota),
       used: Number(row.used),
+      planQuota: Number(organizations[0]?.plan_env_max ?? 0),
       status: row.status,
       locked: row.locked,
     };
+  }
+
+  async orgOverview(orgId: string, signal?: AbortSignal): Promise<NanfuOrgOverview> {
+    const [members, roles, groups, grants, invites] = await Promise.all([
+      this.readMembers(signal),
+      this.readOrgTable("nanfu_org_roles", "id,name,permissions", orgId, signal),
+      this.readOrgTable("nanfu_org_groups", "id,name", orgId, signal),
+      this.readOrgTable("nanfu_org_group_grants", "group_id,user_id", orgId, signal, "group_id.asc,user_id.asc"),
+      this.readOrgTable("nanfu_org_invites", "id,code,identity,expires_at,redeemed_by", orgId, signal),
+    ]);
+    if (!Array.isArray(members)) throw new NanfuSyncError("Invalid member response", 502);
+    return {
+      members: members.map(row => ({
+        userId: String(row.user_id), email: String(row.email ?? ""), identity: String(row.identity),
+        roleId: typeof row.role_id === "string" ? row.role_id : null, roleName: typeof row.role_name === "string" ? row.role_name : null,
+        managerUserId: typeof row.manager_user_id === "string" ? row.manager_user_id : null,
+        quota: Number(row.env_quota), used: Number(row.used), status: String(row.status), locked: row.locked === true,
+      })),
+      roles: roles.map(row => ({ id: String(row.id), name: String(row.name), permissions: Array.isArray(row.permissions) ? row.permissions.filter((p: unknown) => typeof p === "string") : [] })),
+      groups: groups.map(row => ({ id: String(row.id), name: String(row.name) })),
+      grants: grants.map(row => ({ groupId: String(row.group_id), userId: String(row.user_id) })),
+      invites: invites.map(row => ({ code: String(row.code), identity: String(row.identity), expiresAt: String(row.expires_at), redeemedBy: typeof row.redeemed_by === "string" ? row.redeemed_by : null })),
+    };
+  }
+
+  async transfers(orgId: string, signal?: AbortSignal): Promise<NanfuEnvTransfer[]> {
+    const rows = await this.readOrgTable("nanfu_env_transfers", "id,environment_id,from_user_id,to_user_id,status,forced,note,created_at", orgId, signal);
+    return rows.map(row => ({ id: String(row.id), environmentId: String(row.environment_id), fromUserId: String(row.from_user_id),
+      toUserId: String(row.to_user_id), status: String(row.status), forced: row.forced === true, note: String(row.note ?? ""), createdAt: String(row.created_at) }));
+  }
+
+  createRole(name: string, permissions: string[], signal?: AbortSignal): Promise<string> {
+    return this.rpcValue("nanfu_org_create_role", { p_name: name, p_permissions: permissions }, "string", signal);
+  }
+
+  async setMember(input: NanfuMemberInput, signal?: AbortSignal): Promise<void> {
+    await this.visibleRequest("/rpc/nanfu_org_set_member", { method: "POST", signal, body: JSON.stringify({
+      p_user: input.userId, p_identity: input.identity ?? null, p_role: input.roleId ?? null,
+      p_manager: input.managerUserId ?? null, p_status: input.status ?? null, p_locked: input.locked ?? null,
+    }) });
+  }
+
+  async setQuota(userId: string, quota: number, signal?: AbortSignal): Promise<void> {
+    await this.visibleRequest("/rpc/nanfu_org_set_quota", { method: "POST", signal, body: JSON.stringify({ p_user: userId, p_quota: quota }) });
+  }
+
+  createGroup(name: string, signal?: AbortSignal): Promise<string> {
+    return this.rpcValue("nanfu_org_create_group", { p_name: name }, "string", signal);
+  }
+
+  async grantGroup(groupId: string, userId: string, granted: boolean, signal?: AbortSignal): Promise<void> {
+    await this.visibleRequest("/rpc/nanfu_org_grant_group", { method: "POST", signal, body: JSON.stringify({ p_group: groupId, p_user: userId, p_granted: granted }) });
+  }
+
+  createInvite(input: NanfuInviteInput, signal?: AbortSignal): Promise<string> {
+    return this.rpcValue("nanfu_org_create_invite", { p_identity: input.identity, p_role: input.roleId ?? null, p_manager: input.managerUserId ?? null, p_quota: input.quota, p_hours: input.hours }, "string", signal);
+  }
+
+  redeemInvite(code: string, signal?: AbortSignal): Promise<string> {
+    return this.rpcValue("nanfu_org_redeem_invite", { p_code: code }, "string", signal);
+  }
+
+  removeMember(userId: string, reclaim: boolean, signal?: AbortSignal): Promise<number> {
+    return this.rpcValue("nanfu_org_remove_member", { p_user: userId, p_reclaim: reclaim }, "number", signal);
+  }
+
+  requestTransfer(environmentId: string, toUserId: string, signal?: AbortSignal): Promise<string> {
+    return this.rpcValue("nanfu_env_transfer_request", { p_environment_id: environmentId, p_to: toUserId }, "string", signal);
+  }
+
+  async respondTransfer(id: string, accept: boolean, signal?: AbortSignal): Promise<"accepted" | "rejected"> {
+    const status = await this.rpcValue("nanfu_env_transfer_respond", { p_id: id, p_accept: accept }, "string", signal);
+    if (status !== "accepted" && status !== "rejected") throw new NanfuSyncError("Invalid transfer response", 502);
+    return status;
+  }
+
+  forceTransfer(environmentId: string, toUserId: string, note: string, signal?: AbortSignal): Promise<number> {
+    return this.rpcValue("nanfu_env_transfer_force", { p_environment_id: environmentId, p_to: toUserId, p_note: note }, "number", signal);
+  }
+
+  private async rpcValue<T extends "string" | "number">(rpc: string, body: object, kind: T, signal?: AbortSignal): Promise<T extends "string" ? string : number> {
+    const value = await this.visibleRequest(`/rpc/${rpc}`, { method: "POST", body: JSON.stringify(body), signal });
+    if (typeof value !== kind || (kind === "string" ? !value : !Number.isSafeInteger(value) || value < 0)) throw new NanfuSyncError("Invalid operation response", 502);
+    return value;
+  }
+
+  private async readMembers(signal?: AbortSignal): Promise<any[]> {
+    const all: any[] = [];
+    for (let offset = 0; ; offset += 500) {
+      const query = new URLSearchParams({ order: "user_id.asc", limit: "500", offset: String(offset) });
+      const rows = await this.visibleRequest(`/rpc/nanfu_org_overview?${query}`, { method: "POST", body: "{}", signal });
+      if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid member response", 502);
+      all.push(...rows);
+      if (rows.length < 500) return all;
+    }
+  }
+
+  private async readOrgTable(table: string, select: string, orgId: string, signal?: AbortSignal, order = "id.asc"): Promise<any[]> {
+    const all: any[] = [];
+    for (let offset = 0; ; offset += 500) {
+      const query = new URLSearchParams({ select, org_id: `eq.${orgId}`, order, limit: "500", offset: String(offset) });
+      const rows = await this.visibleRequest(`/${table}?${query}`, { method: "GET", signal });
+      if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid organization table response", 502);
+      all.push(...rows);
+      if (rows.length < 500) return all;
+    }
   }
 
   async visibleEnvironments(orgId: string, signal?: AbortSignal): Promise<NanfuVisibleEnvironment[]> {
@@ -370,9 +512,22 @@ export class NanfuSyncClient {
       if (response.status === 204) return null;
       const text = await response.text();
       if (!response.ok) {
+        let code: string | undefined;
+        try {
+          const body = JSON.parse(text);
+          if (typeof body?.code === "string") code = body.code;
+          if (typeof body?.message === "string") {
+            code = /^(NANFU_[A-Z_]+):/.exec(body.message)?.[1] ?? code;
+            if (body.message === "NANFU_FORBIDDEN: this account already belongs to an organization") code = "ORG_ALREADY_MEMBER";
+            if (body.message === "this invite has expired") code = "INVITE_EXPIRED";
+            if (body.message === "this invite has already been used") code = "INVITE_USED";
+          }
+        } catch {}
         throw new NanfuSyncError(
           text.trim() || `Nanfu sync request failed (${response.status})`,
           response.status,
+          undefined,
+          code,
         );
       }
       if (!text.trim()) return null;

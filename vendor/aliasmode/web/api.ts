@@ -14,8 +14,23 @@ import type { RuntimeDownload } from "../runtime-download.ts";
 import type { FolderInfo } from "../folders.ts";
 import type { TranslationSettings } from "../translation-core.ts";
 import type { NanfuAccountState } from "../nanfu-account.ts";
-import type { NanfuOrganization, NanfuVisibleEnvironment } from "../nanfu-sync.ts";
-export type { NanfuAccountState, NanfuOrganization, NanfuVisibleEnvironment };
+import type { NanfuOrganization, NanfuVisibleEnvironment, NanfuOrgOverview, NanfuMember, NanfuMemberInput, NanfuInviteInput, NanfuEnvTransfer } from "../nanfu-sync.ts";
+export type { NanfuAccountState, NanfuOrganization, NanfuVisibleEnvironment, NanfuOrgOverview, NanfuMember, NanfuEnvTransfer };
+
+export interface NanfuMutations {
+  "create-organization": { input: { name: string }; result: { orgId: string } };
+  "create-role": { input: { name: string; permissions: string[] }; result: { roleId: string } };
+  "set-member": { input: NanfuMemberInput; result: Record<string, never> };
+  "set-quota": { input: { userId: string; quota: number }; result: Record<string, never> };
+  "create-group": { input: { name: string }; result: { groupId: string } };
+  "grant-group": { input: { groupId: string; userId: string; granted: boolean }; result: Record<string, never> };
+  "create-invite": { input: NanfuInviteInput; result: { code: string; uses: number } };
+  "redeem-invite": { input: { code: string }; result: { orgId: string } };
+  "remove-member": { input: { userId: string; reclaim: boolean }; result: { reclaimed: number } };
+  "request-transfer": { input: { environmentId: string; toUserId: string }; result: { transferId: string } };
+  "respond-transfer": { input: { id: string; accept: boolean }; result: { status: "accepted" | "rejected" } };
+  "force-transfer": { input: { environmentId: string; toUserId: string; note: string }; result: { moved: number } };
+}
 
 export class NanfuApiError extends Error {
   constructor(message: string, readonly status: number, readonly retryable: boolean) {
@@ -49,6 +64,22 @@ export function fetchNanfuEnvironments(signal?: AbortSignal): Promise<{
   environments: NanfuVisibleEnvironment[];
 }> {
   return nanfuJson("environments", { signal });
+}
+
+export function nanfuOrganizationAction<K extends keyof NanfuMutations>(
+  action: K, input: NanfuMutations[K]["input"], signal?: AbortSignal,
+): Promise<{ userId: string; result: NanfuMutations[K]["result"] }> {
+  return nanfuJson(action, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal,
+  });
+}
+
+export function fetchNanfuOverview(signal?: AbortSignal): Promise<{ userId: string; result: NanfuOrgOverview }> {
+  return nanfuJson("organization-overview", { signal });
+}
+
+export function fetchNanfuTransfers(signal?: AbortSignal): Promise<{ userId: string; result: NanfuEnvTransfer[] }> {
+  return nanfuJson("transfers", { signal });
 }
 
 import {

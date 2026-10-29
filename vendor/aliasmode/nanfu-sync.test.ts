@@ -312,7 +312,7 @@ test("organization queries preserve quota and lock metadata without fetching a d
       return Response.json([{ org_id: "org-1", identity: "member", status: "disabled", locked: false, role_name: null, env_quota: 2, used: 3, permissions: [] }]);
     },
   });
-  expect(await client.organization()).toMatchObject({ orgId: "org-1", status: "disabled", quota: 2, used: 3, locked: false });
+  expect(await client.orgMe()).toMatchObject({ orgId: "org-1", status: "disabled", quota: 2, used: 3, locked: false });
   expect(requests).toEqual(["https://nanfu.test/rest/v1/rpc/nanfu_org_me"]);
 });
 

@@ -45,6 +45,29 @@ grant execute on function auth.jwt() to authenticated;
 -- Applied twice on purpose: the operator pastes this file after every update.
 \i supabase/migrations/20261029_nanfu_environments.sql
 \i supabase/migrations/20261029_nanfu_environments.sql
+\i supabase/migrations/20261029_nanfu_function_grants.sql
+\i supabase/migrations/20261029_nanfu_function_grants.sql
+
+do $$
+declare signature text; target regprocedure;
+begin
+  foreach signature in array array[
+    'public.nanfu_org_subtree(uuid,uuid)', 'public.nanfu_org_identity(uuid,uuid)',
+    'public.nanfu_org_can_admin(uuid,uuid)', 'public.nanfu_org_can_view_member(uuid,uuid,uuid)',
+    'public.nanfu_org_require(text)', 'public.nanfu_org_assert_target(public.nanfu_org_members,uuid)',
+    'public.nanfu_env_visible(uuid,uuid,uuid,uuid)', 'public.nanfu_env_writable(uuid,uuid,uuid)',
+    'public.nanfu_org_check_quota(uuid,uuid,integer)', 'public.nanfu_environments_touch()',
+    'public.nanfu_transfers_guard()', 'public.nanfu_environments_quota()'
+  ] loop
+    target := to_regprocedure(signature);
+    if target is null or has_function_privilege('anon', target, 'EXECUTE')
+       or not has_function_privilege('authenticated', target, 'EXECUTE')
+       or exists (select 1 from pg_proc p, lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                  where p.oid = target and a.grantee = 0 and a.privilege_type = 'EXECUTE') then
+      raise exception 'unexpected function grants for %', signature;
+    end if;
+  end loop;
+end $$;
 
 insert into auth.users (id, email) values
   ('11111111-1111-1111-1111-111111111111', 'sender@example.com'),
@@ -842,3 +865,4 @@ commit;
 drop table if exists public.nanfu_test_codes;
 
 select 'nanfu RLS proof passed' as result;
+
