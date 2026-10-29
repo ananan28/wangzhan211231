@@ -17,8 +17,10 @@ import {
   hasLoginState,
   loadOrCreateTransferIdentity,
   openTransferPayload,
+  openTransferPayloadForDevices,
   parseCloudTransferPayload,
   sealTransferPayload,
+  sealTransferPayloadForDevices,
 } from "./nanfu-cloud-transfer.ts";
 import {
   NanfuSyncError,
@@ -245,7 +247,7 @@ async function exportEnvironment(
 ): Promise<{ fileName: string; package: NanfuEnvPackage }> {
   const profile = store.getProfile(environmentId);
   if (!profile) throw new NanfuTransferHttpError(404, "该环境不在本机，无法导出。");
-  if (profile.engine === "firefox") throw new NanfuTransferHttpError(400, "当前版本只支持导出 Chromium 环境配置。");
+  requireChromium(profile.engine ?? "chromium", "导出环境配置");
   const names = new Map<string, string>();
   for (const extension of store.listExtensions()) names.set(extension.id, extension.name);
   const environment = exportNanfuEnvironment(profile, names, new Date().toISOString());
@@ -336,7 +338,7 @@ async function importEnvironment(
   pkg: NanfuEnvPackage,
 ): Promise<{ profileId: string; name: string; renamed: boolean }> {
   const environment = pkg.environment;
-  if (environment.engine !== "chromium") throw new NanfuTransferHttpError(400, "当前版本只支持导入 Chromium 环境配置。");
+  requireChromium(environment.engine, "导入环境配置");
   const plan = importPlan(store, pkg);
   const { extensionIds, installed } = await installArchives(store, paths, pkg.extensionArchives);
   try {
@@ -351,6 +353,17 @@ async function importEnvironment(
 function requireStateRoot(context: NanfuTransferRouteContext): StatePaths {
   if (!context.paths) throw new NanfuTransferHttpError(503, "当前运行模式没有本机状态目录，无法进行云端转移。");
   return context.paths;
+}
+
+/**
+ * Only the Chromium engine can be captured and restored here; Camoufox/Firefox
+ * profiles use a different storage layout, so they are refused with a name
+ * instead of silently producing a package without login state.
+ */
+function requireChromium(engine: string | undefined, action: string): void {
+  if (engine !== "chromium") {
+    throw new NanfuTransferHttpError(400, `${action}只支持 Chromium 引擎的窗口；Camoufox / Firefox 引擎暂不支持。`);
+  }
 }
 
 function requireRecipient(rows: readonly RecipientRow[], userId: string): RecipientRow {
@@ -399,17 +412,24 @@ export async function handleNanfuTransferRequest(
         fromEmail: byId.get(transfer.fromUserId)?.email ?? "",
         toEmail: byId.get(transfer.toUserId)?.email ?? "",
       }));
-      // Publishing the device key here keeps one page load enough to become a
-      // reachable recipient; a failure is reported instead of breaking the page.
+      // Publishing the keys here keeps one page load enough to become a
+      // reachable recipient and to register this install for personal slots;
+      // a failure is reported instead of breaking the page.
       let keyPublished = false;
+      let deviceKeyPublished = false;
+      let deviceId = "";
       if (context.paths) {
-        keyPublished = await client
-          .publishTransferKey(userId, loadOrCreateTransferIdentity(context.paths.root).publicKey, signal)
-          .then(() => true).catch(() => false);
+        const identity = loadOrCreateTransferIdentity(context.paths.root);
+        deviceId = identity.deviceId;
+        [keyPublished, deviceKeyPublished] = await Promise.all([
+          client.publishTransferKey(userId, identity.publicKey, signal).then(() => true).catch(() => false),
+          client.publishDeviceKey(userId, identity.deviceId, identity.publicKey, signal).then(() => true).catch(() => false),
+        ]);
       }
-      const [packageInbox, packageSent] = await Promise.all([
+      const [packageInbox, packageSent, cloudPackages] = await Promise.all([
         client.incomingCloudTransfers(signal).catch(() => null),
         client.sentCloudTransfers(userId, signal).catch(() => null),
+        client.cloudPackages(userId, signal).catch(() => null),
       ]);
       return reply({
         ok: true, userId, organization, members, visibleEnvironments: visible,
@@ -421,6 +441,12 @@ export async function handleNanfuTransferRequest(
           sent: packageSent ?? [],
           ...(packageInbox && packageSent ? {} : { error: "云端转移列表暂时读取失败，请刷新重试。" }),
         },
+        cloud: {
+          deviceId,
+          deviceKeyPublished,
+          packages: cloudPackages ?? [],
+          ...(cloudPackages ? {} : { error: "同一账号的云端列表暂时读取失败，请刷新重试。" }),
+        },
       });
     }
 
@@ -431,9 +457,7 @@ export async function handleNanfuTransferRequest(
       const paths = requireStateRoot(context);
       const profile = context.store.getProfile(environmentId);
       if (!profile) throw new NanfuTransferHttpError(404, "该环境不在本机；只能转移本机已有的环境。");
-      if (profile.engine === "firefox") {
-        throw new NanfuTransferHttpError(400, "当前版本只支持云端转移 Chromium 环境。");
-      }
+      requireChromium(profile.engine ?? "chromium", "云端转移");
       const organization = await requireOrganization(client, signal);
       // The organization list is empty until environments are registered with
       // it, so a local profile must not be refused just because no row exists
@@ -502,9 +526,7 @@ export async function handleNanfuTransferRequest(
       // readable by the recipient, so a broken package must fail first.
       const text = openTransferPayload(identity, sealed, id);
       const payload = parseCloudTransferPayload(text);
-      if (payload.package.environment.engine !== "chromium") {
-        throw new NanfuTransferHttpError(400, "当前版本只支持导入 Chromium 环境。");
-      }
+      requireChromium(payload.package.environment.engine, "云端导入");
       const accepted = await client.acceptCloudTransfer(id, signal);
       const plan = importPlan(context.store, payload.package);
       const { extensionIds, installed } = await installArchives(context.store, paths, payload.package.extensionArchives);
@@ -542,6 +564,115 @@ export async function handleNanfuTransferRequest(
       const id = typeof body.id === "string" ? body.id.trim() : "";
       if (!isNanfuUuid(id)) throw new NanfuTransferHttpError(400, "转移编号无效。");
       await client.revokeCloudTransfer(id, signal);
+      return reply({ ok: true });
+    }
+
+    // Personal slots: this same account on another machine, no second person.
+    if (req.method === "POST" && action === "package-upload") {
+      const body = await bodyOf(req);
+      const environmentId = normalizeNanfuEnvironmentId(body.environmentId);
+      const paths = requireStateRoot(context);
+      const profile = context.store.getProfile(environmentId);
+      if (!profile) throw new NanfuTransferHttpError(404, "该环境不在本机；只能上传本机已有的环境。");
+      requireChromium(profile.engine ?? "chromium", "上传到云端");
+      const identity = loadOrCreateTransferIdentity(paths.root);
+      // Register first so this upload always includes the machine doing it.
+      await client.publishDeviceKey(userId, identity.deviceId, identity.publicKey, signal);
+      const devices = await client.deviceKeys(userId, signal);
+      if (!devices.some((device) => device.deviceId === identity.deviceId)) {
+        devices.push({ deviceId: identity.deviceId, publicKey: identity.publicKey, label: "", lastSeenAt: "" });
+      }
+      if (context.launcher) await context.launcher.captureLocalSession(environmentId).catch(() => false);
+      let session: unknown = {};
+      const bundle = context.store.getSessionBundle(environmentId);
+      if (bundle) {
+        try { session = JSON.parse(bundle); } catch { session = {}; }
+      }
+      const names = new Map<string, string>();
+      for (const extension of context.store.listExtensions()) names.set(extension.id, extension.name);
+      const payload = buildCloudTransferPayload({
+        environment: exportNanfuEnvironment(profile, names, new Date().toISOString()),
+        session,
+        extensionNames: (profile.extensions ?? [])
+          .map((extensionId) => names.get(extensionId))
+          .filter((name): name is string => !!name),
+        extensionArchives: await extensionArchives(context.store, profile),
+      });
+      const plaintext = JSON.stringify(payload);
+      if (plaintext.length > NANFU_CLOUD_MAX_PLAINTEXT) {
+        const megabytes = (plaintext.length / 1_048_576).toFixed(1);
+        throw new NanfuTransferHttpError(413,
+          `环境数据约 ${megabytes} MB，超过云端转移上限（约 19 MB）。请先移除较大的扩展再上传。`);
+      }
+      const id = randomUUID();
+      const sealed = sealTransferPayloadForDevices(devices, plaintext, id);
+      await client.upsertCloudPackage({
+        id, userId, environmentId,
+        environmentName: payload.package.environment.name,
+        deviceId: identity.deviceId,
+        payload: sealed,
+        sizeBytes: plaintext.length,
+      }, signal);
+      const transfer = payload.transfer;
+      return reply({
+        ok: true, id,
+        environmentName: payload.package.environment.name,
+        hasLoginState: hasLoginState(payload),
+        cookies: transfer.session.cookies.length,
+        origins: transfer.session.origins.length,
+        extensions: payload.package.extensionArchives.length,
+        deviceId: identity.deviceId,
+        deviceCount: devices.length,
+        sizeBytes: plaintext.length,
+      });
+    }
+
+    if (req.method === "POST" && action === "package-download") {
+      const body = await bodyOf(req);
+      const id = typeof body.id === "string" ? body.id.trim() : "";
+      if (!isNanfuUuid(id)) throw new NanfuTransferHttpError(400, "云端包编号无效。");
+      const paths = requireStateRoot(context);
+      const identity = loadOrCreateTransferIdentity(paths.root);
+      const { row, payload: sealed } = await client.cloudPackage(id, userId, signal);
+      const text = openTransferPayloadForDevices(identity, sealed, id);
+      const payload = parseCloudTransferPayload(text);
+      requireChromium(payload.package.environment.engine, "云端下载");
+      const plan = importPlan(context.store, payload.package);
+      const { extensionIds, installed } = await installArchives(context.store, paths, payload.package.extensionArchives);
+      const transfer = payload.transfer;
+      const sessions = new Map<string, string>();
+      if (transfer.session.cookies.length || transfer.session.origins.length) {
+        sessions.set(plan.id, sessionBundleOf(transfer.session));
+      }
+      try {
+        context.store.upsertProfiles(
+          [importedProfile(payload.package.environment, plan.id, plan.name, extensionIds)],
+          sessions,
+        );
+      } catch (error) {
+        await removeArchives(context.store, installed);
+        throw error;
+      }
+      return reply({
+        ok: true,
+        profileId: plan.id,
+        name: plan.name,
+        renamed: plan.renamed,
+        environmentId: payload.package.environment.id,
+        environmentName: row.environmentName || payload.package.environment.name,
+        hasLoginState: hasLoginState(payload),
+        cookies: transfer.session.cookies.length,
+        origins: transfer.session.origins.length,
+        extensions: payload.package.extensionArchives.length,
+        deviceId: identity.deviceId,
+      });
+    }
+
+    if (req.method === "POST" && action === "package-remove") {
+      const body = await bodyOf(req);
+      const id = typeof body.id === "string" ? body.id.trim() : "";
+      if (!isNanfuUuid(id)) throw new NanfuTransferHttpError(400, "云端包编号无效。");
+      await client.deleteCloudPackage(id, userId, signal);
       return reply({ ok: true });
     }
 

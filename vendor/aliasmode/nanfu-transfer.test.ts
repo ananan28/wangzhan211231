@@ -24,9 +24,17 @@ import {
   hasLoginState,
   loadOrCreateTransferIdentity,
   openTransferPayload,
+  openTransferPayloadForDevices,
   parseCloudTransferPayload,
   sealTransferPayload,
+  sealTransferPayloadForDevices,
 } from "./nanfu-cloud-transfer.ts";
+import { handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
+import { parseExport } from "./parse.ts";
+import { statePaths } from "./paths.ts";
+import { ProfileStore } from "./store.ts";
+import type { NanfuCloudPackageRow, NanfuDeviceKeyRow, NanfuSyncClient } from "./nanfu-sync.ts";
+import type { NanfuRuntime } from "./nanfu-service.ts";
 import {
   NANFU_KERNEL_VERSION,
   NanfuTransferError,
@@ -497,9 +505,11 @@ test("the device identity is created once and reused from the state directory", 
     const second = loadOrCreateTransferIdentity(root);
     expect(second.publicKey).toBe(first.publicKey);
     expect(second.privateKey).toBe(first.privateKey);
+    expect(first.deviceId).toBeTruthy();
     const file = JSON.parse(await readFile(join(root, "nanfu-transfer-key.json"), "utf8"));
     expect(file.publicKey).toBe(first.publicKey);
-    expect(() => openTransferPayload({ publicKey: first.publicKey, privateKey: "broken" }, "{}", "x"))
+    expect(file.deviceId).toBe(first.deviceId);
+    expect(() => openTransferPayload({ deviceId: first.deviceId, publicKey: first.publicKey, privateKey: "broken" }, "{}", "x"))
       .toThrow(NanfuCloudTransferError);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -513,4 +523,226 @@ test("extension archives travel with the payload and survive a round trip", () =
   expect(built.package.extensionArchives[0]?.files[0]?.path).toBe("manifest.json");
   const parsed = parseCloudTransferPayload(JSON.stringify(built));
   expect(parsed.package.extensionArchives[0]?.name).toBe("Demo");
+});
+
+const USER_ID = "11111111-1111-1111-1111-111111111111";
+const OTHER_USER_ID = "22222222-2222-2222-2222-222222222222";
+
+/** Stands in for PostgREST + RLS: rows are addressed by account, as the policies require. */
+class FakeCloudService {
+  private readonly keys = new Map<string, Map<string, string>>();
+  private readonly packages = new Map<string, { row: NanfuCloudPackageRow; payload: string }>();
+
+  async publishDeviceKey(userId: string, deviceId: string, publicKey: string): Promise<void> {
+    const devices = this.keys.get(userId) ?? new Map<string, string>();
+    devices.set(deviceId, publicKey);
+    this.keys.set(userId, devices);
+  }
+
+  async deviceKeys(userId: string): Promise<NanfuDeviceKeyRow[]> {
+    return [...(this.keys.get(userId) ?? new Map<string, string>())]
+      .map(([deviceId, publicKey]) => ({ deviceId, publicKey, label: "", lastSeenAt: "" }));
+  }
+
+  async upsertCloudPackage(input: {
+    id: string; userId: string; environmentId: string; environmentName: string;
+    deviceId: string; payload: string; sizeBytes: number;
+  }): Promise<string> {
+    this.packages.set(`${input.userId}:${input.id}`, {
+      row: {
+        id: input.id, environmentId: input.environmentId, environmentName: input.environmentName,
+        deviceId: input.deviceId, sizeBytes: input.sizeBytes, createdAt: "", updatedAt: "",
+      },
+      payload: input.payload,
+    });
+    return input.id;
+  }
+
+  async cloudPackages(userId: string): Promise<NanfuCloudPackageRow[]> {
+    return [...this.packages.entries()]
+      .filter(([key]) => key.startsWith(`${userId}:`))
+      .map(([, value]) => value.row);
+  }
+
+  async cloudPackage(id: string, userId: string): Promise<{ row: NanfuCloudPackageRow; payload: string }> {
+    const found = this.packages.get(`${userId}:${id}`);
+    if (!found) throw new Error("cloud package not found for this account");
+    return found;
+  }
+
+  async deleteCloudPackage(id: string, userId: string): Promise<void> {
+    this.packages.delete(`${userId}:${id}`);
+  }
+
+  sealed(id: string, userId = USER_ID): string {
+    return this.packages.get(`${userId}:${id}`)!.payload;
+  }
+}
+
+function routeContext(store: ProfileStore, root: string, service: FakeCloudService, userId = USER_ID) {
+  return {
+    nanfu: {
+      account: { state: () => ({ authenticated: true, userId, email: "owner@example.com" }) },
+      client: service as unknown as NanfuSyncClient,
+      persistent: true,
+    } as unknown as NanfuRuntime,
+    store,
+    paths: statePaths(root),
+  };
+}
+
+function transferRequest(
+  store: ProfileStore,
+  root: string,
+  service: FakeCloudService,
+  action: string,
+  body: unknown,
+  userId = USER_ID,
+): Promise<Response> {
+  return handleNanfuTransferRequest(new Request(`http://local/ui/api/nanfu-transfer/${action}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }), routeContext(store, root, service, userId));
+}
+
+const testProfile = () => parseExport("id=k1cloud\nname=Cloud box\ncookie=[]").profiles[0]!;
+
+test("a multi-device envelope opens for every registered device and for nobody else", () => {
+  const first = createTransferIdentity();
+  const second = createTransferIdentity();
+  const stranger = createTransferIdentity();
+  const id = "0b8f0a9e-4b1f-4c0a-9d78-7a4c1b2e3f40";
+  const sealed = sealTransferPayloadForDevices([
+    { deviceId: first.deviceId, publicKey: first.publicKey },
+    { deviceId: second.deviceId, publicKey: second.publicKey },
+  ], "secret", id);
+  expect(openTransferPayloadForDevices(first, sealed, id)).toBe("secret");
+  expect(openTransferPayloadForDevices(second, sealed, id)).toBe("secret");
+  expect(() => openTransferPayloadForDevices(stranger, sealed, id)).toThrow(/没有包含本机的密钥/);
+  expect(() => openTransferPayloadForDevices(first, sealed, "another-package")).toThrow(NanfuCloudTransferError);
+
+  const tampered = JSON.parse(sealed);
+  const bytes = Buffer.from(tampered.ct, "base64");
+  bytes[0] = bytes[0]! ^ 0x01;
+  tampered.ct = bytes.toString("base64");
+  expect(() => openTransferPayloadForDevices(first, JSON.stringify(tampered), id)).toThrow(NanfuCloudTransferError);
+});
+
+test("same account, two machines: upload seals the login state and the other machine restores it", async () => {
+  const rootA = await mkdtemp(join(tmpdir(), "nanfu-cloud-a-"));
+  const rootB = await mkdtemp(join(tmpdir(), "nanfu-cloud-b-"));
+  const storeA = new ProfileStore(":memory:");
+  const storeB = new ProfileStore(":memory:");
+  const service = new FakeCloudService();
+  try {
+    const profile = testProfile();
+    storeA.upsertProfile(profile);
+    storeA.saveSessionBundle(profile.id, JSON.stringify(rawSession));
+    // Machine B has opened the transfer page before, so its key is on file.
+    const identityB = loadOrCreateTransferIdentity(rootB);
+    await service.publishDeviceKey(USER_ID, identityB.deviceId, identityB.publicKey);
+
+    const upload = await transferRequest(storeA, rootA, service, "package-upload", { environmentId: profile.id });
+    expect(upload.status).toBe(200);
+    const uploaded = await upload.json() as any;
+    expect(uploaded.hasLoginState).toBe(true);
+    expect(uploaded.cookies).toBe(2);
+    expect(uploaded.origins).toBe(2);
+    expect(uploaded.deviceCount).toBe(2);
+    const sealed = service.sealed(uploaded.id);
+    expect(sealed).not.toContain("cookie-secret");
+    expect(sealed).not.toContain("local-secret");
+    expect(sealed).not.toContain("mail.example.com");
+
+    const download = await transferRequest(storeB, rootB, service, "package-download", { id: uploaded.id });
+    expect(download.status).toBe(200);
+    const imported = await download.json() as any;
+    expect(imported.hasLoginState).toBe(true);
+    expect(imported.cookies).toBe(2);
+    const restored = storeB.getProfile(imported.profileId)!;
+    expect(restored.engine).toBe("chromium");
+    expect(restored.name).toContain("Cloud box");
+    const pending = storeB.getPendingSessionBundle(imported.profileId)!;
+    const bundle = JSON.parse(pending);
+    expect(bundle.cookies[0].value).toBe("cookie-secret");
+    expect(bundle.cookies[0].httpOnly).toBe(true);
+    expect(bundle.origins.find((origin: any) => origin.origin === "https://mail.example.com")
+      .localStorage[0].value).toBe("local-secret");
+    expect(storeB.getSessionBundle(imported.profileId)).toBe(pending);
+  } finally {
+    storeA.close();
+    storeB.close();
+    await rm(rootA, { recursive: true, force: true });
+    await rm(rootB, { recursive: true, force: true });
+  }
+});
+
+test("a device registered after the upload is told the package has no box for it", async () => {
+  const rootA = await mkdtemp(join(tmpdir(), "nanfu-cloud-late-a-"));
+  const rootB = await mkdtemp(join(tmpdir(), "nanfu-cloud-late-b-"));
+  const storeA = new ProfileStore(":memory:");
+  const storeB = new ProfileStore(":memory:");
+  const service = new FakeCloudService();
+  try {
+    const profile = testProfile();
+    storeA.upsertProfile(profile);
+    storeA.saveSessionBundle(profile.id, JSON.stringify(rawSession));
+
+    const upload = await transferRequest(storeA, rootA, service, "package-upload", { environmentId: profile.id });
+    const uploaded = await upload.json() as any;
+    expect(uploaded.deviceCount).toBe(1);
+
+    const identityB = loadOrCreateTransferIdentity(rootB);
+    await service.publishDeviceKey(USER_ID, identityB.deviceId, identityB.publicKey);
+    const download = await transferRequest(storeB, rootB, service, "package-download", { id: uploaded.id });
+    expect(download.status).toBe(422);
+    expect((await download.json() as any).error).toContain("没有包含本机的密钥");
+    expect(storeB.count()).toBe(0);
+  } finally {
+    storeA.close();
+    storeB.close();
+    await rm(rootA, { recursive: true, force: true });
+    await rm(rootB, { recursive: true, force: true });
+  }
+});
+
+test("another account cannot download the sealed slot even with the package id", async () => {
+  const rootA = await mkdtemp(join(tmpdir(), "nanfu-cloud-other-a-"));
+  const rootB = await mkdtemp(join(tmpdir(), "nanfu-cloud-other-b-"));
+  const storeA = new ProfileStore(":memory:");
+  const storeB = new ProfileStore(":memory:");
+  const service = new FakeCloudService();
+  try {
+    const profile = testProfile();
+    storeA.upsertProfile(profile);
+    storeA.saveSessionBundle(profile.id, JSON.stringify(rawSession));
+    const upload = await transferRequest(storeA, rootA, service, "package-upload", { environmentId: profile.id });
+    const uploaded = await upload.json() as any;
+
+    const download = await transferRequest(storeB, rootB, service, "package-download", { id: uploaded.id }, OTHER_USER_ID);
+    expect(download.status).not.toBe(200);
+    expect(storeB.count()).toBe(0);
+  } finally {
+    storeA.close();
+    storeB.close();
+    await rm(rootA, { recursive: true, force: true });
+    await rm(rootB, { recursive: true, force: true });
+  }
+});
+
+test("Camoufox / Firefox windows are refused by name before any capture", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nanfu-cloud-ff-"));
+  const service = new FakeCloudService();
+  const store = {
+    getProfile: () => ({ id: "ff1", name: "Firefox box", engine: "firefox", extensions: [] }),
+    listExtensions: () => [],
+  } as unknown as ProfileStore;
+  try {
+    const response = await transferRequest(store, root, service, "package-upload", { environmentId: "ff1" });
+    expect(response.status).toBe(400);
+    expect((await response.json() as any).error).toContain("Camoufox");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

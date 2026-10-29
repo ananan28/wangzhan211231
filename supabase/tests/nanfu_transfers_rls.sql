@@ -1320,5 +1320,126 @@ begin
 end $$;
 commit;
 
+-- ---------------------------------------------------------------------------
+-- 12. Personal cloud slots: the same account's devices, nobody else's.
+--     Seeded as the owner (bypasses RLS) so the policies are what is tested.
+-- ---------------------------------------------------------------------------
+delete from public.nanfu_cloud_packages where user_id = '11111111-1111-1111-1111-111111111111';
+delete from public.nanfu_device_keys where user_id = '11111111-1111-1111-1111-111111111111';
+insert into public.nanfu_device_keys (user_id, device_id, public_key)
+values
+  ('11111111-1111-1111-1111-111111111111', 'device-a', repeat('A', 44));
+insert into public.nanfu_cloud_packages
+  (id, user_id, environment_id, environment_name, device_id, payload, size_bytes)
+values
+  ('bbbbbbbb-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111',
+   'personal-1', 'Mail box', 'device-a', '{"v":2,"alg":"devices","boxes":[],"ct":"Y2lwaGVy"}', 4096);
+
+-- The owner reads their own slot, key and sealed payload.
+begin;
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+select set_config('request.jwt.claims', '{"sub":"11111111-1111-1111-1111-111111111111","email":"sender@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint; sealed text;
+begin
+  select count(*) into n from public.nanfu_cloud_packages;
+  if n <> 1 then raise exception 'owner saw % own cloud packages', n; end if;
+  select payload into sealed from public.nanfu_cloud_packages
+   where id = 'bbbbbbbb-0000-0000-0000-000000000001';
+  if sealed is null or sealed not like '{"v":2%' then raise exception 'owner could not read their sealed payload'; end if;
+  select count(*) into n from public.nanfu_device_keys;
+  if n <> 1 then raise exception 'owner saw % own device keys', n; end if;
+end $$;
+commit;
+
+-- Another account sees nothing, cannot read by id, and cannot steal a row.
+begin;
+select set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
+select set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222","email":"recipient@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint; changed bigint; blocked boolean := false;
+begin
+  select count(*) into n from public.nanfu_cloud_packages;
+  if n <> 0 then raise exception 'another account listed % foreign cloud packages', n; end if;
+  select count(*) into n from public.nanfu_cloud_packages
+   where id = 'bbbbbbbb-0000-0000-0000-000000000001';
+  if n <> 0 then raise exception 'another account read a cloud package by id'; end if;
+  select count(*) into n from public.nanfu_device_keys;
+  if n <> 0 then raise exception 'another account read % foreign device keys', n; end if;
+
+  update public.nanfu_cloud_packages set payload = '{"v":2,"ct":"dGFtcGVyZWQ"}'
+   where id = 'bbbbbbbb-0000-0000-0000-000000000001';
+  get diagnostics changed = row_count;
+  if changed <> 0 then raise exception 'another account rewrote a cloud package'; end if;
+
+  delete from public.nanfu_cloud_packages
+   where id = 'bbbbbbbb-0000-0000-0000-000000000001';
+  get diagnostics changed = row_count;
+  if changed <> 0 then raise exception 'another account deleted a cloud package'; end if;
+
+  begin
+    insert into public.nanfu_cloud_packages
+      (user_id, environment_id, environment_name, device_id, payload)
+    values
+      ('11111111-1111-1111-1111-111111111111', 'forged', 'Forged', 'device-a', '{"v":2,"ct":"eA"}');
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'another account wrote into the owner slot'; end if;
+
+  blocked := false;
+  begin
+    insert into public.nanfu_device_keys (user_id, device_id, public_key)
+    values ('11111111-1111-1111-1111-111111111111', 'device-forged', repeat('B', 44));
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'another account registered a device for the owner'; end if;
+
+  -- Its own row is allowed and stays invisible to the owner above.
+  insert into public.nanfu_cloud_packages (user_id, environment_id, device_id, payload)
+  values ('22222222-2222-2222-2222-222222222222', 'personal-1', 'device-b', '{"v":2,"ct":"b3du"}');
+  select count(*) into n from public.nanfu_cloud_packages;
+  if n <> 1 then raise exception 'recipient could not use their own cloud slot'; end if;
+end $$;
+commit;
+
+-- The sender still sees exactly one row: the recipient's insert leaked nothing.
+begin;
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+select set_config('request.jwt.claims', '{"sub":"11111111-1111-1111-1111-111111111111","email":"sender@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_cloud_packages;
+  if n <> 1 then raise exception 'owner saw % packages after another account wrote its own', n; end if;
+end $$;
+commit;
+
+-- Anonymous callers hold no grant at all on either table.
+begin;
+set local role anon;
+do $$
+declare blocked boolean := false;
+begin
+  begin
+    perform 1 from public.nanfu_cloud_packages limit 1;
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'anon read cloud packages'; end if;
+  blocked := false;
+  begin
+    perform 1 from public.nanfu_device_keys limit 1;
+  exception when insufficient_privilege then
+    blocked := true;
+  end;
+  if not blocked then raise exception 'anon read device keys'; end if;
+end $$;
+commit;
+
 select 'nanfu RLS proof passed' as result;
 

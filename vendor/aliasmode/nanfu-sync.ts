@@ -264,9 +264,50 @@ function cloudTransferRow(row: any): NanfuCloudTransferRow {
   };
 }
 
+/** One device that may open this account's personal cloud packages. */
+export interface NanfuDeviceKeyRow {
+  deviceId: string;
+  publicKey: string;
+  label: string;
+  lastSeenAt: string;
+}
+
+/** Metadata only; the sealed payload is fetched on demand. */
+export interface NanfuCloudPackageRow {
+  id: string;
+  environmentId: string;
+  environmentName: string;
+  deviceId: string;
+  sizeBytes: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function deviceKeyRow(row: any): NanfuDeviceKeyRow {
+  return {
+    deviceId: String(row.device_id ?? ""),
+    publicKey: String(row.public_key ?? ""),
+    label: String(row.label ?? ""),
+    lastSeenAt: String(row.last_seen_at ?? ""),
+  };
+}
+
+function cloudPackageRow(row: any): NanfuCloudPackageRow {
+  return {
+    id: String(row.id),
+    environmentId: String(row.environment_id ?? ""),
+    environmentName: String(row.environment_name ?? ""),
+    deviceId: String(row.device_id ?? ""),
+    sizeBytes: Number(row.size_bytes ?? 0),
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? ""),
+  };
+}
+
 export const NANFU_TRANSFER_MAX_BATCH = 200;
 export const NANFU_TRANSFER_NOTE_MAX = 500;
 export const NANFU_ENVIRONMENT_ID_MAX = 128;
+export const NANFU_DEVICE_ID_MAX = 64;
 
 const NANFU_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -279,6 +320,15 @@ export function normalizeNanfuEnvironmentId(value: unknown): string {
   const id = typeof value === "string" ? value.trim() : "";
   if (!id || Array.from(id).length > NANFU_ENVIRONMENT_ID_MAX || /[\x00-\x1f\x7f]/.test(id)) {
     throw new NanfuSyncError("环境编号无效：须为1至128个可打印字符", 400);
+  }
+  return id;
+}
+
+/** Device ids are per install; they are not secrets but must be URL-safe. */
+export function normalizeNanfuDeviceId(value: unknown): string {
+  const id = typeof value === "string" ? value.trim() : "";
+  if (!id || Array.from(id).length > NANFU_DEVICE_ID_MAX || /[\x00-\x1f\x7f\s]/.test(id)) {
+    throw new NanfuSyncError("设备编号无效", 400);
   }
   return id;
 }
@@ -557,6 +607,115 @@ export class NanfuSyncClient {
       method: "PATCH",
       headers: { prefer: "return=minimal" },
       body: JSON.stringify({ status: "revoked" }),
+      signal,
+    });
+  }
+
+  /** Register this install's public key under the signed-in account. */
+  async publishDeviceKey(userId: string, deviceId: string, publicKey: string, signal?: AbortSignal): Promise<void> {
+    if (!isNanfuUuid(userId)) throw new NanfuSyncError("账号编号无效", 400);
+    const device = normalizeNanfuDeviceId(deviceId);
+    if (typeof publicKey !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(publicKey)) {
+      throw new NanfuSyncError("设备公钥无效", 400);
+    }
+    await this.request("/nanfu_device_keys?on_conflict=user_id,device_id", {
+      method: "POST",
+      headers: { prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify([{ user_id: userId, device_id: device, public_key: publicKey }]),
+      signal,
+    });
+  }
+
+  /** Devices of this account only: row-level security enforces the owner. */
+  async deviceKeys(userId: string, signal?: AbortSignal): Promise<NanfuDeviceKeyRow[]> {
+    if (!isNanfuUuid(userId)) throw new NanfuSyncError("账号编号无效", 400);
+    const query = new URLSearchParams({
+      select: "device_id,public_key,label,last_seen_at",
+      user_id: `eq.${userId}`,
+      order: "created_at.asc",
+      limit: "64",
+    });
+    const rows = await this.request(`/nanfu_device_keys?${query}`, { method: "GET", signal });
+    if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid device key response", 502);
+    return rows.map(deviceKeyRow);
+  }
+
+  /**
+   * Store one sealed package in this account's personal slot. The slot is
+   * keyed by (account, environment), so uploading again replaces the package
+   * for that environment instead of piling up copies.
+   */
+  async upsertCloudPackage(input: {
+    id: string;
+    userId: string;
+    environmentId: string;
+    environmentName: string;
+    deviceId: string;
+    payload: string;
+    sizeBytes: number;
+  }, signal?: AbortSignal): Promise<string> {
+    if (!isNanfuUuid(input.id)) throw new NanfuSyncError("转移编号无效", 400);
+    if (!isNanfuUuid(input.userId)) throw new NanfuSyncError("账号编号无效", 400);
+    if (!input.payload || input.payload.length > NANFU_CLOUD_PAYLOAD_MAX) {
+      throw new NanfuSyncError("转移数据超过云端上限，请移除较大的扩展后再上传", 413);
+    }
+    const size = Number.isSafeInteger(input.sizeBytes) && input.sizeBytes >= 0 ? input.sizeBytes : 0;
+    const rows = await this.request("/nanfu_cloud_packages?on_conflict=user_id,environment_id", {
+      method: "POST",
+      headers: { prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify([{
+        id: input.id,
+        user_id: input.userId,
+        environment_id: normalizeNanfuEnvironmentId(input.environmentId),
+        environment_name: input.environmentName.slice(0, 200),
+        device_id: normalizeNanfuDeviceId(input.deviceId),
+        payload: input.payload,
+        size_bytes: size,
+      }]),
+      signal,
+    }, NANFU_CLOUD_TIMEOUT_MS);
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    if (!row || typeof row.id !== "string") throw new NanfuSyncError("南孚服务没有返回云端包记录", 502);
+    return row.id;
+  }
+
+  /** Personal cloud slots of this account; payloads are omitted. */
+  async cloudPackages(userId: string, signal?: AbortSignal): Promise<NanfuCloudPackageRow[]> {
+    if (!isNanfuUuid(userId)) throw new NanfuSyncError("账号编号无效", 400);
+    const query = new URLSearchParams({
+      select: "id,environment_id,environment_name,device_id,size_bytes,created_at,updated_at",
+      user_id: `eq.${userId}`,
+      order: "updated_at.desc",
+      limit: "100",
+    });
+    const rows = await this.request(`/nanfu_cloud_packages?${query}`, { method: "GET", signal });
+    if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid cloud package response", 502);
+    return rows.map(cloudPackageRow);
+  }
+
+  /** One sealed package, filtered by owner as well as by row-level security. */
+  async cloudPackage(id: string, userId: string, signal?: AbortSignal): Promise<{ row: NanfuCloudPackageRow; payload: string }> {
+    if (!isNanfuUuid(id)) throw new NanfuSyncError("云端包编号无效", 400);
+    if (!isNanfuUuid(userId)) throw new NanfuSyncError("账号编号无效", 400);
+    const query = new URLSearchParams({
+      select: "id,environment_id,environment_name,device_id,size_bytes,created_at,updated_at,payload",
+      id: `eq.${id}`,
+      user_id: `eq.${userId}`,
+    });
+    const rows = await this.request(`/nanfu_cloud_packages?${query}`, { method: "GET", signal }, NANFU_CLOUD_TIMEOUT_MS);
+    if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid cloud package response", 502);
+    const row = rows[0];
+    if (!row) throw new NanfuSyncError("云端包不存在或已移除", 404, false, "P0002");
+    if (typeof row.payload !== "string" || !row.payload) throw new NanfuSyncError("Invalid cloud package payload", 502);
+    return { row: cloudPackageRow(row), payload: row.payload };
+  }
+
+  async deleteCloudPackage(id: string, userId: string, signal?: AbortSignal): Promise<void> {
+    if (!isNanfuUuid(id)) throw new NanfuSyncError("云端包编号无效", 400);
+    if (!isNanfuUuid(userId)) throw new NanfuSyncError("账号编号无效", 400);
+    await this.request(`/nanfu_cloud_packages?id=eq.${id}&user_id=eq.${userId}`, {
+      method: "DELETE",
+      headers: { prefer: "return=minimal" },
       signal,
     });
   }
