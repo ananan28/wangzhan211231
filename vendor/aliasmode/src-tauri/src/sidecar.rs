@@ -210,7 +210,7 @@ fn parse_credential_set(line: &[u8], nonce: &str) -> Option<CredentialSetRecord>
         && record.event == "credential-set"
         && record.nonce == nonce
         && record.request > 0
-        && record.key == "refresh_token"
+        && matches!(record.key.as_str(), "refresh_token" | "nanfu_refresh_token")
     {
         Some(record)
     } else {
@@ -224,7 +224,21 @@ fn parse_credential_delete(line: &[u8], nonce: &str) -> Option<CredentialDeleteR
         && record.event == "credential-delete"
         && record.nonce == nonce
         && record.request > 0
-        && matches!(record.key.as_str(), "refresh_token" | "device_credential")
+        && matches!(record.key.as_str(), "refresh_token" | "device_credential" | "nanfu_refresh_token")
+    {
+        Some(record)
+    } else {
+        None
+    }
+}
+
+fn parse_credential_get(line: &[u8], nonce: &str) -> Option<CredentialDeleteRecord> {
+    let record = serde_json::from_slice::<CredentialDeleteRecord>(line).ok()?;
+    if record.protocol == PROTOCOL
+        && record.event == "credential-get"
+        && record.nonce == nonce
+        && record.request > 0
+        && record.key == "nanfu_refresh_token"
     {
         Some(record)
     } else {
@@ -494,7 +508,11 @@ pub async fn launch_and_verify(
                     if let Some(mut record) = parse_credential_set(&line, &expected_nonce) {
                         let request = record.request;
                         let secret = std::mem::take(&mut record.secret);
-                        let ok = credentials::store_refresh_token(secret).is_ok();
+                        let ok = if record.key == "nanfu_refresh_token" {
+                            credentials::store_nanfu_refresh_token(secret).is_ok()
+                        } else {
+                            credentials::store_refresh_token(secret).is_ok()
+                        };
                         line.zeroize();
                         let response = serde_json::json!({
                             "protocol": PROTOCOL,
@@ -508,8 +526,31 @@ pub async fn launch_and_verify(
                         }
                         continue;
                     }
+                    if let Some(record) = parse_credential_get(&line, &expected_nonce) {
+                        let result = credentials::load_nanfu_refresh_token();
+                        let mut response = serde_json::json!({
+                            "protocol": PROTOCOL,
+                            "event": "credential-result",
+                            "nonce": expected_nonce.as_str(),
+                            "request": record.request,
+                            "ok": result.is_ok(),
+                            "secret": result.ok().flatten(),
+                        });
+                        line.zeroize();
+                        if control.write_control(&response).is_err() {
+                            eprintln!("Nanfu credential acknowledgement failed");
+                        }
+                        if let Some(serde_json::Value::String(secret)) = response.get_mut("secret") {
+                            secret.zeroize();
+                        }
+                        continue;
+                    }
                     if let Some(record) = parse_credential_delete(&line, &expected_nonce) {
-                        let ok = credentials::delete_cloud_credential(&record.key).is_ok();
+                        let ok = if record.key == "nanfu_refresh_token" {
+                            credentials::delete_nanfu_refresh_token().is_ok()
+                        } else {
+                            credentials::delete_cloud_credential(&record.key).is_ok()
+                        };
                         line.zeroize();
                         let response = serde_json::json!({
                             "protocol": PROTOCOL,
@@ -573,8 +614,8 @@ pub async fn launch_and_verify(
 #[cfg(test)]
 mod tests {
     use super::{
-        import_command_args, parse_credential_delete, parse_credential_set, parse_ready_line,
-        should_present_unexpected_exit, verify_health_record, HealthRecord, PROTOCOL, VERSION,
+        import_command_args, parse_credential_delete, parse_credential_get, parse_credential_set,
+        parse_ready_line, should_present_unexpected_exit, verify_health_record, HealthRecord, PROTOCOL, VERSION,
     };
     use std::{ffi::OsString, path::Path};
 
@@ -639,6 +680,32 @@ mod tests {
             "key": "queue_encryption_key",
         });
         assert!(parse_credential_delete(delete_queue.to_string().as_bytes(), NONCE).is_none());
+    }
+
+    #[test]
+    fn nanfu_credentials_use_only_nonce_bound_backend_requests() {
+        let mut line = serde_json::json!({
+            "protocol": PROTOCOL,
+            "event": "credential-get",
+            "nonce": NONCE,
+            "request": 1,
+            "key": "nanfu_refresh_token",
+        });
+        assert!(parse_credential_get(line.to_string().as_bytes(), NONCE).is_some());
+        assert!(parse_credential_get(line.to_string().as_bytes(), &"cd".repeat(32)).is_none());
+        line["request"] = serde_json::json!(0);
+        assert!(parse_credential_get(line.to_string().as_bytes(), NONCE).is_none());
+        line["request"] = serde_json::json!(1);
+        for key in ["refresh_token", "device_credential", "queue_encryption_key", "access_token"] {
+            line["key"] = serde_json::json!(key);
+            assert!(parse_credential_get(line.to_string().as_bytes(), NONCE).is_none());
+        }
+        line["key"] = serde_json::json!("nanfu_refresh_token");
+        line["event"] = serde_json::json!("credential-delete");
+        assert!(parse_credential_delete(line.to_string().as_bytes(), NONCE).is_some());
+        line["event"] = serde_json::json!("credential-set");
+        line["secret"] = serde_json::json!("synthetic-refresh");
+        assert!(parse_credential_set(line.to_string().as_bytes(), NONCE).is_some());
     }
 
     #[test]

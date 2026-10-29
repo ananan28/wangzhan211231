@@ -259,3 +259,79 @@ test("sync aborts before marking a pulled environment clean when the passphrase 
     deviceId: "device-1",
   })).rejects.toBeInstanceOf(NanfuSyncDecryptError);
 });
+
+test("visible metadata pages across owners without expanding personal sync", async () => {
+  const requests: URL[] = [];
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async (url, init) => {
+      const query = new URL(String(url));
+      requests.push(query);
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer synthetic-jwt");
+      if (query.searchParams.has("owner_user_id")) return Response.json([]);
+      const offset = Number(query.searchParams.get("offset"));
+      return Response.json(Array.from({ length: offset === 0 ? 500 : 1 }, (_, i) => ({
+        environment_id: `env-${offset + i}`, owner_user_id: "group-owner", org_id: "org-1", group_id: "granted",
+        version: 2, updated_at: "2026-10-29T00:00:00Z", payload: "must-not-be-returned",
+      })));
+    },
+  });
+  const visible = await client.visibleEnvironments("org-1");
+  expect(visible).toHaveLength(501);
+  expect(visible[500]).toMatchObject({ id: "env-500", ownerUserId: "group-owner", groupId: "granted", orgId: "org-1" });
+  expect(JSON.stringify(visible)).not.toContain("must-not-be-returned");
+  for (const request of requests) {
+    expect(request.searchParams.has("owner_user_id")).toBe(false);
+    expect(request.searchParams.get("org_id")).toBe("eq.org-1");
+    expect(request.searchParams.get("deleted")).toBe("eq.false");
+    expect(request.searchParams.get("select")).not.toContain("payload");
+  }
+  await client.list("self");
+  expect(requests.at(-1)!.searchParams.get("owner_user_id")).toBe("eq.self");
+  expect(requests.at(-1)!.searchParams.has("org_id")).toBe(false);
+  expect(requests.at(-1)!.searchParams.get("select")).toContain("payload");
+});
+
+test("organization queries preserve quota and lock metadata without fetching a disabled organization", async () => {
+  const requests: string[] = [];
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async url => {
+      requests.push(String(url));
+      return Response.json([{ org_id: "org-1", identity: "member", status: "disabled", locked: false, role_name: null, env_quota: 2, used: 3, permissions: [] }]);
+    },
+  });
+  expect(await client.organization()).toMatchObject({ orgId: "org-1", status: "disabled", quota: 2, used: 3, locked: false });
+  expect(requests).toEqual(["https://nanfu.test/rest/v1/rpc/nanfu_org_me"]);
+});
+
+test("visible metadata rejects unexpected organization rows", async () => {
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async () => Response.json([{ environment_id: "other", owner_user_id: "owner", org_id: "other-org" }]),
+  });
+  await expect(client.visibleEnvironments("org-1")).rejects.toBeInstanceOf(NanfuSyncError);
+});
+
+test("cancelling visible queries aborts the fetch and leaves personal sync usable", async () => {
+  let started!: () => void;
+  const waiting = new Promise<void>(resolve => { started = resolve; });
+  let aborted = false;
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async (url, init) => {
+      if (new URL(String(url)).searchParams.has("owner_user_id")) return Response.json([]);
+      return await new Promise<Response>((_, reject) => {
+        init!.signal!.addEventListener("abort", () => { aborted = true; reject(new Error("cancelled")); }, { once: true });
+        started();
+      });
+    },
+  });
+  const pending = client.visibleEnvironments("org-1");
+  const rejected = expect(pending).rejects.toBeInstanceOf(NanfuSyncError);
+  await waiting;
+  client.cancelVisibleRequests();
+  await rejected;
+  expect(aborted).toBe(true);
+  expect(await client.list("self")).toEqual([]);
+});

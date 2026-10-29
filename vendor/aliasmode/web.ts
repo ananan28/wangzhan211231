@@ -14,6 +14,7 @@ import type { RemoteCoordinator } from "./remote.ts";
 import type { AppConfigStore } from "./app-config.ts";
 import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
+import type { NanfuRuntime } from "./nanfu-service.ts";
 import type { CloudConnectionRuntime } from "./cloud-connection.ts";
 import type { CloudBrowserLifecycle } from "./cloud-browser.ts";
 import type { McpTunnelLifecycle } from "./mcp-tunnel.ts";
@@ -60,6 +61,7 @@ export interface DashboardServerOptions {
   paths?: StatePaths;
   defaultCloudUrl?: string;
   cloudAuth?: CloudAuthRuntime;
+  nanfu?: NanfuRuntime;
   cloudConnection?: CloudConnectionRuntime;
   pendingSync?: PendingSyncRuntime;
   cloudBrowser?: CloudBrowserLifecycle;
@@ -371,6 +373,7 @@ export function serveDashboard(opts: DashboardServerOptions) {
           paths: opts.paths,
           defaultCloudUrl: opts.defaultCloudUrl,
           cloudAuth: opts.cloudAuth,
+          nanfu: opts.nanfu,
           cloudConnection: opts.cloudConnection,
           pendingSync: opts.pendingSync,
           cloudBrowser: opts.cloudBrowser,

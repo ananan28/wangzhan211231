@@ -13,6 +13,44 @@ import type { PythonRuntimeStatus } from "../python-runtime.ts";
 import type { RuntimeDownload } from "../runtime-download.ts";
 import type { FolderInfo } from "../folders.ts";
 import type { TranslationSettings } from "../translation-core.ts";
+import type { NanfuAccountState } from "../nanfu-account.ts";
+import type { NanfuOrganization, NanfuVisibleEnvironment } from "../nanfu-sync.ts";
+export type { NanfuAccountState, NanfuOrganization, NanfuVisibleEnvironment };
+
+export class NanfuApiError extends Error {
+  constructor(message: string, readonly status: number, readonly retryable: boolean) {
+    super(message);
+    this.name = "NanfuApiError";
+  }
+}
+
+async function nanfuJson(path: string, init?: RequestInit): Promise<any> {
+  const response = await fetch(`/ui/api/nanfu/${path}`, { ...init, cache: "no-store" });
+  const body = await apiJson(response, path);
+  if (!response.ok || body.ok !== true) throw new NanfuApiError(body.error || "南孚服务暂时不可用", response.status, body.retryable === true);
+  return body;
+}
+
+export function fetchNanfuState(signal?: AbortSignal): Promise<{ state: NanfuAccountState; persistent: boolean }> {
+  return nanfuJson("state", { signal });
+}
+
+export function nanfuAuthAction(
+  action: "signup" | "signin" | "restore" | "signout",
+  input: { email?: string; password?: string } = {},
+  signal?: AbortSignal,
+): Promise<{ state?: NanfuAccountState; persistent?: boolean; email?: string; verificationRequired?: boolean }> {
+  return nanfuJson(action, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal });
+}
+
+export function fetchNanfuEnvironments(signal?: AbortSignal): Promise<{
+  userId: string;
+  organization: NanfuOrganization | null;
+  environments: NanfuVisibleEnvironment[];
+}> {
+  return nanfuJson("environments", { signal });
+}
+
 import {
   CLOUD_DIAGNOSTIC_TYPES,
   type CloudDiagnosticEvent,

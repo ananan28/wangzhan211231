@@ -275,6 +275,13 @@ export interface NanfuAccountRuntimeOptions {
   nowMs?: () => number;
 }
 
+export class NanfuAccountChangedError extends Error {
+  constructor() {
+    super("账号已切换，请重新操作");
+    this.name = "NanfuAccountChangedError";
+  }
+}
+
 /**
  * Holds the live session: access tokens stay in memory, only the refresh token
  * is persisted. An expired access token is refreshed lazily and exactly once
@@ -287,6 +294,8 @@ export class NanfuAccountRuntime {
   private userIdValue: string | undefined;
   private emailValue: string | undefined;
   private refreshInFlight: Promise<string | undefined> | undefined;
+  private restoreInFlight: Promise<NanfuAccountState> | undefined;
+  private credentialWrites: Promise<void> = Promise.resolve();
   private generation = 0;
   private readonly nowMs: () => number;
 
@@ -311,6 +320,14 @@ export class NanfuAccountRuntime {
     return !!(this.userIdValue || this.refreshTokenValue);
   }
 
+  revision(): number {
+    return this.generation;
+  }
+
+  assertCurrent(revision: number): void {
+    if (revision !== this.generation) throw new NanfuAccountChangedError();
+  }
+
   signUp(email: string, password: string): Promise<NanfuSignUpResult> {
     return this.auth.signUp(email, password);
   }
@@ -324,36 +341,47 @@ export class NanfuAccountRuntime {
   }
 
   async signIn(email: string, password: string): Promise<NanfuAccountState> {
+    if (this.hasSession()) throw new NanfuAuthError("请先退出当前南孚账号", { kind: "http", status: 409, retryable: false });
+    this.clear();
+    const revision = this.generation;
     const session = await this.auth.signIn(email, password);
-    await this.accept(session);
+    await this.accept(session, revision);
     return this.state();
   }
 
-  /**
-   * Restore the stored refresh token after a restart. A rejected token is
-   * dropped so the UI can sign in again; a transport failure is rethrown so
-   * the caller can retry instead of silently losing the session.
-   */
-  async restore(): Promise<NanfuAccountState> {
-    const stored = await this.options.credentials?.load() ?? null;
-    if (!stored) return this.state();
-    try {
-      const session = await this.auth.refresh(stored);
-      await this.accept(session);
-      return this.state();
-    } catch (error) {
-      if (error instanceof NanfuAuthError && error.failure.kind === "http" && !error.failure.retryable) {
-        this.clear();
-        await this.options.credentials?.clear();
+  restore(): Promise<NanfuAccountState> {
+    if (this.hasSession()) return Promise.resolve(this.state());
+    if (this.restoreInFlight) return this.restoreInFlight;
+    const revision = this.generation;
+    const pending = (async () => {
+      await this.credentialWrites;
+      const stored = await this.options.credentials?.load() ?? null;
+      this.assertCurrent(revision);
+      if (!stored) return this.state();
+      try {
+        const session = await this.auth.refresh(stored);
+        await this.accept(session, revision);
         return this.state();
+      } catch (error) {
+        this.assertCurrent(revision);
+        if (error instanceof NanfuAuthError && error.failure.kind === "http" && !error.failure.retryable) {
+          this.clear();
+          await this.persist(() => this.options.credentials?.clear());
+          return this.state();
+        }
+        throw error;
       }
-      throw error;
-    }
+    })().finally(() => {
+      if (this.restoreInFlight === pending) this.restoreInFlight = undefined;
+    });
+    this.restoreInFlight = pending;
+    return pending;
   }
 
   async signOut(): Promise<void> {
     const accessToken = this.accessToken();
     this.clear();
+    await this.persist(() => this.options.credentials?.clear());
     if (accessToken) {
       try {
         await this.auth.signOut(accessToken);
@@ -361,7 +389,6 @@ export class NanfuAccountRuntime {
         // Local sign-out must not depend on the service being reachable.
       }
     }
-    await this.options.credentials?.clear();
   }
 
   async accessTokenOrRefresh(): Promise<string | undefined> {
@@ -373,10 +400,20 @@ export class NanfuAccountRuntime {
     const refreshToken = this.refreshTokenValue;
     const generation = this.generation;
     const pending = (async () => {
-      const session = await this.auth.refresh(refreshToken);
-      if (generation !== this.generation) return undefined;
-      await this.accept(session);
-      return this.accessToken();
+      try {
+        const session = await this.auth.refresh(refreshToken);
+        if (generation !== this.generation) return undefined;
+        if (session.user.id !== this.userIdValue) throw new NanfuAuthError("账号会话不匹配，请重新登录", { kind: "http", status: 401, retryable: false });
+        await this.accept(session, generation);
+        return this.accessToken();
+      } catch (error) {
+        if (generation !== this.generation) return undefined;
+        if (error instanceof NanfuAuthError && error.failure.kind === "http" && !error.failure.retryable) {
+          this.clear();
+          await this.persist(() => this.options.credentials?.clear());
+        }
+        throw error;
+      }
     })().finally(() => {
       if (this.refreshInFlight === pending) this.refreshInFlight = undefined;
     });
@@ -395,14 +432,17 @@ export class NanfuAccountRuntime {
     if (!isValidNanfuPassword(nextPassword)) {
       throw new Error(`The new password must be at least ${NANFU_MIN_PASSWORD_LENGTH} characters`);
     }
+    const revision = this.generation;
     const session = await this.auth.signIn(email, currentPassword);
-    await this.accept(session);
+    await this.accept(session, revision);
     await this.auth.updatePassword(session.accessToken, nextPassword);
+    this.assertCurrent(revision);
   }
 
   clear(): void {
     this.generation++;
     this.refreshInFlight = undefined;
+    this.restoreInFlight = undefined;
     this.accessTokenValue = undefined;
     this.refreshTokenValue = undefined;
     this.expiresAtValue = undefined;
@@ -415,12 +455,23 @@ export class NanfuAccountRuntime {
     return this.accessTokenValue;
   }
 
-  private async accept(session: NanfuSession): Promise<void> {
+  private persist(operation: () => Promise<void> | undefined): Promise<void> {
+    const pending = this.credentialWrites.then(operation);
+    this.credentialWrites = pending.catch(() => {});
+    return pending;
+  }
+
+  private async accept(session: NanfuSession, revision: number): Promise<void> {
+    this.assertCurrent(revision);
+    await this.persist(() => {
+      this.assertCurrent(revision);
+      return this.options.credentials?.save(session.refreshToken);
+    });
+    this.assertCurrent(revision);
     this.accessTokenValue = session.accessToken;
     this.refreshTokenValue = session.refreshToken;
     this.expiresAtValue = session.expiresAt;
     this.userIdValue = session.user.id;
     this.emailValue = session.user.email;
-    await this.options.credentials?.save(session.refreshToken);
   }
 }

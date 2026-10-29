@@ -56,6 +56,7 @@ import {
   type AppConfig,
 } from "./app-config.ts";
 import { CloudAuthRuntime } from "./cloud-auth.ts";
+import { createNanfuRuntime } from "./nanfu-service.ts";
 import { CloudConnectionRuntime } from "./cloud-connection.ts";
 import {
   CloudBrowserCoordinator,
@@ -2624,6 +2625,14 @@ async function main() {
       : "compiled sidecar opened, restored, captured, and closed a fresh and repeated cached Cloud profile");
     return;
   }
+  const nanfu = createNanfuRuntime({
+    file: join(paths.root, "nanfu-service.json"),
+    credentials: desktopCredentials && process.platform === "win32" ? {
+      load: () => desktopCredentials.loadNanfuRefreshToken(),
+      save: (token) => desktopCredentials.saveNanfuRefreshToken(token),
+      clear: () => desktopCredentials.clearNanfuRefreshToken(),
+    } : undefined,
+  });
   const appConfig = new AppConfigStore(paths.config);
   let savedMode = appConfig.read();
   const firstRunMode = savedMode.mode === "unconfigured" ? desktopFirstRunMode(desktop) : null;
@@ -2786,6 +2795,7 @@ async function main() {
           lifecycleAdmission,
           appConfig,
           translation: translationService,
+          nanfu,
           paths,
           defaultCloudUrl,
           cloudAuth,
@@ -2881,6 +2891,7 @@ async function main() {
           lifecycleAdmission,
           appConfig,
           translation: translationService,
+          nanfu,
           paths,
           defaultCloudUrl,
           cloudAuth,
@@ -2940,6 +2951,7 @@ async function main() {
         lifecycleAdmission,
         appConfig,
         translation: translationService,
+        nanfu,
         paths,
         defaultCloudUrl,
         cloudAuth,
@@ -2978,6 +2990,7 @@ async function main() {
         lifecycleAdmission,
         appConfig,
         translation: translationService,
+        nanfu,
         paths,
         defaultCloudUrl,
         cloudAuth,

@@ -191,7 +191,29 @@ export class NanfuSyncError extends Error {
   }
 }
 
+export interface NanfuOrganization {
+  orgId: string;
+  name: string;
+  identity: string;
+  roleName: string | null;
+  permissions: string[];
+  quota: number;
+  used: number;
+  status: string;
+  locked: boolean;
+}
+
+export interface NanfuVisibleEnvironment {
+  id: string;
+  ownerUserId: string;
+  orgId: string;
+  groupId: string | null;
+  version: number;
+  updatedAt: string;
+}
+
 export class NanfuSyncClient {
+  private readonly visibleRequests = new Set<AbortController>();
   private readonly baseUrl: string;
   private readonly table: string;
   private readonly fetchFn: NanfuSyncFetch;
@@ -202,6 +224,74 @@ export class NanfuSyncClient {
     this.table = options.table ?? NANFU_SYNC_TABLE;
     this.fetchFn = options.fetchFn ?? ((url, init) => fetch(url, init));
     this.requestTimeoutMs = Math.max(1, options.requestTimeoutMs ?? 30_000);
+  }
+
+  cancelVisibleRequests(): void {
+    for (const controller of this.visibleRequests) controller.abort();
+    this.visibleRequests.clear();
+  }
+
+  async organization(signal?: AbortSignal): Promise<NanfuOrganization | null> {
+    const rows = await this.visibleRequest("/rpc/nanfu_org_me", { method: "POST", body: "{}", signal });
+    if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid organization response", 502);
+    const row = rows[0];
+    if (!row) return null;
+    if (typeof row.org_id !== "string" || typeof row.identity !== "string" || typeof row.status !== "string" || typeof row.locked !== "boolean") {
+      throw new NanfuSyncError("Invalid organization response", 502);
+    }
+    const query = new URLSearchParams({ select: "id,name", id: `eq.${row.org_id}` });
+    const organizations = row.locked || row.status !== "active"
+      ? [] : await this.visibleRequest(`/nanfu_orgs?${query}`, { method: "GET", signal });
+    if (!Array.isArray(organizations)) throw new NanfuSyncError("Invalid organization response", 502);
+    return {
+      orgId: row.org_id,
+      name: typeof organizations[0]?.name === "string" ? organizations[0].name : row.org_id,
+      identity: row.identity,
+      roleName: typeof row.role_name === "string" ? row.role_name : null,
+      permissions: Array.isArray(row.permissions) ? row.permissions.filter((v: unknown) => typeof v === "string") : [],
+      quota: Number(row.env_quota),
+      used: Number(row.used),
+      status: row.status,
+      locked: row.locked,
+    };
+  }
+
+  async visibleEnvironments(orgId: string, signal?: AbortSignal): Promise<NanfuVisibleEnvironment[]> {
+    const result: NanfuVisibleEnvironment[] = [];
+    for (let offset = 0; ; offset += 500) {
+      const query = new URLSearchParams({
+        select: "environment_id,owner_user_id,org_id,group_id,version,updated_at",
+        org_id: `eq.${orgId}`, deleted: "eq.false", order: "environment_id.asc,owner_user_id.asc",
+        limit: "500", offset: String(offset),
+      });
+      const rows = await this.visibleRequest(`/${this.table}?${query}`, { method: "GET", signal });
+      if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid environment response", 502);
+      for (const row of rows) {
+        if (typeof row.environment_id !== "string" || typeof row.owner_user_id !== "string" || row.org_id !== orgId) {
+          throw new NanfuSyncError("Invalid environment response", 502);
+        }
+        result.push({
+          id: row.environment_id, ownerUserId: row.owner_user_id, orgId: row.org_id,
+          groupId: typeof row.group_id === "string" ? row.group_id : null,
+          version: Number(row.version), updatedAt: String(row.updated_at ?? ""),
+        });
+      }
+      if (rows.length < 500) return result;
+    }
+  }
+
+  private async visibleRequest(path: string, init: RequestInit): Promise<any> {
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    if (init.signal?.aborted) controller.abort();
+    init.signal?.addEventListener("abort", cancel, { once: true });
+    this.visibleRequests.add(controller);
+    try {
+      return await this.request(path, { ...init, signal: controller.signal });
+    } finally {
+      init.signal?.removeEventListener("abort", cancel);
+      this.visibleRequests.delete(controller);
+    }
   }
 
   async list(userId: string): Promise<NanfuRemoteRecord[]> {
@@ -264,9 +354,13 @@ export class NanfuSyncClient {
     headers.set("authorization", `Bearer ${token}`);
     headers.set("content-type", "application/json");
     const controller = new AbortController();
+    const cancel = () => controller.abort();
+    if (init.signal?.aborted) controller.abort();
+    init.signal?.addEventListener("abort", cancel, { once: true });
     const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     if (typeof timer === "object" && "unref" in timer) timer.unref();
     try {
+      if (controller.signal.aborted) throw new NanfuSyncError("Request cancelled", 0);
       let response: Response;
       try {
         response = await this.fetchFn(`${this.baseUrl}/rest/v1${path}`, { ...init, headers, signal: controller.signal });
@@ -289,6 +383,7 @@ export class NanfuSyncClient {
       }
     } finally {
       clearTimeout(timer);
+      init.signal?.removeEventListener("abort", cancel);
     }
   }
 }

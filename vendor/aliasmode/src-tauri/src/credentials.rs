@@ -10,6 +10,7 @@ pub enum CredentialKey {
     QueueEncryptionKey,
     RemoteMcpConnector,
     TranslationEngineKey,
+    NanfuRefreshToken,
 }
 
 impl CredentialKey {
@@ -31,11 +32,30 @@ impl CredentialKey {
             Self::QueueEncryptionKey => "AliasMode/queue-encryption-key",
             Self::RemoteMcpConnector => "AliasMode/remote-mcp-connector",
             Self::TranslationEngineKey => "AliasMode/translation-engine-key",
+            Self::NanfuRefreshToken => "Nanfu/refresh-token",
         }
     }
 }
 
 pub struct CredentialOrigin(pub String);
+
+pub(crate) fn load_nanfu_refresh_token() -> Result<Option<String>, String> {
+    read_secret(CredentialKey::NanfuRefreshToken)
+}
+
+pub(crate) fn store_nanfu_refresh_token(mut secret: String) -> Result<(), String> {
+    let result = if secret.len() > MAX_SECRET_BYTES {
+        Err("credential secret is too large".to_owned())
+    } else {
+        write_secret(CredentialKey::NanfuRefreshToken, secret.as_bytes())
+    };
+    secret.zeroize();
+    result
+}
+
+pub(crate) fn delete_nanfu_refresh_token() -> Result<(), String> {
+    delete_secret(CredentialKey::NanfuRefreshToken)
+}
 
 pub(crate) fn store_refresh_token(mut secret: String) -> Result<(), String> {
     let result = if secret.len() > MAX_SECRET_BYTES {
@@ -209,6 +229,9 @@ pub(crate) fn set_secret_dir(data_dir: &std::path::Path) {
 
 #[cfg(not(windows))]
 fn secret_path(key: CredentialKey) -> Result<std::path::PathBuf, String> {
+    if matches!(key, CredentialKey::NanfuRefreshToken) {
+        return Err("Nanfu sessions require a native credential store".to_owned());
+    }
     SECRET_DIR
         .get()
         .map(|directory| directory.join(key.target().trim_start_matches("AliasMode/")))
@@ -297,9 +320,18 @@ mod tests {
             "AliasMode/remote-mcp-connector"
         );
         assert!(CredentialKey::parse("access_token").is_err());
+        assert!(CredentialKey::parse("nanfu_refresh_token").is_err());
+        assert_eq!(CredentialKey::NanfuRefreshToken.target(), "Nanfu/refresh-token");
         assert!(CredentialKey::parse("AliasMode/arbitrary").is_err());
         assert!(CredentialKey::parse("*").is_err());
         assert!(delete_cloud_credential("remote_mcp_connector").is_err());
+        assert!(delete_cloud_credential("nanfu_refresh_token").is_err());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn nanfu_never_falls_back_to_a_plaintext_file() {
+        assert!(super::secret_path(CredentialKey::NanfuRefreshToken).is_err());
     }
 
     #[cfg(not(windows))]

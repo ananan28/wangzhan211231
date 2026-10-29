@@ -12,6 +12,29 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { normalizeSecureServiceUrl } from "./app-config.ts";
+import { NanfuAccountRuntime, NanfuAuthClient, type NanfuCredentialStore, type NanfuFetch } from "./nanfu-account.ts";
+import { NanfuSyncClient } from "./nanfu-sync.ts";
+
+export interface NanfuRuntime {
+  account: NanfuAccountRuntime;
+  client: NanfuSyncClient;
+  persistent: boolean;
+}
+
+export function createNanfuRuntime(options: NanfuServiceLoadOptions & {
+  file: string;
+  credentials?: NanfuCredentialStore;
+  fetchFn?: NanfuFetch;
+}): NanfuRuntime {
+  const config = loadNanfuService(options);
+  const auth = new NanfuAuthClient({ baseUrl: config.url, anonKey: config.publishableKey, fetchFn: options.fetchFn });
+  const account = new NanfuAccountRuntime(auth, { credentials: options.credentials });
+  const client = new NanfuSyncClient({
+    baseUrl: config.url, anonKey: config.publishableKey, fetchFn: options.fetchFn,
+    accessToken: () => account.accessTokenOrRefresh(),
+  });
+  return { account, client, persistent: !!options.credentials };
+}
 
 export const NANFU_DEFAULT_SERVICE = Object.freeze({
   url: "https://zojqxzaqumrtykcufqzg.supabase.co",

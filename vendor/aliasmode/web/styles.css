@@ -1,3 +1,12 @@
+.nanfu-account-page[hidden] { display: none; }
+.nanfu-auth-form, .nanfu-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.nanfu-auth-form .fld, .nanfu-filters .fld { flex: 1 1 220px; min-width: 0; }
+.nanfu-account-page .settingspage { overflow: auto; }
+.nanfu-account-page p { overflow-wrap: anywhere; margin: 12px 0; }
+.nanfu-table-wrap { overflow: auto; max-width: 100%; }
+.nanfu-table { width: 100%; border-collapse: collapse; text-align: left; }
+.nanfu-table th, .nanfu-table td { padding: 10px; border-bottom: 1px solid currentColor; overflow-wrap: anywhere; }
+
 /* ============================================================================
    Typeface
 

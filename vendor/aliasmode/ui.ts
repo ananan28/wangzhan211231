@@ -17,6 +17,9 @@ import type { AppConfigStore } from "./app-config.ts";
 import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from "./fingerprint-audit.ts";
 import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
+import type { NanfuRuntime } from "./nanfu-service.ts";
+import { NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword } from "./nanfu-account.ts";
+import { NanfuSyncError } from "./nanfu-sync.ts";
 import type { CloudConnectionRuntime } from "./cloud-connection.ts";
 import type {
   CloudBrowserCloseResult,
@@ -576,6 +579,7 @@ export interface UiRuntimeOptions {
   paths?: StatePaths;
   defaultCloudUrl?: string;
   cloudAuth?: CloudAuthRuntime;
+  nanfu?: NanfuRuntime;
   cloudConnection?: CloudConnectionRuntime;
   pendingSync?: PendingSyncRuntime;
   cloudBrowser?: CloudBrowserLifecycle;
@@ -603,6 +607,79 @@ export async function handleUiRequest(
 ): Promise<Response | null> {
   const { pathname } = new URL(req.url);
   if (!pathname.startsWith("/ui/api/")) return null;
+
+  if (pathname.startsWith("/ui/api/nanfu/")) {
+    const nanfu = options.nanfu;
+    if (!nanfu) return noStoreJson({ ok: false, error: "南孚账号服务未配置" }, 503);
+    const origin = req.headers.get("origin");
+    if (origin && origin !== new URL(req.url).origin) return noStoreJson({ ok: false, error: "禁止跨站访问账号" }, 403);
+    if (req.method === "POST") {
+      const rejected = rejectUntrustedJsonMutation(req);
+      if (rejected) {
+        rejected.headers.set("Cache-Control", "no-store");
+        return rejected;
+      }
+    }
+    const { account, client, persistent } = nanfu;
+    const action = pathname.slice("/ui/api/nanfu/".length);
+    try {
+      if (action === "state" && req.method === "GET") {
+        return noStoreJson({ ok: true, state: account.state(), persistent });
+      }
+      if (req.method === "POST" && ["signup", "signin", "restore", "signout"].includes(action)) {
+        client.cancelVisibleRequests();
+        if (action === "signout") {
+          await account.signOut();
+          return noStoreJson({ ok: true, state: account.state(), persistent });
+        }
+        if (action === "restore") {
+          const state = await account.restore();
+          return noStoreJson({ ok: true, state, persistent });
+        }
+        const body = await req.json().catch(() => null) as { email?: unknown; password?: unknown } | null;
+        if (!body || typeof body.email !== "string" || !isValidNanfuEmail(body.email) || typeof body.password !== "string" || !isValidNanfuPassword(body.password)) {
+          return noStoreJson({ ok: false, error: "请输入有效邮箱及至少6位密码" }, 400);
+        }
+        if (action === "signup") {
+          const revision = account.revision();
+          const result = await account.signUp(body.email, body.password);
+          account.assertCurrent(revision);
+          return noStoreJson({ ok: true, email: result.email, verificationRequired: result.verificationRequired });
+        }
+        const state = await account.signIn(body.email, body.password);
+        return noStoreJson({ ok: true, state, persistent });
+      }
+      if (req.method === "GET" && ["organization", "environments"].includes(action)) {
+        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
+        const revision = account.revision();
+        const organization = await client.organization(req.signal);
+        account.assertCurrent(revision);
+        if (action === "organization") return noStoreJson({ ok: true, userId: account.state().userId, organization });
+        const environments = organization && organization.status === "active" && !organization.locked
+          ? await client.visibleEnvironments(organization.orgId, req.signal) : [];
+        account.assertCurrent(revision);
+        return noStoreJson({ ok: true, userId: account.state().userId, organization, environments });
+      }
+      return noStoreJson({ ok: false, error: "未知南孚接口" }, 404);
+    } catch (error) {
+      if (error instanceof NanfuAccountChangedError) return noStoreJson({ ok: false, error: error.message }, 409);
+      if (error instanceof NanfuEmailUnverifiedError) return noStoreJson({ ok: false, error: "请先通过邮件确认邮箱，再登录", code: "email_not_confirmed" }, 401);
+      if (error instanceof NanfuAuthError) {
+        const failure = error.failure;
+        const retryable = failure.retryable;
+        const code = failure.kind === "http" ? failure.code : undefined;
+        const message = code === "email_not_confirmed" ? "请先通过邮件确认邮箱，再登录"
+          : retryable ? "南孚账号服务暂时不可用，凭据已保留，请重试"
+          : failure.kind === "http" && failure.status === 409 ? "请先退出当前南孚账号"
+          : "邮箱、密码或会话无效，请重新登录";
+        return noStoreJson({ ok: false, error: message, retryable, code, state: account.state() }, retryable ? 503 : 401);
+      }
+      if (error instanceof NanfuSyncError) {
+        return noStoreJson({ ok: false, error: error.unauthorized ? "会话或组织权限已失效，请重新登录或联系管理员" : "组织列表暂时不可用，请重试", retryable: !error.unauthorized }, error.unauthorized ? 403 : 502);
+      }
+      return noStoreJson({ ok: false, error: "南孚账号操作失败，请重试；本机环境不受影响", retryable: true }, 503);
+    }
+  }
 
   if (pathname === "/ui/api/scripts" || pathname.startsWith("/ui/api/scripts/")) {
     const scripts = options.scripts;

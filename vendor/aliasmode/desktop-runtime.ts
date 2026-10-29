@@ -23,10 +23,12 @@ interface DesktopCredentialResult {
   nonce: string;
   request: number;
   ok: boolean;
+  secret?: string | null;
 }
 
 interface PendingCredentialRequest {
-  resolve: () => void;
+  resolve: (secret: string | null) => void;
+  read: boolean;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
   failure: string;
@@ -112,8 +114,20 @@ export class DesktopCredentialBridge {
     if (!NONCE_RE.test(nonce)) throw new Error("desktop credential nonce is invalid");
   }
 
-  persistRefreshToken(secret: string): Promise<void> {
-    return this.send("credential-set", "refresh_token", secret);
+  async persistRefreshToken(secret: string): Promise<void> {
+    await this.send("credential-set", "refresh_token", secret);
+  }
+
+  loadNanfuRefreshToken(): Promise<string | null> {
+    return this.send("credential-get", "nanfu_refresh_token");
+  }
+
+  async saveNanfuRefreshToken(secret: string): Promise<void> {
+    await this.send("credential-set", "nanfu_refresh_token", secret);
+  }
+
+  async clearNanfuRefreshToken(): Promise<void> {
+    await this.send("credential-delete", "nanfu_refresh_token");
   }
 
   async clearCloudSessionCredentials(): Promise<void> {
@@ -128,20 +142,23 @@ export class DesktopCredentialBridge {
     }
   }
 
-  private send(event: "credential-set" | "credential-delete", key: string, secret?: string): Promise<void> {
+  private send(event: "credential-set" | "credential-delete" | "credential-get", key: string, secret?: string): Promise<string | null> {
     const request = ++this.request;
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<string | null>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(request);
         reject(new Error("desktop credential operation timed out"));
       }, this.timeoutMs);
       this.pending.set(request, {
         resolve,
+        read: event === "credential-get",
         reject,
         timer,
         failure: event === "credential-set"
           ? "Windows Credential Manager rejected the rotated refresh token"
-          : "Windows Credential Manager could not clear Cloud credentials",
+          : event === "credential-get"
+            ? "Windows Credential Manager could not read the saved session"
+            : "Windows Credential Manager could not clear Cloud credentials",
       });
       try {
         this.write(`${JSON.stringify({
@@ -178,8 +195,9 @@ export class DesktopCredentialBridge {
     if (!pending) return false;
     this.pending.delete(result.request);
     clearTimeout(pending.timer);
-    if (result.ok) pending.resolve();
-    else pending.reject(new Error(pending.failure));
+    if (result.ok && (!pending.read || result.secret === null || typeof result.secret === "string")) {
+      pending.resolve(pending.read ? result.secret ?? null : null);
+    } else pending.reject(new Error(pending.failure));
     return true;
   }
 }
