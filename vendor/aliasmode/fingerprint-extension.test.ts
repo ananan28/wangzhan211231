@@ -152,7 +152,9 @@ test("a revision change, a changed config or a stale file rewrites the directory
   });
 });
 
-test("the layer is on by default and stays inside the Chromium runtime", () => {
-  expect(FINGERPRINT_EXTENSION).toBe(true);
+test("the layer stays off until it is asked for, and always has a revision", () => {
+  // Off by default: the engine already answers most of these surfaces, and a
+  // second unverified source can only make a profile inconsistent.
+  expect(FINGERPRINT_EXTENSION).toBe(process.env.NANFU_FINGERPRINT_JS === "1");
   expect(FINGERPRINT_EXTENSION_REVISION).toBeGreaterThan(0);
 });
