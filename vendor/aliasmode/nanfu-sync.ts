@@ -229,7 +229,55 @@ export interface NanfuOrgOverview {
 
 export interface NanfuEnvTransfer {
   id: string; environmentId: string; fromUserId: string; toUserId: string; status: string;
-  forced: boolean; note: string; createdAt: string;
+  forced: boolean; note: string; createdAt: string; resolvedAt: string | null;
+}
+
+export const NANFU_TRANSFER_MAX_BATCH = 200;
+export const NANFU_TRANSFER_NOTE_MAX = 500;
+export const NANFU_ENVIRONMENT_ID_MAX = 128;
+
+const NANFU_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isNanfuUuid(value: string): boolean {
+  return NANFU_UUID_RE.test(value);
+}
+
+/** Same bounds the database enforces; reject before spending a round trip. */
+export function normalizeNanfuEnvironmentId(value: unknown): string {
+  const id = typeof value === "string" ? value.trim() : "";
+  if (!id || Array.from(id).length > NANFU_ENVIRONMENT_ID_MAX || /[\x00-\x1f\x7f]/.test(id)) {
+    throw new NanfuSyncError("环境编号无效：须为1至128个可打印字符", 400);
+  }
+  return id;
+}
+
+export function normalizeNanfuRecipient(value: unknown): string {
+  const id = typeof value === "string" ? value.trim() : "";
+  if (!isNanfuUuid(id)) throw new NanfuSyncError("接收成员编号无效", 400);
+  return id;
+}
+
+export function normalizeNanfuTransferNote(value: unknown, optional = true): string {
+  if (value === undefined || value === null || value === "") {
+    if (optional) return "";
+    throw new NanfuSyncError("请填写转移备注", 400);
+  }
+  if (typeof value !== "string") throw new NanfuSyncError("备注须为文本", 400);
+  const note = value.trim();
+  if (Array.from(note).length > NANFU_TRANSFER_NOTE_MAX) {
+    throw new NanfuSyncError(`备注最多${NANFU_TRANSFER_NOTE_MAX}个字符`, 400);
+  }
+  return note;
+}
+
+export function normalizeNanfuEnvironmentIds(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new NanfuSyncError("请选择要转移的环境", 400);
+  const ids = [...new Set(value.map(normalizeNanfuEnvironmentId))];
+  if (ids.length === 0) throw new NanfuSyncError("请选择要转移的环境", 400);
+  if (ids.length > NANFU_TRANSFER_MAX_BATCH) {
+    throw new NanfuSyncError(`一次最多转移${NANFU_TRANSFER_MAX_BATCH}个环境`, 400);
+  }
+  return ids;
 }
 
 export interface NanfuMemberInput {
@@ -321,9 +369,10 @@ export class NanfuSyncClient {
   }
 
   async transfers(orgId: string, signal?: AbortSignal): Promise<NanfuEnvTransfer[]> {
-    const rows = await this.readOrgTable("nanfu_env_transfers", "id,environment_id,from_user_id,to_user_id,status,forced,note,created_at", orgId, signal);
+    const rows = await this.readOrgTable("nanfu_env_transfers", "id,environment_id,from_user_id,to_user_id,status,forced,note,created_at,resolved_at", orgId, signal);
     return rows.map(row => ({ id: String(row.id), environmentId: String(row.environment_id), fromUserId: String(row.from_user_id),
-      toUserId: String(row.to_user_id), status: String(row.status), forced: row.forced === true, note: String(row.note ?? ""), createdAt: String(row.created_at) }));
+      toUserId: String(row.to_user_id), status: String(row.status), forced: row.forced === true, note: String(row.note ?? ""),
+      createdAt: String(row.created_at), resolvedAt: typeof row.resolved_at === "string" ? row.resolved_at : null }));
   }
 
   createRole(name: string, permissions: string[], signal?: AbortSignal): Promise<string> {
@@ -361,18 +410,35 @@ export class NanfuSyncClient {
     return this.rpcValue("nanfu_org_remove_member", { p_user: userId, p_reclaim: reclaim }, "number", signal);
   }
 
-  requestTransfer(environmentId: string, toUserId: string, signal?: AbortSignal): Promise<string> {
-    return this.rpcValue("nanfu_env_transfer_request", { p_environment_id: environmentId, p_to: toUserId }, "string", signal);
+  async requestTransfer(environmentId: string, toUserId: string, signal?: AbortSignal): Promise<string> {
+    return this.rpcValue("nanfu_env_transfer_request", {
+      p_environment_id: normalizeNanfuEnvironmentId(environmentId),
+      p_to: normalizeNanfuRecipient(toUserId),
+    }, "string", signal);
   }
 
   async respondTransfer(id: string, accept: boolean, signal?: AbortSignal): Promise<"accepted" | "rejected"> {
+    if (!isNanfuUuid(id)) throw new NanfuSyncError("转移记录编号无效", 400);
+    if (typeof accept !== "boolean") throw new NanfuSyncError("请选择接受或拒绝", 400);
     const status = await this.rpcValue("nanfu_env_transfer_respond", { p_id: id, p_accept: accept }, "string", signal);
     if (status !== "accepted" && status !== "rejected") throw new NanfuSyncError("Invalid transfer response", 502);
     return status;
   }
 
-  forceTransfer(environmentId: string, toUserId: string, note: string, signal?: AbortSignal): Promise<number> {
-    return this.rpcValue("nanfu_env_transfer_force", { p_environment_id: environmentId, p_to: toUserId, p_note: note }, "number", signal);
+  async forceTransfer(environmentId: string, toUserId: string, note: string, signal?: AbortSignal): Promise<number> {
+    return this.rpcValue("nanfu_env_transfer_force", {
+      p_environment_id: normalizeNanfuEnvironmentId(environmentId),
+      p_to: normalizeNanfuRecipient(toUserId),
+      p_note: normalizeNanfuTransferNote(note),
+    }, "number", signal);
+  }
+
+  async batchTransfer(environmentIds: readonly string[], toUserId: string, note = "", signal?: AbortSignal): Promise<number> {
+    return this.rpcValue("nanfu_env_transfer_batch", {
+      p_environment_ids: normalizeNanfuEnvironmentIds(environmentIds),
+      p_to: normalizeNanfuRecipient(toUserId),
+      p_note: normalizeNanfuTransferNote(note),
+    }, "number", signal);
   }
 
   private async rpcValue<T extends "string" | "number">(rpc: string, body: object, kind: T, signal?: AbortSignal): Promise<T extends "string" ? string : number> {

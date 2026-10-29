@@ -87,6 +87,99 @@ export function fetchNanfuTransfers(signal?: AbortSignal): Promise<{ userId: str
   return nanfuJson("transfers", { signal });
 }
 
+/** One row of the transfer page: a transfer plus the two member emails. */
+export interface NanfuTransferRow extends NanfuEnvTransfer {
+  fromEmail: string;
+  toEmail: string;
+}
+
+export interface NanfuTransferMember {
+  userId: string;
+  email: string;
+  identity: string;
+  status: string;
+  locked: boolean;
+}
+
+export interface NanfuTransferInbox {
+  userId: string;
+  organization: NanfuOrganization;
+  members: NanfuTransferMember[];
+  visibleEnvironments: NanfuVisibleEnvironment[];
+  inbox: NanfuTransferRow[];
+  sent: NanfuTransferRow[];
+}
+
+export interface NanfuEnvExportResult {
+  fileName: string;
+  package: unknown;
+}
+
+export interface NanfuEnvImportResult {
+  profileId: string;
+  name: string;
+  renamed: boolean;
+  environmentName: string;
+}
+
+async function nanfuTransferJson(path: string, init?: RequestInit): Promise<any> {
+  const response = await fetch(`/ui/api/nanfu-transfer/${path}`, { ...init, cache: "no-store" });
+  const body = await apiJson(response, path);
+  if (!response.ok || body.ok !== true) {
+    throw new NanfuApiError(body.error || "转移服务暂时不可用，请重试", response.status, body.retryable === true);
+  }
+  return body;
+}
+
+function nanfuTransferPost(path: string, input: unknown, signal?: AbortSignal): Promise<any> {
+  return nanfuTransferJson(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+export function fetchNanfuTransferInbox(signal?: AbortSignal): Promise<NanfuTransferInbox> {
+  return nanfuTransferJson("inbox", { signal });
+}
+
+export function nanfuRequestEnvironmentTransfer(
+  input: { environmentId: string; toUserId: string },
+  signal?: AbortSignal,
+): Promise<{ transferId: string }> {
+  return nanfuTransferPost("request", input, signal);
+}
+
+export function nanfuBatchEnvironmentTransfer(
+  input: { environmentIds: string[]; toUserId: string; note?: string },
+  signal?: AbortSignal,
+): Promise<{ moved: number }> {
+  return nanfuTransferPost("batch", input, signal);
+}
+
+export function nanfuForceEnvironmentTransfer(
+  input: { environmentId: string; toUserId: string; note?: string },
+  signal?: AbortSignal,
+): Promise<{ moved: number }> {
+  return nanfuTransferPost("force", input, signal);
+}
+
+export function nanfuRespondEnvironmentTransfer(
+  input: { transferId: string; accept: boolean },
+  signal?: AbortSignal,
+): Promise<{ status: "accepted" | "rejected" }> {
+  return nanfuTransferPost("respond", input, signal);
+}
+
+export function nanfuExportEnvironment(environmentId: string, signal?: AbortSignal): Promise<NanfuEnvExportResult> {
+  return nanfuTransferPost("export", { environmentId }, signal);
+}
+
+export function nanfuImportEnvironmentText(text: string, signal?: AbortSignal): Promise<NanfuEnvImportResult> {
+  return nanfuTransferPost("import", { package: text }, signal);
+}
+
 import {
   CLOUD_DIAGNOSTIC_TYPES,
   type CloudDiagnosticEvent,
