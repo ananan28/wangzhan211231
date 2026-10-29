@@ -1203,16 +1203,16 @@ set local role authenticated;
 do $$
 declare failed text;
 begin
-  if public.nanfu_login_set_name('  ZhangSan ') <> 'zhangsan' then
+  if public.nanfu_login_set_name('  SelfName ') <> 'selfname' then
     raise exception 'a chosen name was not stored in lower case';
   end if;
-  if public.nanfu_login_name_me() <> 'zhangsan' then
+  if public.nanfu_login_name_me() <> 'selfname' then
     raise exception 'the chosen name did not read back';
   end if;
-  if public.nanfu_login_resolve('zhangsan') <> 'self@example.com' then
+  if public.nanfu_login_resolve('selfname') <> 'self@example.com' then
     raise exception 'the chosen name did not resolve to its address';
   end if;
-  if public.nanfu_login_resolve('ZHANGSAN') <> 'self@example.com' then
+  if public.nanfu_login_resolve('SELFNAME') <> 'self@example.com' then
     raise exception 'resolving is case sensitive';
   end if;
   if public.nanfu_login_resolve('nobody-at-all') is not null then
@@ -1243,7 +1243,7 @@ begin
   if public.nanfu_login_set_name('lisi') <> 'lisi' then
     raise exception 'renaming did not return the new name';
   end if;
-  if public.nanfu_login_resolve('zhangsan') is not null then
+  if public.nanfu_login_resolve('selfname') is not null then
     raise exception 'the previous name still resolves';
   end if;
   if public.nanfu_login_resolve('lisi') <> 'self@example.com' then
