@@ -1,0 +1,51 @@
+# EXAMPLE STUB - NOT A REAL PATCH - NOT LISTED IN series
+#
+# This file is an illustration of the format for a patch that EDITS an existing
+# Chromium file, which is what every behavioural patch does. It is deliberately
+# named .patch.stub so no tool can pick it up, and kernel/verify-patches.sh
+# ignores it because series never names it.
+#
+# WHY IT IS NOT A REAL PATCH
+# The hunks below do not come from a real checkout. The context lines are
+# invented, the line numbers are made up, and the blob hashes are zeros, so
+# `git apply --check` would reject this on 155.0.8059.85 and on every other tag.
+# We do not have a Chromium checkout on the authoring machine, and a diff
+# written without one cannot be honest.
+#
+# WHAT TO DO INSTEAD
+# Follow docs/kernel/patch-pipeline.md, "Write a patch on a checkout". Take the
+# real file at the pinned tag, edit it there, and generate the diff with
+#   diff -u --label a/PATH --label b/PATH orig edited
+# which produces correct hunk headers and correct context by construction.
+#
+# The three parts below - subject, description, headers - are exactly what a
+# real patch must carry. Only the diff body is fake.
+
+Subject: [PATCH] blink: example of a context patch against an existing file
+
+Illustrates the shape of a patch that changes a value Chromium already
+computes, in this example the reported hardware concurrency. The real patch
+would name the surface (hardware_concurrency), say what a page sees
+afterwards, and say what stays as in stock Chromium.
+
+Nanfu-Patch-Applies-To: 155.0.8059.85
+Nanfu-Patch-Promise: third_party/blink/renderer/core/frame/navigator_base.cc::kNanfuExample
+Nanfu-Patch-Repo: .
+
+# ---------------------------------------------------------------------------
+# EVERYTHING BELOW THIS LINE IS INVENTED AND WILL NOT APPLY. DO NOT SHIP IT.
+# ---------------------------------------------------------------------------
+diff --git a/third_party/blink/renderer/core/frame/navigator_base.cc b/third_party/blink/renderer/core/frame/navigator_base.cc
+index 1111111111..2222222222 100644
+--- a/third_party/blink/renderer/core/frame/navigator_base.cc
++++ b/third_party/blink/renderer/core/frame/navigator_base.cc
+@@ -1,7 +1,9 @@
+ // context lines here are invented, not read from the tree
+
+ unsigned NavigatorBase::hardwareConcurrency() const {
+-  return base::SysInfo::NumberOfProcessors();
++  // kNanfuExample: the real patch would read the composed profile here.
++  return profile_hardware_concurrency_or_host();
+ }
+
+ // more invented context follows

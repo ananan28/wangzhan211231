@@ -1,3 +1,14 @@
+Subject: [PATCH] webgl: let the launcher pin the vendor and renderer strings
+
+Stock Chromium reports "WebKit" and "WebKit WebGL" for GL_VENDOR and
+GL_RENDERER, and the driver strings through WEBGL_debug_renderer_info. This adds
+--fingerprint-webgl-vendor and --fingerprint-webgl-renderer, forwards both to the
+renderer, and reads them at all four query points. Without either switch the
+upstream strings are returned unchanged.
+
+Nanfu-Patch-Applies-To: 155.0.8059.85
+Nanfu-Patch-Promise: third_party/blink/common/switches.cc::"fingerprint-webgl-vendor"
+
 diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
 index b8d41ae..853d197 100644
 --- a/content/browser/renderer_host/render_process_host_impl.cc
