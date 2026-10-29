@@ -43,6 +43,7 @@ jobs:
           $expected = "cfea275e4b7f3274b701e64c0483b46cbf6cd12ead9a6cfda6ff77b2680e7a23"
           if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw "Chromium archive checksum mismatch" }
           $extract = Join-Path $env:RUNNER_TEMP "chromium-runtime"
+          New-Item -ItemType Directory -Path $extract -Force | Out-Null
           & tar.exe -xf $archive -C $extract
           if ($LASTEXITCODE -ne 0) { throw "Chromium archive extraction failed" }
           $root = Join-Path $extract "aliasmode-chromium-155.0.8059.85-windows-x64"
