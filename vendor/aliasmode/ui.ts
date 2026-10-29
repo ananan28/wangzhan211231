@@ -18,7 +18,7 @@ import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from
 import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import type { NanfuRuntime } from "./nanfu-service.ts";
-import { NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword, normalizeNanfuLogin } from "./nanfu-account.ts";
+import { NANFU_LOGIN_SUFFIX, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword, normalizeNanfuLogin } from "./nanfu-account.ts";
 import { NanfuSyncError, isNanfuUuid } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
 import { NANFU_TRANSFER_ROUTE_PREFIX, handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
@@ -678,6 +678,34 @@ export async function handleUiRequest(
       if (action === "state" && req.method === "GET") {
         return noStoreJson({ ok: true, state: account.state(), persistent });
       }
+      // Accounts an administrator created sign in with <name>@nanfu.local and
+      // keep that name; only self-registered addresses may choose their own.
+      if (action === "login-name" && req.method === "GET") {
+        const state = account.state();
+        if (!state.authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
+        const revision = account.revision();
+        const name = await client.loginName(req.signal).catch(() => null);
+        account.assertCurrent(revision);
+        return noStoreJson({ ok: true, name, managed: (state.email ?? "").endsWith(NANFU_LOGIN_SUFFIX) });
+      }
+      if (req.method === "POST" && (action === "set-login-name" || action === "clear-login-name")) {
+        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
+        const revision = account.revision();
+        if (action === "clear-login-name") {
+          await client.clearLoginName(req.signal);
+          account.assertCurrent(revision);
+          return noStoreJson({ ok: true, name: null, userId: account.state().userId });
+        }
+        const body = await req.json().catch(() => null) as { name?: unknown } | null;
+        const name = typeof body?.name === "string" ? body.name.trim().toLowerCase() : "";
+        if (!name) return noStoreJson({ ok: false, error: "请输入要使用的用户名" }, 400);
+        if (!/^[a-z0-9][a-z0-9._-]{1,62}$/.test(name)) {
+          return noStoreJson({ ok: false, error: "用户名只能使用 2 至 63 位字母、数字、点、下划线和横线" }, 400);
+        }
+        const saved = await client.setLoginName(name, req.signal);
+        account.assertCurrent(revision);
+        return noStoreJson({ ok: true, name: saved, userId: account.state().userId });
+      }
       if (req.method === "POST" && ["signup", "signin", "restore", "signout"].includes(action)) {
         client.cancelVisibleRequests();
         if (action === "signout") {
@@ -701,7 +729,15 @@ export async function handleUiRequest(
           account.assertCurrent(revision);
           return noStoreJson({ ok: true, email: result.email, verificationRequired: result.verificationRequired });
         }
-        const login = normalizeNanfuLogin(body.email);
+        const typed = body.email.trim().toLowerCase();
+        let login = normalizeNanfuLogin(typed);
+        // A name typed without "@" may be a chosen sign-in name; the resolver
+        // runs before any token exists, so a failure falls back to the
+        // administrator-created <name>@nanfu.local form.
+        if (typed && !typed.includes("@")) {
+          const resolved = await account.resolveLoginName(typed).catch(() => null);
+          if (resolved) login = resolved;
+        }
         if (!isValidNanfuEmail(login)) return noStoreJson({ ok: false, error: "请输入有效的邮箱或登录名" }, 400);
         const state = await account.signIn(login, body.password);
         // An invite code taken at sign-in is redeemed instead of claiming the

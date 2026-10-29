@@ -143,6 +143,18 @@ export class NanfuAuthClient {
     return this.session(body);
   }
 
+  /**
+   * The address behind a chosen sign-in name, so a name typed without "@" can
+   * reach the account service. Returns null when no account uses that name.
+   */
+  async resolveLoginName(name: string): Promise<string | null> {
+    const body = await this.call("/rpc/nanfu_login_resolve", {
+      method: "POST",
+      body: JSON.stringify({ p_name: name }),
+    }, "/rest/v1");
+    return typeof body === "string" && body ? body : null;
+  }
+
   async refresh(refreshToken: string): Promise<NanfuSession> {
     const body = await this.call("/token?grant_type=refresh_token", {
       method: "POST",
@@ -196,7 +208,7 @@ export class NanfuAuthClient {
     };
   }
 
-  private async call(path: string, init: RequestInit): Promise<any> {
+  private async call(path: string, init: RequestInit, prefix = "/auth/v1"): Promise<any> {
     const headers = new Headers(init.headers);
     headers.set("apikey", this.options.anonKey);
     headers.set("content-type", "application/json");
@@ -217,7 +229,7 @@ export class NanfuAuthClient {
       const request = Promise.resolve().then(async () => {
         let response: Response;
         try {
-          response = await this.fetchFn(`${this.baseUrl}/auth/v1${path}`, {
+          response = await this.fetchFn(`${this.baseUrl}${prefix}${path}`, {
             ...init,
             headers,
             signal: controller.signal,
@@ -345,6 +357,11 @@ export class NanfuAccountRuntime {
 
   resendSignUp(email: string): Promise<void> {
     return this.auth.resendSignUp(email);
+  }
+
+  /** A bare sign-in name becomes the account address before the password grant. */
+  resolveLoginName(name: string): Promise<string | null> {
+    return this.auth.resolveLoginName(name);
   }
 
   requestPasswordReset(email: string): Promise<void> {

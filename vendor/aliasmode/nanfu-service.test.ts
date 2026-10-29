@@ -90,6 +90,8 @@ function accountFixture() {
   let offline = false;
   let rejectRefresh = false;
   let canViewMembers = false;
+  let loginName: string | null = null;
+  let signedInEmail: string | null = null;
   let pauseEnvironments: (() => Promise<void>) | undefined;
   const requests: URL[] = [];
   const credentials: NanfuCredentialStore = {
@@ -97,9 +99,9 @@ function accountFixture() {
     save: async value => { token = value; },
     clear: async () => { token = null; },
   };
-  const session = (id: string) => ({
+  const session = (id: string, email = `${id}@fixture.test`) => ({
     access_token: `synthetic-access-${id}`, refresh_token: `synthetic-refresh-${id}`,
-    expires_in: 3600, user: { id, email: `${id}@fixture.test`, email_confirmed_at: "2026-10-29T00:00:00Z" },
+    expires_in: 3600, user: { id, email, email_confirmed_at: "2026-10-29T00:00:00Z" },
   });
   const supabase = Bun.serve({
     hostname: "127.0.0.1", port: 0,
@@ -117,7 +119,8 @@ function accountFixture() {
           return Response.json(session(String(body.refresh_token).replace("synthetic-refresh-", "")));
         }
         if (body.password !== "synthetic-password") return Response.json({ message: "do not expose upstream errors" }, { status: 400 });
-        return Response.json(session(body.email.split("@")[0]));
+        signedInEmail = String(body.email);
+        return Response.json(session(body.email.split("@")[0], body.email));
       }
       if (url.pathname === "/auth/v1/logout") return new Response(null, { status: 204 });
       const id = req.headers.get("authorization")?.replace("Bearer synthetic-access-", "");
@@ -147,6 +150,20 @@ function accountFixture() {
           env_quota: 2, used: 1, status: "active", locked: false, manager_user_id: null }]);
       }
       if (["/rest/v1/nanfu_org_roles", "/rest/v1/nanfu_org_groups", "/rest/v1/nanfu_org_group_grants", "/rest/v1/nanfu_org_invites"].includes(url.pathname)) return Response.json([]);
+      if (url.pathname === "/rest/v1/rpc/nanfu_login_name_me") return Response.json(loginName);
+      if (url.pathname === "/rest/v1/rpc/nanfu_login_set_name") {
+        const body = await req.json() as any;
+        if (body.p_name === "taken") return Response.json({ code: "P0001", message: "NANFU_LOGIN_TAKEN: 该用户名已被使用" }, { status: 400 });
+        if ((signedInEmail ?? "").endsWith("@nanfu.local")) {
+          return Response.json({ code: "42501", message: "NANFU_LOGIN_MANAGED: 子账号的登录名由管理员分配，不能自己修改" }, { status: 400 });
+        }
+        loginName = String(body.p_name);
+        return Response.json(loginName);
+      }
+      if (url.pathname === "/rest/v1/rpc/nanfu_login_clear_name") {
+        loginName = null;
+        return new Response(null, { status: 204 });
+      }
       if (url.pathname === "/rest/v1/nanfu_environments") {
         await pauseEnvironments?.();
         return Response.json([{
@@ -225,6 +242,29 @@ test("real HTTP routes use the configured Nanfu runtime and never expose signup 
     expect(second.body.state.userId).toBe("a");
     expect((await f.call("signout", {})).body.state.authenticated).toBe(false);
     expect(f.token()).toBeNull();
+  } finally { f.close(); }
+});
+
+test("the profile page reads and changes the sign-in name, and a sub-account cannot", async () => {
+  const f = accountFixture();
+  try {
+    expect((await f.call("login-name")).status).toBe(401);
+    await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" });
+    expect((await f.call("login-name")).body).toMatchObject({ ok: true, name: null, managed: false });
+    const saved = await f.call("set-login-name", { name: "ZhangSan" });
+    expect(saved.body.name).toBe("zhangsan");
+    expect((await f.call("login-name")).body.name).toBe("zhangsan");
+    expect((await f.call("set-login-name", { name: "a" })).status).toBe(400);
+    expect((await f.call("set-login-name", { name: "taken" })).status).toBe(409);
+    expect((await f.call("set-login-name", { name: "taken" })).body.error).toContain("已被其他账号使用");
+    expect((await f.call("clear-login-name", {})).body.name).toBeNull();
+    await f.call("signout", {});
+    // An administrator-assigned account keeps the name it was given.
+    await f.call("signin", { email: "zhangsan@nanfu.local", password: "synthetic-password" });
+    const managed = await f.call("login-name");
+    expect(managed.body.managed).toBe(true);
+    expect((await f.call("set-login-name", { name: "another" })).status).toBe(403);
+    expect((await f.call("set-login-name", { name: "another" })).body.error).toContain("管理员");
   } finally { f.close(); }
 });
 

@@ -393,6 +393,21 @@ alter table public.nanfu_org_members drop constraint if exists nanfu_org_members
 alter table public.nanfu_org_members add constraint nanfu_org_members_display_name_check
   check (display_name is null or char_length(display_name) <= 60);
 
+-- A self-registered account may pick the name it signs in with; admin-created
+-- sub-accounts (…@nanfu.local) keep the login the administrator assigned.
+-- Only the SECURITY DEFINER functions below read or write this table.
+create table if not exists public.nanfu_login_names (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint nanfu_login_names_format
+    check (name = lower(name) and name ~ '^[a-z0-9][a-z0-9._-]{1,62}$')
+);
+
+create unique index if not exists nanfu_login_names_name_idx
+  on public.nanfu_login_names (lower(name));
+
 create table if not exists public.nanfu_org_group_grants (
   group_id uuid not null references public.nanfu_org_groups (id) on delete cascade,
   user_id uuid not null references auth.users (id) on delete cascade,
@@ -454,6 +469,7 @@ alter table public.nanfu_orgs enable row level security;
 alter table public.nanfu_org_roles enable row level security;
 alter table public.nanfu_org_groups enable row level security;
 alter table public.nanfu_org_members enable row level security;
+alter table public.nanfu_login_names enable row level security;
 alter table public.nanfu_org_group_grants enable row level security;
 alter table public.nanfu_org_invites enable row level security;
 alter table public.nanfu_env_transfers enable row level security;
@@ -462,6 +478,8 @@ revoke all on table public.nanfu_orgs from anon;
 revoke all on table public.nanfu_org_roles from anon;
 revoke all on table public.nanfu_org_groups from anon;
 revoke all on table public.nanfu_org_members from anon;
+revoke all on table public.nanfu_login_names from anon;
+revoke all on table public.nanfu_login_names from authenticated;
 revoke all on table public.nanfu_org_group_grants from anon;
 revoke all on table public.nanfu_org_invites from anon;
 revoke all on table public.nanfu_env_transfers from anon;
@@ -1632,6 +1650,11 @@ begin
     if mail !~ '^[a-z0-9][a-z0-9._-]{1,62}$' then
       raise exception 'NANFU_EMAIL_INVALID: 登录名只能使用字母、数字、点、下划线和横线（2 至 63 位）' using errcode = 'P0001';
     end if;
+    -- A name someone already signs in with must not start answering for a new
+    -- sub-account as well.
+    if exists (select 1 from public.nanfu_login_names l where l.name = mail) then
+      raise exception 'NANFU_LOGIN_TAKEN: 该登录名已被其他账号设为用户名' using errcode = 'P0001';
+    end if;
     mail := mail || '@nanfu.local';
   elsif char_length(mail) > 320 or mail !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
     raise exception 'NANFU_EMAIL_INVALID: 邮箱格式不正确' using errcode = 'P0001';
@@ -1796,7 +1819,115 @@ revoke all on function public.nanfu_org_set_member_groups(uuid, uuid[]) from pub
 grant execute on function public.nanfu_org_set_member_groups(uuid, uuid[]) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- 10. Function grants
+-- 10. Sign-in user names
+--
+-- A person who registered with a real address may choose the name they sign in
+-- with, so nobody has to type an inbox. Sub-accounts created by an administrator
+-- already have `<name>@nanfu.local`; their login belongs to the administrator.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.nanfu_login_name_me()
+returns text
+language sql
+security definer
+stable
+set search_path = public, pg_temp
+as $$
+  select l.name from public.nanfu_login_names l where l.user_id = auth.uid();
+$$;
+
+create or replace function public.nanfu_login_set_name(p_name text)
+returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me uuid := auth.uid();
+  name text := lower(btrim(coalesce(p_name, '')));
+  mail text;
+begin
+  if me is null then
+    raise exception 'NANFU_FORBIDDEN: 请先登录' using errcode = '28000';
+  end if;
+  select lower(u.email) into mail from auth.users u where u.id = me;
+  if mail is null then
+    raise exception 'NANFU_FORBIDDEN: 账号不存在' using errcode = '42501';
+  end if;
+  if mail like '%@nanfu.local' then
+    raise exception 'NANFU_LOGIN_MANAGED: 子账号的登录名由管理员分配，不能自己修改' using errcode = '42501';
+  end if;
+  if name !~ '^[a-z0-9][a-z0-9._-]{1,62}$' then
+    raise exception 'NANFU_LOGIN_INVALID: 用户名只能使用 2 至 63 位字母、数字、点、下划线和横线' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from public.nanfu_login_names l where l.name = name and l.user_id <> me) then
+    raise exception 'NANFU_LOGIN_TAKEN: 该用户名已被使用' using errcode = 'P0001';
+  end if;
+  -- An administrator-created login keeps its own namespace; a name that would
+  -- shadow one must be refused here, or two people would answer to one name.
+  if exists (select 1 from auth.users u where lower(u.email) = name || '@nanfu.local') then
+    raise exception 'NANFU_LOGIN_TAKEN: 该用户名已被使用' using errcode = 'P0001';
+  end if;
+  insert into public.nanfu_login_names (user_id, name) values (me, name)
+  on conflict (user_id) do update set name = excluded.name, updated_at = now();
+  return name;
+end;
+$$;
+
+create or replace function public.nanfu_login_clear_name()
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me uuid := auth.uid();
+  mail text;
+begin
+  if me is null then
+    raise exception 'NANFU_FORBIDDEN: 请先登录' using errcode = '28000';
+  end if;
+  select lower(u.email) into mail from auth.users u where u.id = me;
+  if mail like '%@nanfu.local' then
+    raise exception 'NANFU_LOGIN_MANAGED: 子账号的登录名由管理员分配，不能自己修改' using errcode = '42501';
+  end if;
+  delete from public.nanfu_login_names where user_id = me;
+end;
+$$;
+
+-- Signing in happens before a token exists, so this resolver is open to anon:
+-- it turns a chosen name into the address the account service accepts.
+create or replace function public.nanfu_login_resolve(p_name text)
+returns text
+language plpgsql
+security definer
+stable
+set search_path = public, pg_temp
+as $$
+declare
+  name text := lower(btrim(coalesce(p_name, '')));
+  mail text;
+begin
+  if name !~ '^[a-z0-9][a-z0-9._-]{1,62}$' then return null; end if;
+  select lower(u.email) into mail
+    from public.nanfu_login_names l
+    join auth.users u on u.id = l.user_id
+   where l.name = name;
+  return mail;
+end;
+$$;
+
+revoke all on function public.nanfu_login_name_me() from public, anon;
+revoke all on function public.nanfu_login_set_name(text) from public, anon;
+revoke all on function public.nanfu_login_clear_name() from public, anon;
+grant execute on function public.nanfu_login_name_me() to authenticated;
+grant execute on function public.nanfu_login_set_name(text) to authenticated;
+grant execute on function public.nanfu_login_clear_name() to authenticated;
+revoke all on function public.nanfu_login_resolve(text) from public;
+grant execute on function public.nanfu_login_resolve(text) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 11. Function grants
 -- ---------------------------------------------------------------------------
 
 revoke all on function public.nanfu_org_identity(uuid, uuid) from public;

@@ -399,3 +399,25 @@ test("a bare login name becomes a local address so sub-accounts need no inbox", 
   expect(normalizeNanfuLogin("xiaoli")).toBe("xiaoli@nanfu.local");
   expect(normalizeNanfuLogin(" Owner@Example.com ")).toBe("owner@example.com");
 });
+
+test("a bare sign-in name is resolved to its account address before the password grant", async () => {
+  const seen: Array<{ url: string; body: string }> = [];
+  const auth = client(async (url, init) => {
+    seen.push({ url: String(url), body: String(init?.body ?? "") });
+    return Response.json("zhangsan@example.com");
+  });
+  expect(await auth.resolveLoginName("zhangsan")).toBe("zhangsan@example.com");
+  expect(seen).toHaveLength(1);
+  expect(seen[0]!.url).toContain("/rest/v1/rpc/nanfu_login_resolve");
+  expect(JSON.parse(seen[0]!.body)).toEqual({ p_name: "zhangsan" });
+});
+
+test("an unknown or unset sign-in name resolves to null", async () => {
+  expect(await client(async () => Response.json(null)).resolveLoginName("nobody")).toBeNull();
+  expect(await client(async () => Response.json("")).resolveLoginName("nobody")).toBeNull();
+});
+
+test("normalizeNanfuLogin only expands names that carry no address", () => {
+  expect(normalizeNanfuLogin("  ZhangSan ")).toBe("zhangsan@nanfu.local");
+  expect(normalizeNanfuLogin("someone@example.com")).toBe("someone@example.com");
+});

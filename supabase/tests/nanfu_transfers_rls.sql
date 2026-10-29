@@ -1185,5 +1185,140 @@ begin
 end $$;
 commit;
 
+-- ---------------------------------------------------------------------------
+-- Sign-in names: an address account may pick the name it signs in with, while
+-- a sub-account keeps the one an administrator assigned.
+-- ---------------------------------------------------------------------------
+
+insert into auth.users (id, email) values
+  ('99999999-9999-9999-9999-999999999991', 'self@example.com'),
+  ('99999999-9999-9999-9999-999999999992', 'other@example.com'),
+  ('99999999-9999-9999-9999-999999999993', 'zhangsan@nanfu.local')
+on conflict (id) do nothing;
+
+begin;
+select set_config('request.jwt.claim.sub', '99999999-9999-9999-9999-999999999991', true);
+select set_config('request.jwt.claims', '{"sub":"99999999-9999-9999-9999-999999999991","email":"self@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare failed text;
+begin
+  if public.nanfu_login_set_name('  ZhangSan ') <> 'zhangsan' then
+    raise exception 'a chosen name was not stored in lower case';
+  end if;
+  if public.nanfu_login_name_me() <> 'zhangsan' then
+    raise exception 'the chosen name did not read back';
+  end if;
+  if public.nanfu_login_resolve('zhangsan') <> 'self@example.com' then
+    raise exception 'the chosen name did not resolve to its address';
+  end if;
+  if public.nanfu_login_resolve('ZHANGSAN') <> 'self@example.com' then
+    raise exception 'resolving is case sensitive';
+  end if;
+  if public.nanfu_login_resolve('nobody-at-all') is not null then
+    raise exception 'an unused name resolved to an address';
+  end if;
+
+  -- Short, dotted at the start, spaced or empty names are all refused.
+  foreach failed in array array['a', '.abc', 'zhang san', '', 'zhang/../san'] loop
+    begin
+      perform public.nanfu_login_set_name(failed);
+      raise exception 'invalid name % was accepted', quote_literal(failed);
+    exception when others then
+      if sqlerrm not like 'NANFU_LOGIN_INVALID%' then
+        raise exception 'invalid name % failed for the wrong reason: %', quote_literal(failed), sqlerrm;
+      end if;
+    end;
+  end loop;
+
+  -- An administrator already handed out zhangsan to a sub-account, so the name
+  -- must stay unavailable even though it is not in the chosen-name table.
+  begin
+    perform public.nanfu_login_set_name('zhangsan');
+    raise exception 'a name shadowing an assigned login was accepted';
+  exception when others then
+    if sqlerrm not like 'NANFU_LOGIN_TAKEN%' then raise; end if;
+  end;
+
+  if public.nanfu_login_set_name('lisi') <> 'lisi' then
+    raise exception 'renaming did not return the new name';
+  end if;
+  if public.nanfu_login_resolve('zhangsan') is not null then
+    raise exception 'the previous name still resolves';
+  end if;
+  if public.nanfu_login_resolve('lisi') <> 'self@example.com' then
+    raise exception 'the new name does not resolve';
+  end if;
+end $$;
+commit;
+
+-- A name is unique across the whole service, so a second account cannot take it.
+begin;
+select set_config('request.jwt.claim.sub', '99999999-9999-9999-9999-999999999992', true);
+select set_config('request.jwt.claims', '{"sub":"99999999-9999-9999-9999-999999999992","email":"other@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  begin
+    perform public.nanfu_login_set_name('lisi');
+    raise exception 'two accounts share one sign-in name';
+  exception when others then
+    if sqlerrm not like 'NANFU_LOGIN_TAKEN%' then raise; end if;
+  end;
+  if public.nanfu_login_name_me() is not null then
+    raise exception 'the refused name was stored anyway';
+  end if;
+end $$;
+commit;
+
+-- An account created by an administrator keeps the assigned login.
+begin;
+select set_config('request.jwt.claim.sub', '99999999-9999-9999-9999-999999999993', true);
+select set_config('request.jwt.claims', '{"sub":"99999999-9999-9999-9999-999999999993","email":"zhangsan@nanfu.local","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  begin
+    perform public.nanfu_login_set_name('zhangsan-new');
+    raise exception 'a sub-account renamed itself';
+  exception when others then
+    if sqlerrm not like 'NANFU_LOGIN_MANAGED%' then raise; end if;
+  end;
+  begin
+    perform public.nanfu_login_clear_name();
+    raise exception 'a sub-account cleared its assigned login';
+  exception when others then
+    if sqlerrm not like 'NANFU_LOGIN_MANAGED%' then raise; end if;
+  end;
+  if public.nanfu_login_name_me() is not null then
+    raise exception 'a sub-account holds a chosen name';
+  end if;
+end $$;
+commit;
+
+-- Signing in happens before any token exists, so resolving is open to anon while
+-- setting a name stays closed to it.
+begin;
+set local role anon;
+do $$
+begin
+  if public.nanfu_login_resolve('lisi') <> 'self@example.com' then
+    raise exception 'anon could not resolve a sign-in name';
+  end if;
+  begin
+    perform public.nanfu_login_set_name('anon-name');
+    raise exception 'anon chose a sign-in name';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.nanfu_login_name_me();
+    raise exception 'anon read a sign-in name';
+  exception when insufficient_privilege then
+    null;
+  end;
+end $$;
+commit;
+
 select 'nanfu RLS proof passed' as result;
 

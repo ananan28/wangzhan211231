@@ -634,6 +634,21 @@ export class NanfuSyncClient {
     return this.rpcValue("nanfu_org_create_invite", { p_identity: input.identity, p_role: input.roleId ?? null, p_manager: input.managerUserId ?? null, p_quota: input.quota, p_hours: input.hours }, "string", signal);
   }
 
+  /** The name this account signs in with, or null when it uses its address. */
+  async loginName(signal?: AbortSignal): Promise<string | null> {
+    const value = await this.visibleRequest("/rpc/nanfu_login_name_me", { method: "POST", body: "{}", signal });
+    return typeof value === "string" && value ? value : null;
+  }
+
+  /** Chooses the sign-in name; the service refuses sub-accounts and collisions. */
+  setLoginName(name: string, signal?: AbortSignal): Promise<string> {
+    return this.rpcValue("nanfu_login_set_name", { p_name: name }, "string", signal);
+  }
+
+  async clearLoginName(signal?: AbortSignal): Promise<void> {
+    await this.visibleRequest("/rpc/nanfu_login_clear_name", { method: "POST", body: "{}", signal });
+  }
+
   redeemInvite(code: string, signal?: AbortSignal): Promise<string> {
     return this.rpcValue("nanfu_org_redeem_invite", { p_code: code }, "string", signal);
   }

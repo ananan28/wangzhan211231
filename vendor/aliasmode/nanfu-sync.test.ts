@@ -716,3 +716,56 @@ test("employee settings change authorized groups and reset the password", async 
   expect(NANFU_ORGANIZATION_ACTIONS).toContain("set-groups");
   expect(NANFU_ORGANIZATION_ACTIONS).toContain("reset-password");
 });
+
+test("a self-registered account reads and changes its sign-in name through the service", async () => {
+  const seen: Array<{ url: string; body: string }> = [];
+  const answers: Record<string, string> = {
+    nanfu_login_name_me: "zhangsan",
+    nanfu_login_set_name: "lisi",
+    nanfu_login_clear_name: "",
+  };
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.supabase.co",
+    anonKey: "anon-key",
+    accessToken: async () => "access-token",
+    fetchFn: async (url, init) => {
+      const rpc = String(url).split("/rpc/")[1] ?? "";
+      seen.push({ url: String(url), body: String(init?.body ?? "") });
+      return Response.json(answers[rpc] || null);
+    },
+  });
+  expect(await client.loginName()).toBe("zhangsan");
+  expect(await client.setLoginName("lisi")).toBe("lisi");
+  await client.clearLoginName();
+  expect(seen.map(row => row.url.replace("https://nanfu.supabase.co/rest/v1/rpc/", ""))).toEqual([
+    "nanfu_login_name_me", "nanfu_login_set_name", "nanfu_login_clear_name",
+  ]);
+  expect(JSON.parse(seen[1]!.body)).toEqual({ p_name: "lisi" });
+});
+
+test("an account without a chosen name reports none instead of an empty string", async () => {
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.supabase.co",
+    anonKey: "anon-key",
+    accessToken: async () => "access-token",
+    fetchFn: async () => Response.json(""),
+  });
+  expect(await client.loginName()).toBeNull();
+});
+
+test("login-name failures carry the service code so the panel can explain them", async () => {
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.supabase.co",
+    anonKey: "anon-key",
+    accessToken: async () => "access-token",
+    fetchFn: async () => Response.json(
+      { code: "P0001", message: "NANFU_LOGIN_MANAGED: sub-accounts cannot rename" },
+      { status: 400 },
+    ),
+  });
+  const failure = client.setLoginName("zhangsan").catch((error) => error);
+  await expect(failure).resolves.toBeInstanceOf(NanfuSyncError);
+  const error = await failure as NanfuSyncError;
+  expect(nanfuOrganizationError(error).status).toBe(403);
+  expect(nanfuOrganizationError(error).body.error).toContain("管理员");
+});

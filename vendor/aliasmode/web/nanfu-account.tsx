@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   nanfuAuthAction, nanfuSelfJoin, fetchNanfuEnvironments, nanfuOrganizationAction, nanfuLoginName, normalizeNanfuLogin, NanfuApiError,
+  fetchNanfuLoginName, setNanfuLoginName, clearNanfuLoginName,
   type NanfuAccountState, type NanfuOrganization, type NanfuVisibleEnvironment, type NanfuMutations,
 } from "./api.ts";
 import { nanfuIdentityName } from "./nanfu-management.tsx";
@@ -23,6 +24,9 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState("all");
   const [ownedOnly, setOwnedOnly] = useState(false);
+  const [loginName, setLoginNameState] = useState<string | null>(null);
+  const [loginDraft, setLoginDraft] = useState("");
+  const [loginManaged, setLoginManaged] = useState(false);
   const request = useRef({ generation: 0, controller: new AbortController() });
 
   const begin = (clear = true) => {
@@ -44,12 +48,21 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
   };
   const current = (generation: number) => request.current.generation === generation && !request.current.controller.signal.aborted;
   const load = async (generation: number, signal: AbortSignal, userId: string) => {
-    const result = await fetchNanfuEnvironments(signal);
+    const [result, identity] = await Promise.all([
+      fetchNanfuEnvironments(signal),
+      // An older server has no login-name endpoint; the card then stays hidden.
+      fetchNanfuLoginName(signal).catch(() => null),
+    ]);
     if (!current(generation)) return;
     if (result.userId !== userId) throw new Error("账号已切换，请重新登录");
     setOrganization(result.organization);
     setEnvironments(result.environments);
     setOrganizationLoaded(true);
+    if (identity) {
+      setLoginNameState(identity.name);
+      setLoginDraft(identity.name ?? "");
+      setLoginManaged(identity.managed);
+    }
   };
   const authenticate = async (action: "signin" | "restore" | "signout") => {
     const { generation, controller } = begin();
@@ -112,6 +125,39 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
       setError(failure instanceof Error ? failure.message : "加入默认组织失败，可稍后重试");
     } finally { if (current(generation)) setBusy(false); }
   };
+  const saveLoginName = async () => {
+    const name = loginDraft.trim().toLowerCase();
+    if (!name || busy) return;
+    const { generation, controller } = begin(false);
+    setNotice(null);
+    try {
+      const result = await setNanfuLoginName(name, controller.signal);
+      if (!current(generation)) return;
+      setLoginNameState(result.name);
+      setLoginDraft(result.name);
+      setNotice(`用户名已改为 ${result.name}，下次可用它登录。`);
+    } catch (failure) {
+      if (!current(generation)) return;
+      if (failure instanceof NanfuApiError && failure.status === 401) setAccount({ authenticated: false });
+      setError(failure instanceof Error ? failure.message : "用户名保存失败，请稍后重试");
+    } finally { if (current(generation)) setBusy(false); }
+  };
+  const dropLoginName = async () => {
+    if (busy) return;
+    const { generation, controller } = begin(false);
+    setNotice(null);
+    try {
+      await clearNanfuLoginName(controller.signal);
+      if (!current(generation)) return;
+      setLoginNameState(null);
+      setLoginDraft("");
+      setNotice("已改回用注册邮箱登录。");
+    } catch (failure) {
+      if (!current(generation)) return;
+      if (failure instanceof NanfuApiError && failure.status === 401) setAccount({ authenticated: false });
+      setError(failure instanceof Error ? failure.message : "用户名清除失败，请稍后重试");
+    } finally { if (current(generation)) setBusy(false); }
+  };
   const mutate = async <K extends keyof NanfuMutations,>(action: K, input: NanfuMutations[K]["input"]): Promise<void> => {
     if (!account.userId || busy) return;
     const userId = account.userId;
@@ -170,6 +216,17 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
           <p className="nanfu-hint">账号由组织管理员创建：用管理员给的登录名（拼音或缩写）直接登录，不需要邮箱。没有账号或忘记密码，请联系管理员。</p>
         </form>}
       </div></section>
+      {account.authenticated && <section className="settings-card" data-testid="nanfu-login-name-card"><header><h3>登录用户名</h3></header><div className="card-body">
+        {loginManaged ? <p>本账号由管理员创建，登录名由管理员分配，不能自己修改。如需更改请联系组织管理员。</p> : <>
+          <p>{loginName ? <>当前用户名：<b data-testid="nanfu-login-name-value">{loginName}</b>；也可以用注册邮箱登录。</> : "当前用注册邮箱登录；设置用户名后，可只输入用户名登录。"}</p>
+          <form className="nanfu-form" aria-label="设置用户名" onSubmit={event => { event.preventDefault(); void saveLoginName(); }}>
+            <label className="fld"><span>用户名</span><input value={loginDraft} onChange={event => setLoginDraft(event.target.value)} placeholder="2 至 63 位字母、数字、点、下划线和横线，如 zhangsan" autoCapitalize="none" autoComplete="off" spellCheck={false} maxLength={63} disabled={busy} /></label>
+            <button className="btn primary" type="submit" disabled={busy || !loginDraft.trim() || loginDraft.trim().toLowerCase() === loginName}>保存用户名</button>
+            {loginName && <button className="btn" type="button" disabled={busy} onClick={() => void dropLoginName()}>改回用邮箱登录</button>}
+          </form>
+          <p className="nanfu-hint">用户名只用于登录，不改变组织里的显示名称；管理员创建的员工账号沿用管理员分配的登录名。</p>
+        </>}
+      </div></section>}
       {account.authenticated && <section className="settings-card"><header><h3>当前组织与可见环境</h3></header><div className="card-body">
         <button className="btn" disabled={busy} onClick={() => void refresh()}>刷新组织列表</button>
         {!busy && organizationLoaded && !organization && <>

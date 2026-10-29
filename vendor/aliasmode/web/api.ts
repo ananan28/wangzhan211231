@@ -87,6 +87,21 @@ export function nanfuSelfJoin(signal?: AbortSignal): Promise<{ orgId: string; or
   return nanfuJson("self-join", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", signal });
 }
 
+/** The signed-in account's chosen sign-in name, or null when it uses its address. */
+export function fetchNanfuLoginName(signal?: AbortSignal): Promise<{ name: string | null; managed: boolean }> {
+  return nanfuJson("login-name", { signal });
+}
+
+export function setNanfuLoginName(name: string, signal?: AbortSignal): Promise<{ name: string }> {
+  return nanfuJson("set-login-name", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }), signal,
+  });
+}
+
+export function clearNanfuLoginName(signal?: AbortSignal): Promise<{ name: null }> {
+  return nanfuJson("clear-login-name", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", signal });
+}
+
 export function fetchNanfuEnvironments(signal?: AbortSignal): Promise<{
   userId: string;
   organization: NanfuOrganization | null;

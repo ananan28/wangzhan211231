@@ -269,6 +269,9 @@ export function nanfuOrganizationError(error: NanfuSyncError): { status: number;
     NANFU_EMAIL_TAKEN: "这个登录名或邮箱已经注册过南孚账号，请换一个，或让本人直接登录。",
     NANFU_EMAIL_INVALID: "登录名或邮箱格式不正确：登录名用 2 至 63 位字母、数字、点、下划线和横线，邮箱要带 @。",
     NANFU_PASSWORD_INVALID: "密码须为 6 至 72 个字符。",
+    NANFU_LOGIN_MANAGED: "子账号的登录名由管理员分配，不能自己修改。",
+    NANFU_LOGIN_INVALID: "用户名只能使用 2 至 63 位字母、数字、点、下划线和横线。",
+    NANFU_LOGIN_TAKEN: "这个用户名已被其他账号使用，请换一个。",
     NANFU_PARENT_INVALID: "所选上级账号无效或不在本组织内。",
     NANFU_ROLE_INVALID: "所选角色不属于当前组织，请刷新后重试。",
     NANFU_INPUT: "填写的信息不完整或格式不正确，请检查后重试。",
@@ -282,7 +285,9 @@ export function nanfuOrganizationError(error: NanfuSyncError): { status: number;
   const statuses: Record<string, number> = {
     "42501": 403, NANFU_FORBIDDEN: 403, ORG_ALREADY_MEMBER: 403, NANFU_MEMBER_INACTIVE: 403,
     NANFU_EMAIL_INVALID: 400, NANFU_PASSWORD_INVALID: 400, NANFU_PARENT_INVALID: 400, NANFU_INPUT: 400,
+    NANFU_LOGIN_INVALID: 400, NANFU_LOGIN_MANAGED: 403,
     NANFU_EMAIL_TAKEN: 409, NANFU_ROLE_INVALID: 409, NANFU_ORG_QUOTA: 409, NANFU_ENV_QUOTA: 409, NANFU_GROUP_INVALID: 409,
+    NANFU_LOGIN_TAKEN: 409,
     NANFU_ENV_HELD: 409,
     "23505": 409, INVITE_EXPIRED: 409, INVITE_USED: 409, TRANSFER_EXPIRED: 409, "P0002": 409,
   };
