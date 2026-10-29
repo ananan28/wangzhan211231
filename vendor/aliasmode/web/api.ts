@@ -39,6 +39,11 @@ export class NanfuApiError extends Error {
   }
 }
 
+/** The local server refused a write because no Nanfu account is signed in. */
+export function isNanfuSignInRequired(body: unknown): boolean {
+  return !!body && typeof body === "object" && (body as { code?: unknown }).code === "nanfu_signin_required";
+}
+
 async function nanfuJson(path: string, init?: RequestInit): Promise<any> {
   const response = await fetch(`/ui/api/nanfu/${path}`, { ...init, cache: "no-store" });
   const body = await apiJson(response, path);

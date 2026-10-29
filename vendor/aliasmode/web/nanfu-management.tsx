@@ -12,10 +12,17 @@ export const nanfuIdentityName = (identity: string) => identityNames[identity] ?
 const dataOf = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); return new FormData(event.currentTarget); };
 const text = (data: FormData, key: string) => String(data.get(key) ?? "").trim();
 
-function MemberSettings({ member, overview, owner, onMutate }: {
-  member: NanfuMember; overview: NanfuOrgOverview; owner: boolean; onMutate: NanfuMutationHandler;
+function MemberSettings({ member, overview, owner, currentUserId, planQuota, onMutate }: {
+  member: NanfuMember; overview: NanfuOrgOverview; owner: boolean; currentUserId: string; planQuota: number;
+  onMutate: NanfuMutationHandler;
 }) {
   if (member.identity === "owner") return <span>所有者受保护，不在此处单独设配额。</span>;
+  if (member.userId === currentUserId) return <span>不能修改自己的身份、状态或配额；如需调整，请联系组织所有者。</span>;
+  if (!owner && member.identity === "admin") return <span>管理员成员仅组织所有者可调整。</span>;
+  const othersAllocated = overview.members
+    .filter(item => item.identity !== "owner" && item.userId !== member.userId)
+    .reduce((sum, item) => sum + Math.max(0, item.quota), 0);
+  const remaining = planQuota > 0 ? Math.max(0, planQuota - othersAllocated) : null;
   return <>
     <form className="nanfu-form" aria-label={`修改成员 ${member.email || member.userId}`} onSubmit={event => {
       const data = dataOf(event);
@@ -26,7 +33,7 @@ function MemberSettings({ member, overview, owner, onMutate }: {
       });
     }}>
       <label className="fld"><span>身份</span><select name="identity" defaultValue={member.identity}>
-        {(owner || member.identity === "admin") && <option value="admin">管理员</option>}
+        {owner && <option value="admin">管理员</option>}
         <option value="manager">经理</option><option value="member">成员</option>
       </select></label>
       <label className="fld"><span>角色</span><select name="roleId" defaultValue={member.roleId ?? ""}>
@@ -43,6 +50,7 @@ function MemberSettings({ member, overview, owner, onMutate }: {
       const data = dataOf(event); void onMutate("set-quota", { userId: member.userId, quota: Number(text(data, "quota")) });
     }}>
       <label className="fld"><span>窗口配额（0 不限）</span><input name="quota" type="number" min="0" max="2147483647" step="1" required defaultValue={member.quota} /></label>
+      {remaining !== null && <p>组织剩余可分配：{remaining}（已扣除其他成员配额）。超过会被服务端拒绝；保持当前值不变始终可以保存。</p>}
       <button className="btn" type="submit">保存配额</button>
     </form>
     <form className="nanfu-form" aria-label={`移除成员 ${member.email || member.userId}`} onSubmit={event => {
@@ -55,19 +63,24 @@ function MemberSettings({ member, overview, owner, onMutate }: {
   </>;
 }
 
-export function NanfuManagement({ organization, overview, busy, onMutate }: {
-  organization: NanfuOrganization; overview: NanfuOrgOverview; busy: boolean; onMutate: NanfuMutationHandler;
+export function NanfuManagement({ organization, overview, currentUserId, busy, onMutate, onRefresh }: {
+  organization: NanfuOrganization; overview: NanfuOrgOverview; currentUserId: string; busy: boolean;
+  onMutate: NanfuMutationHandler; onRefresh?: () => void;
 }) {
   const [copyStatus, setCopyStatus] = useState("");
   if (!["owner", "admin"].includes(organization.identity) || organization.locked || organization.status !== "active") return null;
   const owner = organization.identity === "owner";
   const used = overview.members.reduce((sum, member) => sum + member.used, 0);
+  const allocated = overview.members.filter(member => member.identity !== "owner").reduce((sum, member) => sum + member.quota, 0);
+  const inviteQuotaMax = organization.planQuota > 0 ? Math.max(0, organization.planQuota - allocated) : 2147483647;
   const copy = async (code: string) => {
     try { await navigator.clipboard.writeText(code); setCopyStatus("邀请码已复制"); }
     catch { setCopyStatus("无法访问剪贴板，请选中邀请码手动复制"); }
   };
-  return <section className="settings-card" aria-label="组织管理"><header><h3>组织管理</h3></header><div className="card-body">
-    <p>组织窗口：{used} / {organization.planQuota === 0 ? "不限" : organization.planQuota}。0 表示不限量；这里只能逐个调整成员配额。</p>
+  return <section className="settings-card" aria-label="组织管理">
+    <header><h3>组织管理</h3>{onRefresh && <button type="button" className="btn" disabled={busy} onClick={onRefresh}>刷新成员</button>}</header>
+    <div className="card-body">
+    <p>组织窗口：{used} / {organization.planQuota === 0 ? "不限" : organization.planQuota}。成员配额合计（不含所有者）：{allocated}{organization.planQuota === 0 ? "（组织不限）" : ` / ${organization.planQuota}`}。0 表示该成员不限量；实际窗口总数仍受组织配额约束。</p>
     <p>锁定与停用均限制组织访问，分别记录；已有角色与上级可更换，当前接口不支持清空。所有更改仍由服务端核验权限。</p>
     <fieldset disabled={busy} className="nanfu-controls"><legend>成员与权限</legend>
       {!overview.members.length && <p>暂无可见成员。</p>}
@@ -76,7 +89,7 @@ export function NanfuManagement({ organization, overview, busy, onMutate }: {
           <td>{member.email || member.userId}<br />{nanfuIdentityName(member.identity)}<br /><small>{member.userId}</small></td>
           <td>{member.roleName ?? (member.identity === "owner" ? "所有者内置权限" : "未分配")}<br />上级：{overview.members.find(item => item.userId === member.managerUserId)?.email || member.managerUserId || "无"}</td>
           <td>{member.status === "active" ? "启用" : "停用"} · {member.locked ? "已锁定" : "未锁定"}<br />{member.used} / {member.quota === 0 ? "不限" : member.quota}</td>
-          <td><MemberSettings member={member} overview={overview} owner={owner} onMutate={onMutate} /></td>
+          <td><MemberSettings member={member} overview={overview} owner={owner} currentUserId={currentUserId} planQuota={organization.planQuota} onMutate={onMutate} /></td>
         </tr>)}
       </tbody></table></div>
       <h4>角色权限</h4>
@@ -99,7 +112,7 @@ export function NanfuManagement({ organization, overview, busy, onMutate }: {
         <button className="btn" type="submit">保存分组授权</button>
       </form>
       {!overview.grants.length ? <p>暂无显式分组授权。</p> : <ul>{overview.grants.map(grant => <li key={`${grant.groupId}:${grant.userId}`}>{overview.groups.find(group => group.id === grant.groupId)?.name || grant.groupId} → {overview.members.find(member => member.userId === grant.userId)?.email || grant.userId}</li>)}</ul>}
-      <h4>邀请子账号</h4><p>新成员先注册并确认邮箱，再登录兑换。邀请码单次使用，可设置过期时长；无多次使用选项。</p>
+      <h4>邀请子账号</h4><p>邀请码单次使用，可设置过期时长；无多次使用选项。请对方先注册并确认邮箱，再登录；登录后在本页「兑换邀请码」输入该码即可加入组织。</p>
       <form className="nanfu-form" aria-label="生成邀请码" onSubmit={event => {
         const data = dataOf(event); void onMutate("create-invite", { identity: text(data, "identity") as "admin" | "manager" | "member", roleId: text(data, "roleId") || undefined,
           managerUserId: text(data, "managerUserId") || undefined, quota: Number(text(data, "quota")), hours: Number(text(data, "hours")) });
@@ -107,7 +120,8 @@ export function NanfuManagement({ organization, overview, busy, onMutate }: {
         <label className="fld"><span>邀请身份</span><select name="identity" defaultValue="member"><option value="member">成员</option><option value="manager">经理</option>{owner && <option value="admin">管理员</option>}</select></label>
         <label className="fld"><span>邀请角色</span><select name="roleId"><option value="">不分配角色</option>{overview.roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
         <label className="fld"><span>邀请上级</span><select name="managerUserId"><option value="">无上级</option>{overview.members.map(member => <option key={member.userId} value={member.userId}>{member.email || member.userId}</option>)}</select></label>
-        <label className="fld"><span>初始窗口配额（0 不限）</span><input name="quota" type="number" min="0" max="2147483647" step="1" defaultValue={0} required /></label>
+        <label className="fld"><span>初始窗口配额（0 不限）</span><input name="quota" type="number" min="0" max={inviteQuotaMax} step="1" defaultValue={0} required /></label>
+        {organization.planQuota > 0 && <p>组织剩余可分配：{inviteQuotaMax}；超过会被服务端拒绝。</p>}
         <label className="fld"><span>有效小时数</span><input name="hours" type="number" min="1" max="8760" step="1" defaultValue={168} required /></label>
         <button className="btn primary" type="submit">生成邀请码</button>
       </form>
@@ -117,5 +131,6 @@ export function NanfuManagement({ organization, overview, busy, onMutate }: {
         <button type="button" className="btn" onClick={() => void copy(invite.code)}>复制邀请码</button>
       </li>)}</ul>}
     </fieldset>
-  </div></section>;
+    </div>
+  </section>;
 }

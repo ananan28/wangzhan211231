@@ -111,6 +111,7 @@ import {
   fetchTranslation,
   saveTranslationSettings,
   sendTranslationKey,
+  isNanfuSignInRequired,
 } from "./api.ts";
 import { NanfuAccountPage } from "./nanfu-account.tsx";
 import { NanfuTransferPage } from "./nanfu-transfer.tsx";
@@ -1406,6 +1407,7 @@ function App() {
   // actionErr is sticky (Open/Close/move/import), connErr tracks load() only.
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [connErr, setConnErr] = useState<string | null>(null);
+  const [nanfuSignInRequired, setNanfuSignInRequired] = useState(false);
   const [notice, setNotice] = useState<string | null>(null); // transient success banner
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -2638,11 +2640,15 @@ function App() {
     : r.warning;
   const act = async (id: string, fn: (id: string) => Promise<any>) => {
     setActionErr(null);
+    setNanfuSignInRequired(false);
     setBusy((b) => ({ ...b, [id]: true }));
     try {
       const r = await fn(id);
       await load(); // refresh first; load() no longer clears action errors
-      if (r && r.ok === false) setActionErr(r.error || "action failed");
+      if (r && r.ok === false) {
+        if (isNanfuSignInRequired(r)) setNanfuSignInRequired(true);
+        setActionErr(r.error || "action failed");
+      }
       else if (r && r.warning) setActionErr(actionWarning(r));
     } catch (e) {
       await load().catch(() => {});
@@ -2710,6 +2716,7 @@ function App() {
 
   const doUpload = async (files: FileList | File[]) => {
     setActionErr(null);
+    setNanfuSignInRequired(false);
     try {
       const list = Array.from(files);
       if (list.length === 0) return;
@@ -2719,7 +2726,10 @@ function App() {
         const issues = r.errors?.length ? ` Reported ${r.errors.length} invalid record(s); invalid proxies were quarantined for repair.` : "";
         alert(`Imported ${r.profiles} profile(s) from ${r.files} file(s).${issues}`);
       }
-      else setActionErr(r.error || "import failed");
+      else {
+        if (isNanfuSignInRequired(r)) setNanfuSignInRequired(true);
+        setActionErr(r.error || "import failed");
+      }
     } catch (e) {
       setActionErr(String(e));
     }
@@ -2745,6 +2755,7 @@ function App() {
     if ((!bulkFiles.length && !bulkText.trim()) || (isCloudMode && !bulkGroup.trim())) return;
     setBulkBusy(true);
     setBulkErr(null);
+    setNanfuSignInRequired(false);
     try {
       const uploads = [...bulkFiles];
       if (bulkText.trim()) uploads.push(new File([bulkText], "pasted-adspower.txt", { type: "text/plain" }));
@@ -2756,7 +2767,10 @@ function App() {
         const issues = r.errors?.length ? ` Reported ${r.errors.length} invalid record(s); invalid proxies were quarantined for repair.` : "";
         alert(`Imported ${r.profiles} profile(s) from ${r.files} file(s).${issues}`);
       }
-      else setBulkErr(r.error || "import failed");
+      else {
+        if (isNanfuSignInRequired(r)) setNanfuSignInRequired(true);
+        setBulkErr(r.error || "import failed");
+      }
     } catch (e) {
       setBulkErr(String(e));
     } finally {
@@ -2874,28 +2888,33 @@ function App() {
     )) return;
     setCreating(true);
     setCreateErr(null);
+    setNanfuSignInRequired(false);
     try {
-      const result = await createProfilesInOrder(count, index => createProfile({
-        name: count === 1 ? form.name : `${form.name.trim() || "环境"} ${index}`,
-        engine: form.engine,
-        ...(form.engine === "chromium" && !appMode?.legacyRemote ? { chromiumRuntime: form.chromiumRuntime || "cloakbrowser" } : {}),
-        group: form.group,
-        platform: form.platform,
-        screen: form.screen,
-        ...(form.platformOs ? { platformOs: form.platformOs } : {}),
-        ...(form.locale ? { locale: form.locale } : {}),
-        ...(form.timezone ? { timezone: form.timezone } : {}),
-        ...(form.cores ? { cores: form.cores } : {}),
-        // A fixed seed on a batch would give every profile the same identity; it is single-profile only.
-        ...(count === 1 && form.seed ? { seed: form.seed } : {}),
-        ...(isCloudMode ? {} : { customNo: form.customNo }),
-        username: form.username,
-        password: form.password,
-        email: form.email,
-        emailPassword: form.emailPassword,
-        twofa: form.twofa,
-        proxy: form.host.trim() ? { type: form.proxyType, host: form.host, port: form.port, user: form.user, pass: form.pass } : null,
-      }));
+      const result = await createProfilesInOrder(count, async index => {
+        const created = await createProfile({
+          name: count === 1 ? form.name : `${form.name.trim() || "环境"} ${index}`,
+          engine: form.engine,
+          ...(form.engine === "chromium" && !appMode?.legacyRemote ? { chromiumRuntime: form.chromiumRuntime || "cloakbrowser" } : {}),
+          group: form.group,
+          platform: form.platform,
+          screen: form.screen,
+          ...(form.platformOs ? { platformOs: form.platformOs } : {}),
+          ...(form.locale ? { locale: form.locale } : {}),
+          ...(form.timezone ? { timezone: form.timezone } : {}),
+          ...(form.cores ? { cores: form.cores } : {}),
+          // A fixed seed on a batch would give every profile the same identity; it is single-profile only.
+          ...(count === 1 && form.seed ? { seed: form.seed } : {}),
+          ...(isCloudMode ? {} : { customNo: form.customNo }),
+          username: form.username,
+          password: form.password,
+          email: form.email,
+          emailPassword: form.emailPassword,
+          twofa: form.twofa,
+          proxy: form.host.trim() ? { type: form.proxyType, host: form.host, port: form.port, user: form.user, pass: form.pass } : null,
+        });
+        if (isNanfuSignInRequired(created)) setNanfuSignInRequired(true);
+        return created;
+      });
       if (!result.error) {
         closeCreate();
         await load();
@@ -3214,12 +3233,16 @@ function App() {
     const ids = [...selected].filter((id) => { const p = profiles.find((x) => x.id === id); return p && pick(p); });
     if (!ids.length) return;
     setActionErr(null);
+    setNanfuSignInRequired(false);
     setBusy((b) => { const n = { ...b }; ids.forEach((id) => (n[id] = true)); return n; });
     const issues: string[] = [];
     await runPool(ids, 4, async (id) => {
       try {
         const r = await op(id);
-        if (r?.ok === false) issues.push(`${id}: ${r.error || "action failed"}`);
+        if (r?.ok === false) {
+          if (isNanfuSignInRequired(r)) setNanfuSignInRequired(true);
+          issues.push(`${id}: ${r.error || "action failed"}`);
+        }
         else if (r?.warning) issues.push(`${id}: ${actionWarning(r)}`);
       } catch (error) {
         issues.push(`${id}: ${String(error)}`);
@@ -3933,7 +3956,12 @@ function App() {
         <div className="error">
           <Icon name="alert" />
           <span>{actionErr ?? connErr}</span>
-          <button className="dismiss" aria-label={t("Dismiss error")} onClick={() => { setActionErr(null); setConnErr(null); }}>
+          {nanfuSignInRequired && (
+            <button className="btn primary" type="button" onClick={() => { setView("nanfu"); setNanfuSignInRequired(false); }}>
+              去登录南孚账号
+            </button>
+          )}
+          <button className="dismiss" aria-label={t("Dismiss error")} onClick={() => { setActionErr(null); setConnErr(null); setNanfuSignInRequired(false); }}>
             <Icon name="close" className="sm" />
           </button>
         </div>
@@ -5103,7 +5131,9 @@ function App() {
               <button type="button" className="modal-close" aria-label={t("Close")} disabled={creating} onClick={closeCreate}><Icon name="close" className="sm" /></button>
             </div>
             <div className="modal-body">
-              {createErr && <div className="modal-err"><Icon name="alert" className="sm" />{createErr}</div>}
+              {createErr && <div className="modal-err" role="alert"><Icon name="alert" className="sm" />{createErr}
+                {nanfuSignInRequired && <button className="btn primary" type="button" onClick={() => { closeCreate(); setView("nanfu"); setNanfuSignInRequired(false); }}>去登录南孚账号</button>}
+              </div>}
               <label className="fld">
                 <span>创建环境数量（1–{MAX_BATCH_CREATE}）</span>
                 <input type="number" min="1" max={MAX_BATCH_CREATE} step="1" value={createCount} disabled={creating} onChange={(event) => setCreateCount(event.target.value)} />
@@ -5456,7 +5486,9 @@ function App() {
               <button type="button" className="modal-close" aria-label={t("Close")} onClick={closeBulk}><Icon name="close" className="sm" /></button>
             </div>
             <div className="modal-body">
-              {bulkErr && <div className="modal-err"><Icon name="alert" className="sm" />{bulkErr}</div>}
+              {bulkErr && <div className="modal-err" role="alert"><Icon name="alert" className="sm" />{bulkErr}
+                {nanfuSignInRequired && <button className="btn primary" type="button" onClick={() => { closeBulk(); setView("nanfu"); setNanfuSignInRequired(false); }}>去登录南孚账号</button>}
+              </div>}
               <ol className="steps">
                 <li>{t("Export profiles from your previous browser as TXT, CSV, JSON, or XLSX.")}</li>
                 <li>{t("Add the files below and choose a destination group.")}</li>

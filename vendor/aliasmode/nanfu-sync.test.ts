@@ -15,6 +15,9 @@ import {
 import {
   NANFU_ORGANIZATION_ACTIONS,
   NanfuInputError,
+  NanfuPolicyError,
+  assertNanfuMemberChange,
+  assertNanfuQuotaAllocation,
   mutateNanfuOrganization,
   nanfuOrganizationError,
 } from "./nanfu-organization.ts";
@@ -549,4 +552,75 @@ test("the transfer inbox query selects metadata only and keeps the resolution ti
   expect(urls[0]?.searchParams.get("select")).toContain("resolved_at");
   expect(urls[0]?.searchParams.get("select")).not.toContain("payload");
   expect(urls[0]?.searchParams.get("org_id")).toBe("eq.org-1");
+});
+
+test("a member quota allocation never exceeds the remaining organization plan", () => {
+  const members = [
+    { userId: "owner-1", identity: "owner", quota: 0 },
+    { userId: "member-1", identity: "member", quota: 30 },
+    { userId: "member-2", identity: "member", quota: 20 },
+  ];
+  expect(() => assertNanfuQuotaAllocation({ planQuota: 100, members, quota: 70, targetUserId: "member-2" })).not.toThrow();
+  expect(() => assertNanfuQuotaAllocation({ planQuota: 100, members, quota: 71, targetUserId: "member-2" }))
+    .toThrow(/超过组织剩余可分配配额 70/);
+  expect(() => assertNanfuQuotaAllocation({ planQuota: 100, members, quota: 71, targetUserId: "member-2" }))
+    .toThrow(NanfuPolicyError);
+  // An unchanged quota is always accepted, even if earlier data already over-allocated.
+  expect(() => assertNanfuQuotaAllocation({ planQuota: 10, members, quota: 20, targetUserId: "member-2" })).not.toThrow();
+  // 0 means unlimited on either side, so there is nothing to reserve.
+  expect(() => assertNanfuQuotaAllocation({ planQuota: 0, members, quota: 9999 })).not.toThrow();
+  expect(() => assertNanfuQuotaAllocation({ planQuota: 100, members, quota: 0 })).not.toThrow();
+});
+
+test("only the owner may change an administrator and nobody may change themselves", () => {
+  const admin = { userId: "admin-1", identity: "admin" };
+  const member = { userId: "member-1", identity: "member" };
+  expect(() => assertNanfuMemberChange({ callerUserId: "admin-1", callerIdentity: "admin", requestedUserId: "admin-1", target: admin, nextIdentity: "member" }))
+    .toThrow(/不能修改自己/);
+  expect(() => assertNanfuMemberChange({ callerUserId: "admin-1", callerIdentity: "admin", requestedUserId: "owner-1", target: { userId: "owner-1", identity: "owner" } }))
+    .toThrow(/所有者受保护/);
+  expect(() => assertNanfuMemberChange({ callerUserId: "admin-1", callerIdentity: "admin", requestedUserId: "admin-2", target: { userId: "admin-2", identity: "admin" }, nextIdentity: "member" }))
+    .toThrow(/管理员成员仅组织所有者可调整/);
+  expect(() => assertNanfuMemberChange({ callerUserId: "admin-1", callerIdentity: "admin", requestedUserId: "member-1", target: member, nextIdentity: "admin" }))
+    .toThrow(/只有组织所有者可以任命管理员/);
+  expect(() => assertNanfuMemberChange({ callerUserId: "admin-1", callerIdentity: "admin", requestedUserId: "member-1", target: member, nextIdentity: "manager" })).not.toThrow();
+  expect(() => assertNanfuMemberChange({ callerUserId: "owner-1", callerIdentity: "owner", requestedUserId: "admin-2", target: { userId: "admin-2", identity: "admin" }, nextIdentity: "member" })).not.toThrow();
+});
+
+test("organization mutations enforce self and plan rules before calling the service", async () => {
+  const calls: string[] = [];
+  const owner = {
+    orgId: "org-1", name: "合成组织", identity: "owner", roleName: null, permissions: [], quota: 0, used: 0,
+    planQuota: 100, status: "active", locked: false,
+  };
+  const admin = { ...owner, identity: "admin" };
+  const members = [
+    { userId: "00000000-0000-4000-8000-000000000001", email: "owner@fixture.test", identity: "owner", roleId: null, roleName: null, managerUserId: null, quota: 0, used: 1, status: "active", locked: false },
+    { userId: "00000000-0000-4000-8000-000000000002", email: "admin@fixture.test", identity: "admin", roleId: null, roleName: null, managerUserId: null, quota: 30, used: 2, status: "active", locked: false },
+    { userId: "00000000-0000-4000-8000-000000000003", email: "member@fixture.test", identity: "member", roleId: null, roleName: null, managerUserId: null, quota: 30, used: 1, status: "active", locked: false },
+  ];
+  const client = {
+    orgMe: async () => admin,
+    orgOverview: async () => ({ members, roles: [], groups: [], grants: [], invites: [] }),
+    setMember: async () => { calls.push("set-member"); },
+    setQuota: async () => { calls.push("set-quota"); },
+    createInvite: async () => { calls.push("create-invite"); return "CODE"; },
+  } as unknown as NanfuSyncClient;
+  const context = { callerUserId: "00000000-0000-4000-8000-000000000002" };
+  await expect(mutateNanfuOrganization(client, "set-member",
+    { userId: "00000000-0000-4000-8000-000000000002", identity: "member" }, undefined, context))
+    .rejects.toThrow(/不能修改自己/);
+  await expect(mutateNanfuOrganization(client, "set-member",
+    { userId: "00000000-0000-4000-8000-000000000001", identity: "member" }, undefined, context))
+    .rejects.toThrow(/所有者受保护/);
+  await expect(mutateNanfuOrganization(client, "set-quota",
+    { userId: "00000000-0000-4000-8000-000000000003", quota: 71 }, undefined, context))
+    .rejects.toThrow(/超过组织剩余可分配配额 70/);
+  await expect(mutateNanfuOrganization(client, "create-invite",
+    { identity: "admin", quota: 0, hours: 24 }, undefined, context))
+    .rejects.toThrow(/只有组织所有者可以邀请管理员/);
+  expect(calls).toEqual([]);
+  expect(await mutateNanfuOrganization(client, "set-quota",
+    { userId: "00000000-0000-4000-8000-000000000003", quota: 70 }, undefined, context)).toEqual({});
+  expect(calls).toEqual(["set-quota"]);
 });
