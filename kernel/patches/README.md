@@ -125,7 +125,7 @@ sh kernel/verify-patches.sh --list                      # metadata only
 sh kernel/verify-patches.sh --in-tree --src ~/chromium/src   # leave the tree patched
 ```
 
-`kernel/apply-patches.sh` is a three-line shim to the same verifier, kept only
+`kernel/apply-patches.sh` is a thin shim to the same verifier, kept only
 because `.github/workflows/kernel-patches.yml` calls that path. Do not use it.
 
 The verifier never touches the working tree unless `--in-tree` is given; by

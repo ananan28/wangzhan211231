@@ -121,7 +121,7 @@ Status is `verified (source)` unless marked otherwise.
 | Batch creation | `N:nanfu_environments.py:46-50` | 1-1000 environments with a shared proxy | verified (source) |
 | Launch flags | `M:fingerprint.ts:214-245` | derives `--fingerprint`, screen w/h, platform, timezone, locale, `--fingerprint-hardware-concurrency`, `--fingerprint-noise` | verified (source) |
 | WebRTC flag | `M:launcher.ts:1383-1386`, `M:launcher.ts:1500-1503` | `--force-webrtc-ip-handling-policy` always; `--fingerprint-webrtc-ip` only when Windows **and** a proxy is set **and** the build feature is on | verified (source) |
-| Runtime pin | `M:aliasmode-chromium.ts:18-31` | version + archive/executable SHA-256 | verified (source) |
+| Runtime pin | `M:aliasmode-chromium.ts:18-27` | version + archive/executable SHA-256 | verified (source) |
 | Installer branding | `vendor/aliasmode/src-tauri/nanfu.conf.json` | product name, identifier, bundled resources | verified (source) |
 | Kernel patches | `kernel/patches/` | three diffs against existing upstream files, in `series`; **none compiled or measured** | verified (source) |
 

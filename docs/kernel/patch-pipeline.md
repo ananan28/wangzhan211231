@@ -32,7 +32,7 @@ compiled or measured**. That is the gap the rest of this process closes.
 ```
 kernel/
   verify-patches.sh          the only entry: applies the series and checks its promises
-  apply-patches.sh           three-line shim to it, kept for the frozen CI workflow
+  apply-patches.sh           thin shim to it, kept for the frozen CI workflow
   pinned.json                pinned tag/commit and the authoritative series order
   patches/
     series                   ordered list, kept identical to pinned.json
