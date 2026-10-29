@@ -1,4 +1,4 @@
-import { NanfuSyncClient, NanfuSyncError } from "./nanfu-sync.ts";
+import { NanfuSyncClient, NanfuSyncError, type NanfuMember } from "./nanfu-sync.ts";
 
 export const NANFU_ORGANIZATION_ACTIONS = [
   "create-organization", "create-role", "set-member", "set-quota", "create-group", "grant-group",
@@ -8,7 +8,81 @@ export type NanfuOrganizationAction = typeof NANFU_ORGANIZATION_ACTIONS[number];
 
 export class NanfuInputError extends Error {}
 
-export async function mutateNanfuOrganization(client: NanfuSyncClient, action: NanfuOrganizationAction, raw: unknown, signal?: AbortSignal): Promise<unknown> {
+/**
+ * A refusal decided by the dashboard before the RPC runs. The database remains
+ * the authority; these checks turn two gaps in the hosted RPCs into clear,
+ * actionable messages: a manager changing their own identity/quota, and a
+ * member quota that would exceed the organization's plan.
+ */
+export class NanfuPolicyError extends Error {
+  constructor(message: string, readonly status: 403 | 409 = 409) {
+    super(message);
+    this.name = "NanfuPolicyError";
+  }
+}
+
+export interface NanfuMutationContext {
+  /** Signed-in account making the request. Supplied by the local UI route. */
+  callerUserId?: string;
+}
+
+/** Identities whose assignment only the organization owner may change. */
+export function assertNanfuMemberChange(input: {
+  callerUserId?: string;
+  callerIdentity?: string;
+  requestedUserId: string;
+  target?: Pick<NanfuMember, "userId" | "identity">;
+  nextIdentity?: "admin" | "manager" | "member";
+}): void {
+  if (input.callerUserId && input.requestedUserId === input.callerUserId) {
+    throw new NanfuPolicyError("不能修改自己的成员身份或权限；如需调整，请联系组织所有者。", 403);
+  }
+  if (input.target?.identity === "owner") {
+    throw new NanfuPolicyError("所有者受保护，不能被降级、停用或移除。", 403);
+  }
+  if (input.callerIdentity && input.callerIdentity !== "owner") {
+    if (input.target?.identity === "admin") {
+      throw new NanfuPolicyError("管理员成员仅组织所有者可调整。", 403);
+    }
+    if (input.nextIdentity === "admin") {
+      throw new NanfuPolicyError("只有组织所有者可以任命管理员，请联系组织所有者。", 403);
+    }
+  }
+}
+
+/**
+ * Keep the sum of member quotas inside the organization plan. 0 on either side
+ * means unlimited, so there is nothing to reserve; an unchanged quota is always
+ * accepted so a pre-existing over-allocation can still be saved.
+ */
+export function assertNanfuQuotaAllocation(input: {
+  planQuota: number;
+  members: readonly Pick<NanfuMember, "userId" | "identity" | "quota">[];
+  quota: number;
+  targetUserId?: string;
+}): void {
+  if (input.quota === 0 || input.planQuota <= 0) return;
+  const target = input.targetUserId ? input.members.find(member => member.userId === input.targetUserId) : undefined;
+  if (target && target.quota === input.quota) return;
+  const allocated = input.members
+    .filter(member => member.identity !== "owner" && member.userId !== input.targetUserId)
+    .reduce((sum, member) => sum + Math.max(0, member.quota), 0);
+  const remaining = Math.max(0, input.planQuota - allocated);
+  if (input.quota > remaining) {
+    throw new NanfuPolicyError(
+      `成员窗口配额 ${input.quota} 超过组织剩余可分配配额 ${remaining}（组织上限 ${input.planQuota}，其他成员已分配 ${allocated}）。请先调低其他成员配额。`,
+      409,
+    );
+  }
+}
+
+export async function mutateNanfuOrganization(
+  client: NanfuSyncClient,
+  action: NanfuOrganizationAction,
+  raw: unknown,
+  signal?: AbortSignal,
+  context: NanfuMutationContext = {},
+): Promise<unknown> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new NanfuInputError("请输入有效的操作参数");
   const body = raw as Record<string, unknown>;
   const text = (key: string, max: number, optional = false): string => {
@@ -46,16 +120,65 @@ export async function mutateNanfuOrganization(client: NanfuSyncClient, action: N
       if (!Array.isArray(permissions) || permissions.length > allowed.length || permissions.some(p => typeof p !== "string" || !allowed.includes(p))) throw new NanfuInputError("权限列表无效");
       return { roleId: await client.createRole(text("name", 60), [...new Set(permissions)] as string[], signal) };
     }
-    case "set-member":
-      await client.setMember({ userId: uuid("userId")!, identity: choice("identity", ["admin", "manager", "member"], true),
-        roleId: uuid("roleId", true), managerUserId: uuid("managerUserId", true), status: choice("status", ["active", "disabled"], true),
+    case "set-member": {
+      const userId = uuid("userId")!;
+      const identity = choice("identity", ["admin", "manager", "member"], true);
+      if (context.callerUserId) {
+        const organization = await client.orgMe(signal);
+        const overview = organization ? await client.orgOverview(organization.orgId, signal) : null;
+        assertNanfuMemberChange({
+          callerUserId: context.callerUserId,
+          callerIdentity: organization?.identity,
+          requestedUserId: userId,
+          target: overview?.members.find(member => member.userId === userId),
+          nextIdentity: identity,
+        });
+      }
+      await client.setMember({ userId, identity, roleId: uuid("roleId", true), managerUserId: uuid("managerUserId", true),
+        status: choice("status", ["active", "disabled"], true),
         locked: body.locked === undefined ? undefined : boolean("locked") }, signal);
       return {};
-    case "set-quota": await client.setQuota(uuid("userId")!, integer("quota"), signal); return {};
+    }
+    case "set-quota": {
+      const userId = uuid("userId")!;
+      const quota = integer("quota");
+      if (context.callerUserId === userId) {
+        throw new NanfuPolicyError("不能调整自己的窗口配额；如需调整，请联系组织所有者或管理员。", 403);
+      }
+      if (context.callerUserId) {
+        const organization = await client.orgMe(signal);
+        if (organization) {
+          const overview = await client.orgOverview(organization.orgId, signal);
+          const target = overview.members.find(member => member.userId === userId);
+          if (target?.identity === "owner") {
+            throw new NanfuPolicyError("所有者配额由组织套餐决定，不能单独设置。", 403);
+          }
+          assertNanfuQuotaAllocation({ planQuota: organization.planQuota, members: overview.members, quota, targetUserId: userId });
+        }
+      }
+      await client.setQuota(userId, quota, signal);
+      return {};
+    }
     case "create-group": return { groupId: await client.createGroup(text("name", 60), signal) };
     case "grant-group": await client.grantGroup(uuid("groupId")!, uuid("userId")!, boolean("granted"), signal); return {};
-    case "create-invite": return { code: await client.createInvite({ identity: choice("identity", ["admin", "manager", "member"])!,
-      roleId: uuid("roleId", true), managerUserId: uuid("managerUserId", true), quota: integer("quota"), hours: integer("hours", 1, 8760) }, signal), uses: 1 };
+    case "create-invite": {
+      const identity = choice("identity", ["admin", "manager", "member"])!;
+      const quota = integer("quota");
+      if (context.callerUserId && (identity === "admin" || quota > 0)) {
+        const organization = await client.orgMe(signal);
+        if (organization) {
+          if (identity === "admin" && organization.identity !== "owner") {
+            throw new NanfuPolicyError("只有组织所有者可以邀请管理员，请联系组织所有者。", 403);
+          }
+          if (quota > 0) {
+            const overview = await client.orgOverview(organization.orgId, signal);
+            assertNanfuQuotaAllocation({ planQuota: organization.planQuota, members: overview.members, quota });
+          }
+        }
+      }
+      return { code: await client.createInvite({ identity, roleId: uuid("roleId", true), managerUserId: uuid("managerUserId", true),
+        quota, hours: integer("hours", 1, 8760) }, signal), uses: 1 };
+    }
     case "redeem-invite": return { orgId: await client.redeemInvite(text("code", 128), signal) };
     case "remove-member": return { reclaimed: await client.removeMember(uuid("userId")!, boolean("reclaim"), signal) };
     case "request-transfer": return { transferId: await client.requestTransfer(text("environmentId", 128), uuid("toUserId")!, signal) };
