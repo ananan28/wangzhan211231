@@ -361,14 +361,14 @@ test("organization overview only asks for columns the service actually exposes",
     fetchFn: async (url) => {
       const query = new URL(String(url));
       requests.push(query);
-      if (query.pathname === "/rpc/nanfu_org_overview") {
+      if (query.pathname === "/rest/v1/rpc/nanfu_org_overview") {
         return Response.json([{ user_id: "user-1", email: "owner@fixture.test", identity: "owner", role_id: null, role_name: null,
           env_quota: 0, used: 3, status: "active", locked: false, manager_user_id: null }]);
       }
-      if (query.pathname === "/nanfu_org_roles") return Response.json([{ id: "role-1", name: "运营", permissions: ["env.create", 7] }]);
-      if (query.pathname === "/nanfu_org_groups") return Response.json([{ id: "group-1", name: "默认" }]);
-      if (query.pathname === "/nanfu_org_group_grants") return Response.json([{ group_id: "group-1", user_id: "user-1" }]);
-      if (query.pathname === "/nanfu_org_invites") return Response.json([{ code: "AAAA", identity: "member", expires_at: "2026-11-01T00:00:00Z", redeemed_by: null }]);
+      if (query.pathname === "/rest/v1/nanfu_org_roles") return Response.json([{ id: "role-1", name: "运营", permissions: ["env.create", 7] }]);
+      if (query.pathname === "/rest/v1/nanfu_org_groups") return Response.json([{ id: "group-1", name: "默认" }]);
+      if (query.pathname === "/rest/v1/nanfu_org_group_grants") return Response.json([{ group_id: "group-1", user_id: "user-1" }]);
+      if (query.pathname === "/rest/v1/nanfu_org_invites") return Response.json([{ code: "AAAA", identity: "member", expires_at: "2026-11-01T00:00:00Z", redeemed_by: null }]);
       return Response.json([]);
     },
   });
@@ -377,11 +377,11 @@ test("organization overview only asks for columns the service actually exposes",
     managerUserId: null, quota: 0, used: 3, status: "active", locked: false }]);
   expect(overview.roles[0]?.permissions).toEqual(["env.create"]);
   expect(overview.invites).toEqual([{ code: "AAAA", identity: "member", expiresAt: "2026-11-01T00:00:00Z", redeemedBy: null }]);
-  const invites = requests.find((item) => item.pathname === "/nanfu_org_invites")!;
+  const invites = requests.find((item) => item.pathname === "/rest/v1/nanfu_org_invites")!;
   expect(invites.searchParams.get("select")).toBe("code,identity,expires_at,redeemed_by");
   expect(invites.searchParams.get("order")).toBe("code.asc");
   expect(invites.searchParams.get("org_id")).toBe("eq.org-1");
-  expect(requests.some((item) => item.pathname === "/nanfu_org_group_grants" && item.searchParams.get("order") === "group_id.asc,user_id.asc")).toBe(true);
+  expect(requests.some((item) => item.pathname === "/rest/v1/nanfu_org_group_grants" && item.searchParams.get("order") === "group_id.asc,user_id.asc")).toBe(true);
   expect(JSON.stringify(overview)).not.toContain("payload");
 });
 
