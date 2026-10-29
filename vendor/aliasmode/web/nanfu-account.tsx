@@ -160,7 +160,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
   return <section className="workspace nanfu-account-page" hidden={!active} aria-label="南孚账号与组织">
     <div className="settingspage">
       <h2 className="sect-title">南孚账号与组织</h2>
-      <p>南孚自有账号，与上游 AliasMode Cloud 独立。本机环境不会自动上传或删除；登录南孚账号后才能新建、启动或导入环境，已有环境在登录后归入你的组织。</p>
+      <p>南孚自有账号，与上游 AliasMode Cloud 独立。登录南孚账号后才能新建、启动或导入环境；本机环境不会自动上传，也不会被静默删除。</p>
       {localCount !== null && <button className="btn" type="button" onClick={onLocal}>查看本机环境（{localCount}）</button>}
       <section className="settings-card"><header><h3>南孚账号</h3></header><div className="card-body">
         {busy && <p role="status">正在处理南孚账号或读取组织列表…</p>}
