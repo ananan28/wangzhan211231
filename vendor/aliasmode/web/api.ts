@@ -180,6 +180,24 @@ export interface NanfuCloudTransferInbox {
   error?: string;
 }
 
+/** One personal cloud slot of the signed-in account; payloads stay on the server. */
+export interface NanfuCloudPackageRow {
+  id: string;
+  environmentId: string;
+  environmentName: string;
+  deviceId: string;
+  sizeBytes: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NanfuCloudPackageInbox {
+  deviceId: string;
+  deviceKeyPublished: boolean;
+  packages: NanfuCloudPackageRow[];
+  error?: string;
+}
+
 export interface NanfuTransferInbox {
   userId: string;
   organization: NanfuOrganization;
@@ -188,6 +206,32 @@ export interface NanfuTransferInbox {
   inbox: NanfuTransferRow[];
   sent: NanfuTransferRow[];
   packages?: NanfuCloudTransferInbox;
+  cloud?: NanfuCloudPackageInbox;
+}
+
+export interface NanfuCloudUploadResult {
+  id: string;
+  environmentName: string;
+  hasLoginState: boolean;
+  cookies: number;
+  origins: number;
+  extensions: number;
+  deviceId: string;
+  deviceCount: number;
+  sizeBytes: number;
+}
+
+export interface NanfuCloudDownloadResult {
+  profileId: string;
+  name: string;
+  renamed: boolean;
+  environmentId: string;
+  environmentName: string;
+  hasLoginState: boolean;
+  cookies: number;
+  origins: number;
+  extensions: number;
+  deviceId: string;
 }
 
 export interface NanfuCloudSendResult {
@@ -288,6 +332,21 @@ export function nanfuAcceptCloudEnvironment(id: string, signal?: AbortSignal): P
 
 export function nanfuRevokeCloudEnvironment(id: string, signal?: AbortSignal): Promise<{ ok: true }> {
   return nanfuTransferPost("package-revoke", { id }, signal);
+}
+
+export function nanfuUploadCloudEnvironment(
+  input: { environmentId: string },
+  signal?: AbortSignal,
+): Promise<NanfuCloudUploadResult> {
+  return nanfuTransferPost("package-upload", input, signal);
+}
+
+export function nanfuDownloadCloudEnvironment(id: string, signal?: AbortSignal): Promise<NanfuCloudDownloadResult> {
+  return nanfuTransferPost("package-download", { id }, signal);
+}
+
+export function nanfuRemoveCloudEnvironment(id: string, signal?: AbortSignal): Promise<{ ok: true }> {
+  return nanfuTransferPost("package-remove", { id }, signal);
 }
 
 export function nanfuExportEnvironment(environmentId: string, signal?: AbortSignal): Promise<NanfuEnvExportResult> {

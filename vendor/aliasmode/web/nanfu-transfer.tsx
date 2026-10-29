@@ -4,13 +4,17 @@ import {
   fetchProfiles,
   nanfuAcceptCloudEnvironment,
   nanfuBatchEnvironmentTransfer,
+  nanfuDownloadCloudEnvironment,
   nanfuExportEnvironment,
   nanfuForceEnvironmentTransfer,
   nanfuImportEnvironmentText,
+  nanfuRemoveCloudEnvironment,
   nanfuRequestEnvironmentTransfer,
   nanfuRespondEnvironmentTransfer,
   nanfuRevokeCloudEnvironment,
   nanfuSendCloudEnvironment,
+  nanfuUploadCloudEnvironment,
+  type NanfuCloudPackageRow,
   type NanfuCloudTransferRow,
   type NanfuTransferInbox,
   type NanfuTransferMember,
@@ -36,6 +40,8 @@ const packageStatus = (row: NanfuCloudTransferRow) => {
   if (row.status !== "pending") return statusName(row.status);
   return Date.parse(row.expiresAt) <= Date.now() ? "已过期" : "待接受";
 };
+const sizeText = (bytes: number) =>
+  !Number.isFinite(bytes) || bytes <= 0 ? "-" : bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 export function NanfuTransferPage({ active }: { active: boolean }) {
   const [data, setData] = useState<NanfuTransferInbox | null>(null);
@@ -47,6 +53,9 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
   const [cloudRecipientId, setCloudRecipientId] = useState("");
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [uploadId, setUploadId] = useState("");
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [environmentId, setEnvironmentId] = useState("");
   const [recipientId, setRecipientId] = useState("");
   const [note, setNote] = useState("");
@@ -123,6 +132,9 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
   const packages = data?.packages;
   const incomingPackages = packages?.inbox ?? [];
   const sentPackages = packages?.sent ?? [];
+  const cloud = data?.cloud;
+  const cloudPackages = cloud?.packages ?? [];
+  const cloudReady = !cloud?.error;
 
   const sendToCloud = () => {
     if (!cloudEnvironmentId || !cloudRecipientId) return;
@@ -135,6 +147,39 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
       ].filter(Boolean);
       return `已发送到 ${result.recipientEmail} 的云端收件箱：${parts.join("，")}。对方在「环境转移」页点“接受并导入”，打开就是已登录状态。`;
     });
+  };
+
+  const uploadToCloud = () => {
+    if (!uploadId) return;
+    void run(async (signal) => {
+      const result = await nanfuUploadCloudEnvironment({ environmentId: uploadId }, signal);
+      setUploadId("");
+      const parts = [
+        result.hasLoginState ? `登录态已加密（${result.cookies} 个 Cookie、${result.origins} 个站点存储）` : "该环境还没有保存登录态",
+        result.extensions ? `${result.extensions} 个扩展` : "",
+      ].filter(Boolean);
+      const hint = result.deviceCount > 1
+        ? `已对 ${result.deviceCount} 台登记设备加密。`
+        : "目前只登记了本机一个设备密钥：另一台机器需要先打开一次本页登记密钥，再回来重新上传。";
+      return `已加密上传“${result.environmentName}”到同一账号的云端（${parts.join("，")}）。${hint}`;
+    });
+  };
+
+  const downloadFromCloud = (row: NanfuCloudPackageRow) => {
+    setDownloadingId(row.id);
+    void run(async (signal) => {
+      const result = await nanfuDownloadCloudEnvironment(row.id, signal);
+      return `已下载并导入“${result.name}”${result.renamed ? "（与本机重名，已自动改名，未覆盖原有环境）" : ""}，`
+        + `${result.hasLoginState ? `登录态一并恢复（${result.cookies} 个 Cookie、${result.origins} 个站点存储）` : "但云端包未包含登录态，请自行登录网站"}，直接启动即可。`;
+    }).finally(() => setDownloadingId(null));
+  };
+
+  const removeFromCloud = (row: NanfuCloudPackageRow) => {
+    setRemovingId(row.id);
+    void run(async (signal) => {
+      await nanfuRemoveCloudEnvironment(row.id, signal);
+      return `已从云端移除“${row.environmentName || row.environmentId}”，本机环境不受影响。`;
+    }).finally(() => setRemovingId(null));
   };
 
   const acceptFromCloud = (row: NanfuCloudTransferRow) => {
@@ -237,6 +282,41 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
       {data && !organization && <p>当前账号尚未加入组织；加入组织后才能转移环境。</p>}
       {data && organization && locked && <p role="alert">账号在组织中已锁定或停用，暂不能转移环境。</p>}
 
+      {data && <>
+        <section className="settings-card" aria-label="我的云端">
+          <header><h3>我的云端（同一账号跨机器）</h3></header>
+          <div className="card-body">
+            <p>把本机窗口的配置、指纹、代理、扩展文件与登录态（Cookie、站点存储）在本机加密后上传；云端只保存密文，只有同一账号已登记的设备能解开。另一台机器用同一账号登录后，在这里点“下载并打开”即可，窗口会直接保持登录。</p>
+            {cloud?.error && <p role="alert">{cloud.error}</p>}
+            {cloud && !cloud.deviceKeyPublished && <p role="alert">本机设备密钥尚未登记到云端，上传和下载可能失败；请检查网络后点“刷新转移列表”。</p>}
+            {!sendable.length ? <p>本机还没有 Chromium 引擎的窗口可上传。</p> : <fieldset disabled={busy || !cloudReady} className="nanfu-form">
+              <label className="fld"><span>选择本机窗口</span><select value={uploadId} onChange={(event) => setUploadId(event.target.value)}>
+                <option value="">请选择要上传的窗口</option>
+                {sendable.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.id}</option>)}
+              </select></label>
+              <button className="btn primary" type="button" disabled={!uploadId || busy} onClick={uploadToCloud}>上传到云端</button>
+              <p>只支持 Chromium 引擎的窗口；Camoufox / Firefox 引擎暂不支持云端转移，请继续在这类窗口上手动登录。</p>
+            </fieldset>}
+            {!cloudPackages.length ? <p>这个账号还没有上传过云端环境。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table">
+              <thead><tr><th>窗口</th><th>上传时间</th><th>大小</th><th>操作</th></tr></thead>
+              <tbody>{cloudPackages.map((row) => <tr key={row.id}>
+                <td>{row.environmentName || row.environmentId}<br /><small>{row.environmentId}</small></td>
+                <td>{timeText(row.updatedAt || row.createdAt)}</td>
+                <td>{sizeText(row.sizeBytes)}</td>
+                <td>
+                  <button className="btn primary" type="button" disabled={busy || downloadingId === row.id} onClick={() => downloadFromCloud(row)}>
+                    {downloadingId === row.id ? "正在下载…" : "下载并打开"}
+                  </button>
+                  <button className="btn" type="button" disabled={busy || removingId === row.id} onClick={() => removeFromCloud(row)}>
+                    {removingId === row.id ? "正在移除…" : "从云端移除"}
+                  </button>
+                </td>
+              </tr>)}</tbody></table></div>}
+            <p>下载会新增一个窗口；与本机重名时自动改名，不会覆盖已有窗口。移除只删除云端那一份，本机窗口和登录态不受影响。</p>
+          </div>
+        </section>
+      </>}
+
       {data && organization && !locked && <>
         <section className="settings-card" aria-label="云端转移"><header><h3>云端转移（含登录态）</h3></header><div className="card-body">
           {!sendable.length ? <p>本机还没有可以转移的 Chromium 环境；先新建或导入一个环境，再回来发送。</p> : <>
@@ -250,7 +330,7 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
                 {recipients.map((member) => <option key={member.userId} value={member.userId}>{member.email || member.userId}</option>)}
               </select></label>
               <button className="btn primary" type="button" disabled={!cloudEnvironmentId || !cloudRecipientId} onClick={sendToCloud}>发送到对方云端</button>
-              <p>发送前会自动保存当前登录态（环境正在运行时直接抓取，不用先关闭窗口）。对方不需要你给任何密码或文件，接受后即可使用。</p>
+              <p>发送前会自动保存当前登录态（窗口正在运行时直接抓取，不用先关闭）。对方不需要你给任何密码或文件，接受后即可使用。仅支持 Chromium 引擎窗口；Camoufox / Firefox 引擎暂不支持。</p>
             </fieldset>
           </>}
         </div></section>

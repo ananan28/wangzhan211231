@@ -16,7 +16,7 @@
 
 import {
   createCipheriv, createDecipheriv, createPrivateKey, createPublicKey,
-  diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, type KeyObject,
+  diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, randomUUID, type KeyObject,
 } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -42,6 +42,13 @@ export const NANFU_CLOUD_TRANSFER_VERSION = 1;
 export const NANFU_CLOUD_MAX_PLAINTEXT = 20_000_000;
 const SEAL_ALG = "x25519-hkdf-sha256-aes-256-gcm";
 const SEAL_INFO = "nanfu-cloud-transfer-v1";
+/**
+ * Same primitives, one content key wrapped once per registered device. The
+ * per-device boxes are what makes one account's machines able to open the same
+ * package without the service ever holding a key.
+ */
+const DEVICE_SEAL_ALG = "x25519-hkdf-sha256-aes-256-gcm-devices";
+const DEVICE_BOX_INFO = "nanfu-cloud-device-key-v1";
 const KEY_FILE = "nanfu-transfer-key.json";
 
 export class NanfuCloudTransferError extends Error {
@@ -52,6 +59,8 @@ export class NanfuCloudTransferError extends Error {
 }
 
 export interface NanfuTransferIdentity {
+  /** Random per-install id; only this device's private key opens its boxes. */
+  deviceId: string;
   /** Base64 SPKI DER — safe to publish. */
   publicKey: string;
   /** Base64 PKCS8 DER — stays on this device. */
@@ -68,6 +77,7 @@ function derBase64(key: KeyObject, type: "spki" | "pkcs8"): string {
 export function createTransferIdentity(): NanfuTransferIdentity {
   const pair = generateKeyPairSync("x25519");
   return {
+    deviceId: randomUUID(),
     publicKey: derBase64(pair.publicKey, "spki"),
     privateKey: derBase64(pair.privateKey, "pkcs8"),
   };
@@ -77,7 +87,16 @@ function isIdentity(value: unknown): value is NanfuTransferIdentity {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return typeof record.publicKey === "string" && record.publicKey.length > 40
-    && typeof record.privateKey === "string" && record.privateKey.length > 40;
+    && typeof record.privateKey === "string" && record.privateKey.length > 40
+    && (record.deviceId === undefined || typeof record.deviceId === "string");
+}
+
+function saveIdentity(root: string, identity: NanfuTransferIdentity): void {
+  const file = join(root, KEY_FILE);
+  mkdirSync(root, { recursive: true });
+  const temporary = `${file}.tmp`;
+  writeFileSync(temporary, JSON.stringify(identity), { encoding: "utf8", mode: 0o600 });
+  renameSync(temporary, file);
 }
 
 /** Load this device's transfer keypair, creating it on first use. */
@@ -85,15 +104,19 @@ export function loadOrCreateTransferIdentity(root: string): NanfuTransferIdentit
   const file = join(root, KEY_FILE);
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8"));
-    if (isIdentity(parsed)) return parsed;
+    if (isIdentity(parsed)) {
+      // Keys written before device ids existed are upgraded in place so the
+      // same install keeps its published public key.
+      if (typeof parsed.deviceId === "string" && parsed.deviceId) return parsed;
+      const upgraded: NanfuTransferIdentity = { ...parsed, deviceId: randomUUID() };
+      saveIdentity(root, upgraded);
+      return upgraded;
+    }
   } catch {
     // Missing or unreadable: a fresh keypair is the only useful answer.
   }
   const identity = createTransferIdentity();
-  mkdirSync(root, { recursive: true });
-  const temporary = `${file}.tmp`;
-  writeFileSync(temporary, JSON.stringify(identity), { encoding: "utf8", mode: 0o600 });
-  renameSync(temporary, file);
+  saveIdentity(root, identity);
   return identity;
 }
 
@@ -103,8 +126,8 @@ function publicKeyOf(encoded: string) {
   return key;
 }
 
-function sharedKey(secret: Buffer, salt: Buffer): Buffer {
-  return Buffer.from(hkdfSync("sha256", secret, salt, SEAL_INFO, 32));
+function sharedKey(secret: Buffer, salt: Buffer, info: string = SEAL_INFO): Buffer {
+  return Buffer.from(hkdfSync("sha256", secret, salt, info, 32));
 }
 
 /** Seal plaintext to a recipient public key. `aad` binds the ciphertext to one transfer. */
@@ -174,6 +197,131 @@ export function openTransferPayload(identity: NanfuTransferIdentity, envelope: s
     throw new NanfuCloudTransferError("无法解密这次转移：密钥不匹配或数据被修改，请让发送人重新发送");
   }
   return plaintext.toString("utf8");
+}
+
+export interface NanfuTransferRecipient {
+  deviceId: string;
+  /** Base64 SPKI DER published by that device. */
+  publicKey: string;
+}
+
+function sealContentKeyForDevice(device: NanfuTransferRecipient, contentKey: Buffer, aad: string): Record<string, string> {
+  const recipient = publicKeyOf(device.publicKey);
+  const ephemeral = generateKeyPairSync("x25519");
+  let secret: Buffer;
+  try {
+    secret = diffieHellman({ privateKey: ephemeral.privateKey, publicKey: recipient });
+  } catch {
+    throw new NanfuCloudTransferError("无法为该设备生成加密密钥");
+  }
+  const salt = randomBytes(16);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", sharedKey(secret, salt, DEVICE_BOX_INFO), iv);
+  cipher.setAAD(Buffer.from(`${aad}:key:${device.deviceId}`, "utf8"));
+  const wrapped = Buffer.concat([cipher.update(contentKey), cipher.final()]);
+  return {
+    deviceId: device.deviceId,
+    epk: derBase64(ephemeral.publicKey, "spki"),
+    salt: salt.toString("base64"),
+    iv: iv.toString("base64"),
+    ct: wrapped.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+  };
+}
+
+/**
+ * Seal one plaintext to every device of an account. A random content key
+ * encrypts the payload once; that key is wrapped to each device's X25519 key,
+ * so adding machines costs one small box, not a copy of the payload.
+ */
+export function sealTransferPayloadForDevices(
+  recipients: readonly NanfuTransferRecipient[],
+  plaintext: string,
+  aad: string,
+): string {
+  if (typeof aad !== "string" || !aad) throw new NanfuCloudTransferError("转移编号无效");
+  const unique = new Map<string, NanfuTransferRecipient>();
+  for (const recipient of recipients) {
+    if (!recipient || typeof recipient.deviceId !== "string" || !recipient.deviceId) {
+      throw new NanfuCloudTransferError("设备密钥不完整，无法加密云端包");
+    }
+    if (!unique.has(recipient.deviceId)) unique.set(recipient.deviceId, recipient);
+  }
+  if (unique.size === 0) {
+    throw new NanfuCloudTransferError("还没有登记任何设备密钥，无法加密云端包");
+  }
+  const contentKey = randomBytes(32);
+  try {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", contentKey, iv);
+    cipher.setAAD(Buffer.from(`${aad}:content`, "utf8"));
+    const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+    return JSON.stringify({
+      v: 2,
+      alg: DEVICE_SEAL_ALG,
+      boxes: [...unique.values()].map((recipient) => sealContentKeyForDevice(recipient, contentKey, aad)),
+      iv: iv.toString("base64"),
+      ct: ciphertext.toString("base64"),
+      tag: cipher.getAuthTag().toString("base64"),
+    });
+  } finally {
+    contentKey.fill(0);
+  }
+}
+
+/** Open a multi-device envelope with the box addressed to this install. */
+export function openTransferPayloadForDevices(identity: NanfuTransferIdentity, envelope: string, aad: string): string {
+  let raw: any;
+  try {
+    raw = JSON.parse(envelope);
+  } catch {
+    throw new NanfuCloudTransferError("转移数据已损坏，无法读取");
+  }
+  // Directed transfers sealed before device ids existed stay readable.
+  if (raw?.v === 1 && raw?.alg === SEAL_ALG) return openTransferPayload(identity, envelope, aad);
+  if (!raw || raw.v !== 2 || raw.alg !== DEVICE_SEAL_ALG || !Array.isArray(raw.boxes)) {
+    throw new NanfuCloudTransferError("转移数据使用了不支持的加密格式");
+  }
+  const iv = base64Field(raw.iv, "向量");
+  const tag = base64Field(raw.tag, "校验值");
+  const ciphertext = base64Field(raw.ct, "密文");
+  const box = raw.boxes.find((candidate: any) => candidate && candidate.deviceId === identity.deviceId);
+  if (!box || typeof box !== "object") {
+    throw new NanfuCloudTransferError(
+      "这个云端包没有包含本机的密钥：上传时本机还没有登记。请在原机器重新上传一次，或改用“发送给成员”。",
+    );
+  }
+  const epk = base64Field(box.epk, "临时公钥");
+  const salt = base64Field(box.salt, "盐值");
+  const boxIv = base64Field(box.iv, "向量");
+  const boxTag = base64Field(box.tag, "校验值");
+  const boxCiphertext = base64Field(box.ct, "密文");
+  let contentKey: Buffer;
+  try {
+    const privateKey = createPrivateKey({ key: Buffer.from(identity.privateKey, "base64"), format: "der", type: "pkcs8" });
+    const ephemeral = createPublicKey({ key: epk, format: "der", type: "spki" });
+    const secret = diffieHellman({ privateKey, publicKey: ephemeral });
+    const decipher = createDecipheriv("aes-256-gcm", sharedKey(secret, salt, DEVICE_BOX_INFO), boxIv);
+    decipher.setAAD(Buffer.from(`${aad}:key:${identity.deviceId}`, "utf8"));
+    decipher.setAuthTag(boxTag);
+    contentKey = Buffer.concat([decipher.update(boxCiphertext), decipher.final()]);
+  } catch {
+    throw new NanfuCloudTransferError("无法用本机密钥打开这个云端包：密钥不匹配或数据被修改");
+  }
+  if (contentKey.length !== 32) {
+    contentKey.fill(0);
+    throw new NanfuCloudTransferError("云端包的密钥长度不正确");
+  }
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", contentKey, iv);
+    decipher.setAAD(Buffer.from(`${aad}:content`, "utf8"));
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  } catch {
+    throw new NanfuCloudTransferError("云端包已损坏或传输中被修改，无法解密");
+  } finally {
+    contentKey.fill(0);
+  }
 }
 
 export interface NanfuCloudTransferPayload {

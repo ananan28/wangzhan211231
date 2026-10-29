@@ -1985,3 +1985,100 @@ grant execute on function public.nanfu_env_transfer_request(text, uuid) to authe
 grant execute on function public.nanfu_env_transfer_respond(uuid, boolean) to authenticated;
 grant execute on function public.nanfu_env_transfer_batch(text[], uuid, text) to authenticated;
 grant execute on function public.nanfu_env_transfer_force(text, uuid, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 12. Personal cloud slots: one account's own machines
+-- ---------------------------------------------------------------------------
+-- Unlike nanfu_transfers (one person to another), these rows belong to the
+-- account alone. The package is encrypted once with a random content key; that
+-- key is wrapped to every device public key registered by the account, so the
+-- service never holds a key and every machine the account has used can open it.
+-- Every verb is scoped to user_id = auth.uid(): another account cannot list,
+-- read by id, update, delete, or insert on behalf of the owner.
+
+create table if not exists public.nanfu_device_keys (
+  user_id uuid not null references auth.users (id) on delete cascade,
+  device_id text not null check (char_length(device_id) between 8 and 64),
+  -- Public half only; the private key stays in the device state directory.
+  public_key text not null check (char_length(public_key) between 40 and 200),
+  label text not null default '' check (char_length(label) <= 80),
+  created_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  primary key (user_id, device_id)
+);
+
+alter table public.nanfu_device_keys enable row level security;
+
+revoke all on table public.nanfu_device_keys from anon;
+grant select, insert, update, delete on table public.nanfu_device_keys to authenticated;
+
+drop policy if exists nanfu_device_keys_select on public.nanfu_device_keys;
+create policy nanfu_device_keys_select
+  on public.nanfu_device_keys for select to authenticated
+  using (user_id = auth.uid());
+
+drop policy if exists nanfu_device_keys_insert on public.nanfu_device_keys;
+create policy nanfu_device_keys_insert
+  on public.nanfu_device_keys for insert to authenticated
+  with check (user_id = auth.uid());
+
+drop policy if exists nanfu_device_keys_update on public.nanfu_device_keys;
+create policy nanfu_device_keys_update
+  on public.nanfu_device_keys for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+drop policy if exists nanfu_device_keys_delete on public.nanfu_device_keys;
+create policy nanfu_device_keys_delete
+  on public.nanfu_device_keys for delete to authenticated
+  using (user_id = auth.uid());
+
+create table if not exists public.nanfu_cloud_packages (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  environment_id text not null check (char_length(environment_id) between 1 and 128),
+  environment_name text not null default '' check (char_length(environment_name) <= 200),
+  -- The device that produced the package; diagnostics only, any registered
+  -- device of the same account can open it.
+  device_id text not null check (char_length(device_id) between 8 and 64),
+  -- Multi-recipient envelope: the content key wrapped once per device key.
+  payload text not null check (char_length(payload) between 1 and 28000000),
+  size_bytes integer not null default 0 check (size_bytes >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, environment_id)
+);
+
+create index if not exists nanfu_cloud_packages_user_idx
+  on public.nanfu_cloud_packages (user_id, updated_at desc);
+
+alter table public.nanfu_cloud_packages enable row level security;
+
+revoke all on table public.nanfu_cloud_packages from anon;
+grant select, insert, update, delete on table public.nanfu_cloud_packages to authenticated;
+
+drop policy if exists nanfu_cloud_packages_select on public.nanfu_cloud_packages;
+create policy nanfu_cloud_packages_select
+  on public.nanfu_cloud_packages for select to authenticated
+  using (user_id = auth.uid());
+
+drop policy if exists nanfu_cloud_packages_insert on public.nanfu_cloud_packages;
+create policy nanfu_cloud_packages_insert
+  on public.nanfu_cloud_packages for insert to authenticated
+  with check (user_id = auth.uid());
+
+drop policy if exists nanfu_cloud_packages_update on public.nanfu_cloud_packages;
+create policy nanfu_cloud_packages_update
+  on public.nanfu_cloud_packages for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+drop policy if exists nanfu_cloud_packages_delete on public.nanfu_cloud_packages;
+create policy nanfu_cloud_packages_delete
+  on public.nanfu_cloud_packages for delete to authenticated
+  using (user_id = auth.uid());
+
+drop trigger if exists nanfu_cloud_packages_touch on public.nanfu_cloud_packages;
+create trigger nanfu_cloud_packages_touch
+  before insert or update on public.nanfu_cloud_packages
+  for each row execute function public.nanfu_environments_touch();
