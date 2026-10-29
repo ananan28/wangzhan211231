@@ -6,7 +6,20 @@ import "./proxies.css";
 import { ProxiesPage } from "./proxies.tsx";
 import { TrashPage } from "./trash.tsx";
 import { parsePastedProxy } from "./proxy-input.ts";
-import { createProfilesInOrder } from "./batch-create.ts";
+import { createProfilesInOrder, MAX_BATCH_CREATE } from "./batch-create.ts";
+import { groupTimezones, isValidIanaTimezone, resolveTimezoneSelection, systemTimezones } from "./timezone-options.ts";
+import {
+  NEW_PROFILE_LOCALE,
+  draftTimezoneSeed,
+  formatBatchDiskEstimate,
+  usTimezoneForSeed,
+} from "./creation-defaults.ts";
+import {
+  createFavoriteSite,
+  loadFavoriteSites,
+  saveFavoriteSites,
+  type FavoriteSite,
+} from "./favorites.ts";
 import { ScriptRunPanel, ScriptsPage } from "./scripts.tsx";
 import { I18nProvider, availableLanguages, languageNativeName, useTranslation } from "./i18n.tsx";
 import { localeTimezoneMismatch } from "../profile-locale.ts";
@@ -67,6 +80,7 @@ import {
   type ProxyCheckResult,
   addProfileCookie,
   openProfile,
+  openProfileAtUrl,
   closeProfile,
   raiseProfile,
   restoreParkedSession,
@@ -966,6 +980,53 @@ function LanguageField({ value, onChange, disabled = false }: { value: string; o
   );
 }
 
+/**
+ * Automatic (follow the computer or the proxy), a grouped IANA dropdown, or a
+ * typed zone. Unknown stored values open in the custom box so they are not lost.
+ */
+function TimezoneField({ value, onChange, disabled = false }: { value: string; onChange: (value: string) => void; disabled?: boolean }) {
+  const groups = useMemo(() => groupTimezones(systemTimezones()), []);
+  const known = useMemo(() => new Set(groups.flatMap((group) => group.zones)), [groups]);
+  const [custom, setCustom] = useState(false);
+  useEffect(() => {
+    if (value && known.has(value)) setCustom(false);
+  }, [value, known]);
+  const selection = resolveTimezoneSelection(value, known);
+  const typed = custom || selection.kind === "custom";
+  return (
+    <>
+      <select
+        value={typed ? "__custom" : selection.value}
+        disabled={disabled}
+        onChange={(event) => {
+          if (event.target.value === "__custom") { setCustom(true); return; }
+          setCustom(false);
+          onChange(event.target.value);
+        }}
+      >
+        <option value="">自动（跟随系统/代理）</option>
+        {groups.map((group) => (
+          <optgroup key={group.label} label={group.label}>
+            {group.zones.map((zone) => <option key={zone} value={zone}>{zone}</option>)}
+          </optgroup>
+        ))}
+        <option value="__custom">自定义时区…</option>
+      </select>
+      {typed && (
+        <>
+          <input
+            value={value}
+            disabled={disabled}
+            placeholder="IANA 时区，例如 Europe/Paris"
+            onChange={(event) => onChange(event.target.value.trim())}
+          />
+          {!!value && !isValidIanaTimezone(value) && <small className="fld-warn">无法识别这个时区，保存时会被拒绝</small>}
+        </>
+      )}
+    </>
+  );
+}
+
 // A template literal, so the translation key holds the same line breaks as the source.
 const FINGERPRINT_EDIT_WARNING = `These settings work together. Changing them can create an inconsistent fingerprint, make your browser easier to detect, or trigger account verification. We recommend automatic settings. Custom changes are your responsibility.
 
@@ -1051,7 +1112,7 @@ function FingerprintSettings({
         {onTimezoneChange && (
           <label className="fld">
             <span>{t("Timezone")}</span>
-            <input value={timezone ?? ""} disabled={disabled} placeholder={t("Automatic · e.g. Europe/Paris")} onChange={(event) => onTimezoneChange(event.target.value)} />
+            <TimezoneField value={timezone ?? ""} disabled={disabled} onChange={onTimezoneChange} />
           </label>
         )}
         {onLocaleChange && (
@@ -1506,9 +1567,15 @@ function App() {
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
   const [createCount, setCreateCount] = useState("1");
+  const [favoriteSites, setFavoriteSites] = useState<FavoriteSite[]>(() => loadFavoriteSites());
+  const [favoriteDraft, setFavoriteDraft] = useState<{ name: string; url: string } | null>(null);
+  const [favoriteErr, setFavoriteErr] = useState<string | null>(null);
   const [form, setForm] = useState(BLANK_FORM);
   const [createProxyCheck, setCreateProxyCheck] = useState<ProxyCheckUiState>(EMPTY_PROXY_CHECK);
   const createProxyCheckGeneration = useRef(0);
+  // One seed per create draft keeps the random US timezone stable while the
+  // dialog is open; typing a seed re-derives it from that seed instead.
+  const createDraftSeed = useRef("");
   const [cookieProfile, setCookieProfile] = useState<UiProfile | null>(null);
   const [cookieForm, setCookieForm] = useState(BLANK_COOKIE_FORM);
   const [cookieErr, setCookieErr] = useState<string | null>(null);
@@ -2850,6 +2917,17 @@ function App() {
     if (k === "proxyType" || k === "host" || k === "port" || k === "user" || k === "pass") {
       resetCreateProxyCheck();
     }
+    if (k === "seed") {
+      setForm((f) => {
+        const previousDefault = usTimezoneForSeed(f.seed || createDraftSeed.current);
+        return {
+          ...f,
+          seed: v,
+          timezone: f.timezone === previousDefault ? usTimezoneForSeed(v || createDraftSeed.current) : f.timezone,
+        };
+      });
+      return;
+    }
     setForm((f) => ({ ...f, [k]: v }));
   };
   // Open prefilled with the folder you're browsing; close always resets so a
@@ -2857,7 +2935,9 @@ function App() {
   const openCreate = () => {
     resetCreateProxyCheck();
     setCreateCount("1");
-    setForm({ ...BLANK_FORM, engine: appMode?.defaultEngine ?? "chromium", chromiumRuntime: appMode?.defaultChromiumRuntime ?? "", group: group !== "all" && (!isCloudMode || editableGroups.includes(group)) ? group : "" });
+    const draftSeed = draftTimezoneSeed();
+    createDraftSeed.current = draftSeed;
+    setForm({ ...BLANK_FORM, engine: appMode?.defaultEngine ?? "chromium", chromiumRuntime: appMode?.defaultChromiumRuntime ?? "", group: group !== "all" && (!isCloudMode || editableGroups.includes(group)) ? group : "", locale: NEW_PROFILE_LOCALE, timezone: usTimezoneForSeed(draftSeed) });
     setProxyPaste("");
     setProxyPasteOk(null);
     setCreateErr(null);
@@ -2924,14 +3004,19 @@ function App() {
   };
   const submitCreate = async () => {
     const count = Number(createCount);
-    if (!Number.isInteger(count) || count < 1 || count > 100) {
-      setCreateErr("创建数量必须在 1 到 100 之间");
+    if (!Number.isInteger(count) || count < 1 || count > MAX_BATCH_CREATE) {
+      setCreateErr(`创建数量必须在 1 到 ${MAX_BATCH_CREATE} 之间`);
       return;
     }
     if (count > 1 && form.customNo.trim()) {
       setCreateErr("批量创建时请留空自定义编号，避免编号重复");
       return;
     }
+    if (count >= 50 && !confirm(
+      `即将创建 ${count} 个环境。\n\n` +
+      `预估磁盘占用约 ${formatBatchDiskEstimate(count)}（按每个环境 300–600MB 估算，实际占用以创建结果为准）。\n\n` +
+      "确定继续？",
+    )) return;
     setCreating(true);
     setCreateErr(null);
     try {
@@ -3334,6 +3419,46 @@ function App() {
 
   // ---- Transient success banner ----
   const flash = (m: string) => { setNotice(m); setTimeout(() => setNotice((cur) => (cur === m ? null : cur)), 3500); };
+
+  // ---- Favorite sites: local shortcuts opened in the selected environment ----
+  const storeFavoriteSites = (next: FavoriteSite[]) => {
+    setFavoriteSites(next);
+    saveFavoriteSites(next);
+  };
+  const addFavoriteSite = () => {
+    if (!favoriteDraft) return;
+    const created = createFavoriteSite(favoriteDraft.name, favoriteDraft.url);
+    if (!created.ok) { setFavoriteErr(created.error); return; }
+    if (favoriteSites.some((site) => site.url === created.site.url)) {
+      setFavoriteErr("这个地址已经在常用站点中");
+      return;
+    }
+    storeFavoriteSites([...favoriteSites, created.site]);
+    setFavoriteDraft(null);
+    setFavoriteErr(null);
+  };
+  const removeFavoriteSite = (url: string) => storeFavoriteSites(favoriteSites.filter((site) => site.url !== url));
+  const openFavoriteSite = async (site: FavoriteSite) => {
+    if (selected.size === 0) { flash("请先在列表中选中一个环境，再打开常用站点"); return; }
+    if (selected.size > 1) { flash("一次只能选择一个环境打开常用站点"); return; }
+    const id = selected.values().next().value;
+    if (!id) return;
+    const profile = profiles.find((item) => item.id === id);
+    if (!profile) { setActionErr("选中的环境已不在列表中，请重新选择"); return; }
+    if (profile.mobilePersona) { setActionErr("移动端环境不能直接打开常用站点"); return; }
+    setActionErr(null);
+    setBusy((current) => ({ ...current, [id]: true }));
+    try {
+      const result = await openProfileAtUrl(id, site.url);
+      if (result?.ok === false) setActionErr(`打开「${site.name}」失败：${result.error || "未知错误"}`);
+      else flash(`正在用「${profile.name}」打开 ${site.name}`);
+    } catch (error) {
+      setActionErr(String(error));
+    } finally {
+      setBusy((current) => { const next = { ...current }; delete next[id]; return next; });
+      await load().catch(() => {});
+    }
+  };
 
   // ---- File-based bulk update (export → edit → re-upload, matched by id) ----
   const openUpdate = () => { setShowUpdate(true); setUpdateFile(null); setUpdateErr(null); setUpdateResult(null); };
@@ -4028,6 +4153,44 @@ function App() {
           <button className="btn ghost xs" onClick={() => selectFolder("all")}>{t("All profiles")}</button>
           {sharedOnly ? <span>{t("Shared with me")}</span> : [...(breadcrumb?.ancestors ?? []), group].map((name) => <span key={name}> / <button className="btn ghost xs" onClick={() => selectFolder(name)}>{folderLabel(name)}</button></span>)}
         </nav>}
+        {!isCloudMode && (
+          <div className="sites-bar" aria-label="常用站点">
+            <span className="sites-label">常用站点</span>
+            {favoriteSites.map((site) => (
+              <span className="site-chip" key={site.url}>
+                <button type="button" className="btn ghost xs" title={site.url} onClick={() => void openFavoriteSite(site)}>{site.name}</button>
+                <button type="button" className="site-remove" aria-label={`删除常用站点 ${site.name}`} title="删除" onClick={() => removeFavoriteSite(site.url)}>
+                  <Icon name="close" className="sm" />
+                </button>
+              </span>
+            ))}
+            {favoriteDraft ? (
+              <span className="site-add">
+                <input
+                  className="input"
+                  placeholder="名称（可留空）"
+                  value={favoriteDraft.name}
+                  onChange={(event) => setFavoriteDraft({ ...favoriteDraft, name: event.target.value })}
+                />
+                <input
+                  className="input"
+                  placeholder="https://…"
+                  value={favoriteDraft.url}
+                  onChange={(event) => setFavoriteDraft({ ...favoriteDraft, url: event.target.value })}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") addFavoriteSite();
+                    if (event.key === "Escape") { setFavoriteDraft(null); setFavoriteErr(null); }
+                  }}
+                />
+                <button type="button" className="btn primary xs" onClick={addFavoriteSite}>保存</button>
+                <button type="button" className="btn ghost xs" onClick={() => { setFavoriteDraft(null); setFavoriteErr(null); }}>取消</button>
+              </span>
+            ) : (
+              <button type="button" className="btn ghost xs" onClick={() => { setFavoriteErr(null); setFavoriteDraft({ name: "", url: "" }); }}>+ 添加站点</button>
+            )}
+            {favoriteErr && <span className="site-err" role="alert">{favoriteErr}</span>}
+          </div>
+        )}
         <div className="filterbar">
           <select
             className="select group-filter"
@@ -5083,8 +5246,9 @@ function App() {
             <div className="modal-body">
               {createErr && <div className="modal-err"><Icon name="alert" className="sm" />{createErr}</div>}
               <label className="fld">
-                <span>创建环境数量（1–100）</span>
-                <input type="number" min="1" max="100" step="1" value={createCount} disabled={creating} onChange={(event) => setCreateCount(event.target.value)} />
+                <span>创建环境数量（1–{MAX_BATCH_CREATE}）</span>
+                <input type="number" min="1" max={MAX_BATCH_CREATE} step="1" value={createCount} disabled={creating} onChange={(event) => setCreateCount(event.target.value)} />
+                {Number(createCount) >= 50 && <small>批量较大：按每个环境约 300–600MB 估算，将占用约 {formatBatchDiskEstimate(Number(createCount))} 磁盘空间。</small>}
                 {Number(createCount) > 1 && <small>每个环境独立创建；如填写代理，所有新环境使用同一条代理。</small>}
               </label>
               <div className="fld-row">

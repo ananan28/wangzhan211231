@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createProfilesInOrder } from "./batch-create";
+import { MAX_BATCH_CREATE, createProfilesInOrder } from "./batch-create";
 
 test("creates each profile in order", async () => {
   const calls: number[] = [];
@@ -26,8 +26,21 @@ test("reports a thrown error without retrying", async () => {
   expect(result).toEqual({ created: 0, error: "network" });
 });
 
+test("accepts the shared 100/1000 boundaries", async () => {
+  expect(MAX_BATCH_CREATE).toBe(1000);
+  for (const count of [100, 1000]) {
+    let calls = 0;
+    const result = await createProfilesInOrder(count, async () => {
+      calls++;
+      return { ok: true };
+    });
+    expect(result).toEqual({ created: count });
+    expect(calls).toBe(count);
+  }
+});
+
 test("rejects out-of-range counts", async () => {
-  for (const count of [0, 101, 1.5]) {
+  for (const count of [0, 1001, 1.5]) {
     await expect(createProfilesInOrder(count, async () => ({ ok: true }))).rejects.toThrow();
   }
 });

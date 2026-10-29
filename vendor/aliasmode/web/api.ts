@@ -534,6 +534,9 @@ export async function addProfileCookie(id: string, cookie: ProfileCookieInput): 
 
 export const openProfile = (id: string, force = false) =>
   post(`/ui/api/profiles/${encodeURIComponent(id)}/open${force ? "?force=1" : ""}`);
+/** Opens a site in the selected environment's window; https is enforced by the caller and the server. */
+export const openProfileAtUrl = (id: string, url: string) =>
+  post(`/ui/api/profiles/${encodeURIComponent(id)}/open?url=${encodeURIComponent(url)}`);
 export const closeProfile = (id: string) => post(`/ui/api/profiles/${encodeURIComponent(id)}/close`);
 export const raiseProfile = (id: string) => post(`/ui/api/profiles/${encodeURIComponent(id)}/raise`);
 export const restoreParkedSession = (id: string) =>
