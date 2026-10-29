@@ -24,7 +24,8 @@ test("settings require HTTPS except for a loopback engine", () => {
   expect(() => settings({ baseUrl: "api.example.com" })).toThrow(/full URL/);
   expect(() => settings({ targetLanguage: "not a tag" })).toThrow(/BCP-47/);
   expect(settings({ targetLanguage: "zh-cn" }).targetLanguage).toBe("zh-CN");
-  expect(() => normalizeTranslationSettings({ ...DEFAULT_TRANSLATION_SETTINGS, engine: "google" })).toThrow(/engine/i);
+  expect(normalizeTranslationSettings({ ...DEFAULT_TRANSLATION_SETTINGS, engine: "google" }).engine).toBe("google");
+  expect(() => normalizeTranslationSettings({ ...DEFAULT_TRANSLATION_SETTINGS, engine: "bing" })).toThrow(/engine/i);
   expect(() => normalizeTranslationSettings({ ...DEFAULT_TRANSLATION_SETTINGS, mode: "side-by-side" })).toThrow(/mode/i);
 });
 
@@ -55,10 +56,17 @@ test("each engine request carries only the configured endpoint, texts and key", 
   expect(deepl.headers.Authorization).toBe("DeepL-Auth-Key dk");
   expect(deepl.body).toBe("text=bonjour&target_lang=ZH");
 
-  const custom = buildEngineRequest(settings({ engine: "custom", baseUrl: "https://tr.example.com/api" }), ["a", "b"], "");
+  const custom = buildEngineRequest(settings({ engine: "custom", baseUrl: "https://tr.example.com/api" }), ["a", "b"], "ck");
   expect(custom.url).toBe("https://tr.example.com/api");
-  expect(custom.headers.Authorization).toBeUndefined();
+  expect(custom.headers.Authorization).toBe("Bearer ck");
   expect(JSON.parse(custom.body)).toEqual({ texts: ["a", "b"], targetLanguage: "zh-CN" });
+
+  // Without a key only Google still runs; the other engines say what is missing.
+  expect(() => buildEngineRequest(settings({ engine: "custom", baseUrl: "https://tr.example.com/api" }), ["a"], "")).toThrow(/密钥/);
+  const google = buildEngineRequest(settings({ engine: "google" }), ["bonjour"], "");
+  expect(google.method).toBe("GET");
+  expect(new URL(google.url).searchParams.get("q")).toBe("bonjour");
+  expect(new URL(google.url).searchParams.get("tl")).toBe("zh-CN");
 });
 
 test("engine responses are checked against the number of inputs", () => {
@@ -66,7 +74,7 @@ test("engine responses are checked against the number of inputs", () => {
   expect(parseEngineResponse("openai", { choices: [{ message: { content: "```json\n[\"a\",\"b\"]\n```" } }] }, 2)).toEqual(["a", "b"]);
   expect(parseEngineResponse("deepl", { translations: [{ text: "你好" }] }, 1)).toEqual(["你好"]);
   expect(parseEngineResponse("custom", { translations: ["a"] }, 1)).toEqual(["a"]);
-  expect(() => parseEngineResponse("deepl", { translations: [{ text: "one" }] }, 2)).toThrow(/unexpected response/);
+  expect(() => parseEngineResponse("deepl", { translations: [{ text: "one" }] }, 2)).toThrow(/响应格式异常/);
   expect(() => parseEngineResponse("openai", { choices: [{ message: { content: "not json" } }] }, 1)).toThrow();
 });
 
@@ -135,9 +143,13 @@ test("the helper is installed per launch and only answers with its own token", a
   }
 });
 
-test("the page helper never calls a fixed third-party translator", () => {
+test("the page helper sends page text only, never a page URL or cookies", () => {
   const source = `${TRANSLATION_BACKGROUND}\n${TRANSLATION_CONTENT}`;
   expect(source).toContain("chrome.contextMenus");
-  expect(source).not.toMatch(/translate\.googleapis|translate\.google\.com|translator\.google/);
   expect(source).toContain("/v1/translation/config");
+  // Google is the only fixed third-party host, and it receives page text alone.
+  expect(source).toContain("translate.googleapis.com/translate_a/single");
+  expect(source).toContain('credentials: "omit"');
+  expect(source).toContain('referrerPolicy: "no-referrer"');
+  expect(source).not.toMatch(/document\.cookie|document\.location|location\.href/);
 });

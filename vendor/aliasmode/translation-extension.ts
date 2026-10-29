@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-export const TRANSLATION_EXTENSION_REVISION = 1;
+export const TRANSLATION_EXTENSION_REVISION = 2;
 export const translationExtensionDir = (userDataDir: string) => join(userDataDir, "aliasmode-translation");
 
 /**
@@ -75,6 +75,12 @@ async function config() {
   return body;
 }
 
+const GOOGLE_URL = "https://translate.googleapis.com/translate_a/single";
+// One text per Google request keeps each answer unambiguous; the limit keeps the
+// GET query inside what the endpoint accepts.
+const GOOGLE_TEXT_LIMIT = 1500;
+const GOOGLE_CONCURRENCY = 4;
+
 function deepLTarget(tag) {
   let lang = String(tag || "en").split("-")[0].toUpperCase();
   if (lang === "EN") return String(tag).toUpperCase() === "EN-GB" ? "EN-GB" : "EN-US";
@@ -82,7 +88,36 @@ function deepLTarget(tag) {
   return lang;
 }
 
+function googleTarget(tag) {
+  const parts = String(tag || "zh-CN").split("-");
+  const base = parts[0].toLowerCase();
+  const rest = parts.slice(1).join("-").toLowerCase();
+  if (base === "zh") return rest === "tw" || rest === "hk" || rest === "mo" || rest === "hant" ? "zh-TW" : "zh-CN";
+  if (base === "pt") return rest === "pt" ? "pt-PT" : "pt-BR";
+  if (base === "nb" || base === "nn") return "no";
+  return base;
+}
+
+function missingKey() {
+  return "该引擎需要 API 密钥：请在南孚「设置 → 翻译」里填写密钥，或改用谷歌翻译（免密钥）。";
+}
+function badResponse() {
+  return "翻译服务返回了无法识别的结果（响应格式异常）：请稍后重试，或切换引擎。";
+}
+function statusError(status) {
+  if (status === 401 || status === 403) return "翻译引擎拒绝了密钥：请在南孚「设置 → 翻译」里更新密钥，或改用谷歌翻译（免密钥）。";
+  if (status === 429) return "翻译服务被限流（HTTP 429）：请稍后再试，或切换引擎。";
+  if (status >= 500) return "翻译服务暂时不可用（HTTP " + status + "）：请稍后重试，或切换引擎。";
+  return "翻译请求失败（HTTP " + status + "）：请检查引擎地址，或切换引擎。";
+}
+
 function request(settings, key, texts) {
+  if (settings.engine === "google") {
+    const query = new URLSearchParams({
+      client: "gtx", sl: "auto", tl: googleTarget(settings.targetLanguage), dt: "t", q: texts[0],
+    });
+    return { url: GOOGLE_URL + "?" + query.toString(), init: { method: "GET" } };
+  }
   if (settings.engine === "openai") {
     const base = settings.baseUrl.replace(/\/+$/, "");
     return {
@@ -150,31 +185,114 @@ function parse(engine, payload, expected) {
   } else {
     list = strings(payload && payload.translations) || strings(payload && payload.texts) || strings(payload);
   }
-  if (!list || list.length !== expected) throw new Error("The engine returned an unexpected response.");
+  if (!list || list.length !== expected) throw new Error(badResponse());
   return list;
+}
+
+// Google answers with a list of segments; each starts with the translated text.
+// Empty segments are layout artifacts. Nothing joined means no translation, which
+// is a failure, not a reason to show the source text as if it were translated.
+function googleTranslated(payload) {
+  const segments = payload && payload[0];
+  if (!Array.isArray(segments)) return "";
+  let out = "";
+  for (const segment of segments) {
+    if (Array.isArray(segment) && typeof segment[0] === "string") out += segment[0];
+  }
+  return out.trim();
+}
+
+function googleTextParts(text) {
+  const marks = ["。", "！", "？", ". ", "! ", "? ", "; ", "\n", " "];
+  const parts = [];
+  let rest = text;
+  while (rest.length > GOOGLE_TEXT_LIMIT) {
+    let cut = 0;
+    for (const mark of marks) {
+      const at = rest.lastIndexOf(mark, GOOGLE_TEXT_LIMIT - mark.length);
+      if (at >= 0 && at + mark.length > cut) cut = at + mark.length;
+    }
+    if (cut < GOOGLE_TEXT_LIMIT * 0.4) cut = GOOGLE_TEXT_LIMIT;
+    const code = rest.charCodeAt(cut - 1);
+    if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+    parts.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  if (rest) parts.push(rest);
+  return parts;
+}
+
+// Page text only: no cookies, no referrer, no page URL. The request leaves from
+// this environment's browser, so it follows the environment's proxy.
+async function send(url, init, timeout) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    return await fetch(url, Object.assign({}, init, {
+      cache: "no-store",
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
+      signal: controller.signal,
+    }));
+  } catch (error) {
+    throw new Error(error && error.name === "AbortError"
+      ? "翻译服务响应超时：请稍后重试，或在南孚「设置 → 翻译」里切换引擎。"
+      : "无法连接翻译服务：请检查该环境的代理和网络，也可以在南孚「设置 → 翻译」里切换引擎。");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function googleOne(settings, text) {
+  const built = request(settings, "", [text]);
+  const response = await send(built.url, built.init, 20000);
+  if (!response.ok) throw new Error(statusError(response.status));
+  let payload;
+  try { payload = await response.json(); } catch { throw new Error(badResponse()); }
+  const translated = googleTranslated(payload);
+  if (!translated) throw new Error(badResponse());
+  return translated;
+}
+
+// Google takes one text per request, so a batch becomes one request per block
+// (long blocks are split first) with a bounded number in flight.
+async function googleBatch(settings, texts) {
+  const units = [];
+  texts.forEach((text, index) => {
+    for (const part of googleTextParts(text)) units.push({ index, part });
+  });
+  const out = texts.map(() => "");
+  let cursor = 0;
+  let failure = null;
+  const worker = async () => {
+    while (!failure) {
+      const position = cursor++;
+      if (position >= units.length) return;
+      const unit = units[position];
+      try {
+        out[unit.index] += await googleOne(settings, unit.part);
+      } catch (error) {
+        failure = failure || error;
+        return;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(GOOGLE_CONCURRENCY, units.length) }, worker));
+  if (failure) throw failure;
+  return out;
 }
 
 async function translate(texts) {
   const cfg = await config();
+  const engine = cfg.settings.engine;
+  if (engine === "google") return googleBatch(cfg.settings, texts);
+  if (!String(cfg.key || "").trim()) throw new Error(missingKey());
   const built = request(cfg.settings, cfg.key, texts);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60000);
-  let response;
-  try {
-    response = await fetch(built.url, { ...built.init, signal: controller.signal });
-  } catch (error) {
-    throw new Error(error && error.name === "AbortError" ? "The engine timed out." : "Cannot reach the translation engine. Check the environment proxy and engine URL.");
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) throw new Error("The engine rejected the API key. Update it in Nanfu Settings → Translation.");
-    if (response.status === 429) throw new Error("The engine rate limit was reached. Try again later.");
-    throw new Error("The translation engine failed (HTTP " + response.status + ").");
-  }
+  const response = await send(built.url, built.init, 60000);
+  if (!response.ok) throw new Error(statusError(response.status));
   let payload;
-  try { payload = await response.json(); } catch { throw new Error("The engine returned invalid JSON."); }
-  return parse(cfg.settings.engine, payload, texts.length);
+  try { payload = await response.json(); } catch { throw new Error(badResponse()); }
+  return parse(engine, payload, texts.length);
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
