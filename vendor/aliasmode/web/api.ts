@@ -52,9 +52,9 @@ export function fetchNanfuState(signal?: AbortSignal): Promise<{ state: NanfuAcc
 
 export function nanfuAuthAction(
   action: "signup" | "signin" | "restore" | "signout",
-  input: { email?: string; password?: string } = {},
+  input: { email?: string; password?: string; invite?: string } = {},
   signal?: AbortSignal,
-): Promise<{ state?: NanfuAccountState; persistent?: boolean; email?: string; verificationRequired?: boolean; selfJoin?: { ok: boolean; error?: string } }> {
+): Promise<{ state?: NanfuAccountState; persistent?: boolean; email?: string; verificationRequired?: boolean; selfJoin?: { ok: boolean; orgId?: string; error?: string } }> {
   return nanfuJson(action, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal });
 }
 

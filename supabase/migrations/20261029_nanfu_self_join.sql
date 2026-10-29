@@ -28,6 +28,9 @@ alter table public.nanfu_org_members
 -- built-in '成员' role when it exists, manager = the organization owner and a
 -- 20-window allowance. An account that already has an organization just gets its
 -- own id back, so the client can call this on every sign-in and restart.
+-- Ordering matters: a seat taken here closes the door on nanfu_org_redeem_invite
+-- (it raises 'this account already belongs to an organization'), so sign-in
+-- redeems an optional invite code before falling back to this function.
 --
 -- The default organization id is a constant inside the body rather than a
 -- function parameter: PostgREST resolves /rpc/nanfu_org_self_join by signature,

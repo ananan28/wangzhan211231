@@ -644,6 +644,17 @@ export async function handleUiRequest(
     // A signed-in account always ends up inside an organization: the default
     // workspace takes anyone who has none. A failure here must never undo a
     // sign-in, so it is reported as a retryable notice instead of an error.
+    const redeemIntoOrganization = async (code: string, signal?: AbortSignal): Promise<{ ok: boolean; orgId?: string; error?: string }> => {
+      // Redeeming after the default seat is taken always fails, so an invalid or
+      // refused code leaves the account organization-free and retryable.
+      if (!code || Array.from(code).length > 128) return { ok: false, error: "邀请码须为1至128个字符；未加入任何组织，请核对后重试。" };
+      try {
+        return { ok: true, orgId: await client.redeemInvite(code, signal) };
+      } catch (error) {
+        if (error instanceof NanfuSyncError) return { ok: false, error: nanfuOrganizationError(error).body.error };
+        return { ok: false, error: "邀请码兑换失败，请稍后重试；未加入任何组织。" };
+      }
+    };
     const joinOrganization = async (): Promise<{ ok: boolean; error?: string }> => {
       try {
         if (await client.orgMe()) return { ok: true };
@@ -668,7 +679,7 @@ export async function handleUiRequest(
           const selfJoin = state.authenticated ? await joinOrganization() : { ok: true };
           return noStoreJson({ ok: true, state, persistent, selfJoin });
         }
-        const body = await req.json().catch(() => null) as { email?: unknown; password?: unknown } | null;
+        const body = await req.json().catch(() => null) as { email?: unknown; password?: unknown; invite?: unknown } | null;
         if (!body || typeof body.email !== "string" || !isValidNanfuEmail(body.email) || typeof body.password !== "string" || !isValidNanfuPassword(body.password)) {
           return noStoreJson({ ok: false, error: "请输入有效邮箱及至少6位密码" }, 400);
         }
@@ -679,7 +690,13 @@ export async function handleUiRequest(
           return noStoreJson({ ok: true, email: result.email, verificationRequired: result.verificationRequired });
         }
         const state = await account.signIn(body.email, body.password);
-        return noStoreJson({ ok: true, state, persistent, selfJoin: await joinOrganization() });
+        // An invite code taken at sign-in is redeemed instead of claiming the
+        // default seat, otherwise the invitation could never be used again.
+        const invite = typeof body.invite === "string" ? body.invite.trim() : "";
+        const selfJoin = invite
+          ? await redeemIntoOrganization(invite, req.signal)
+          : await joinOrganization();
+        return noStoreJson({ ok: true, state, persistent, selfJoin });
       }
       if (req.method === "POST" && action === "self-join") {
         if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);

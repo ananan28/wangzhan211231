@@ -129,6 +129,12 @@ function accountFixture() {
         if (joinFails) return Response.json({ code: "P0001", message: "NANFU_GROUP_INVALID: the default organization is not provisioned" }, { status: 400 });
         return Response.json("org-1");
       }
+      if (url.pathname === "/rest/v1/rpc/nanfu_org_redeem_invite") {
+        const body = await req.json() as any;
+        if (body.p_code === "EXPIRED") return Response.json({ code: "P0001", message: "this invite has expired" }, { status: 400 });
+        if (body.p_code === "MEMBER") return Response.json({ code: "42501", message: "NANFU_FORBIDDEN: this account already belongs to an organization" }, { status: 400 });
+        return Response.json("org-7");
+      }
       if (url.pathname === "/rest/v1/nanfu_orgs") return Response.json([{ id: "org-1", name: "Synthetic organization" }]);
       if (url.pathname === "/rest/v1/rpc/nanfu_org_create") {
         const body = await req.json() as any;
@@ -291,11 +297,12 @@ test("disabled organizations and non-JSON mutations fail closed", async () => {
     expect((await f.call("signin", {}, { "Content-Type": "text/plain" })).status).toBe(415);
     expect(f.requests).toHaveLength(0);
     await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" });
+    const afterSignIn = f.requests.length;
     f.disable();
     const list = await f.call("environments");
     expect(list.body.organization).toMatchObject({ status: "disabled", quota: 2, used: 1 });
     expect(list.body.environments).toEqual([]);
-    expect(f.requests.some(url => url.pathname.endsWith("/nanfu_environments"))).toBe(false);
+    expect(f.requests.slice(afterSignIn).some(url => url.pathname.endsWith("/nanfu_environments") || url.pathname.endsWith("/nanfu_orgs"))).toBe(false);
   } finally { f.close(); }
 });
 
@@ -370,6 +377,29 @@ test("sign-in attaches the account to the default organization without risking t
     expect(retry.body).toEqual({ ok: false, error: "分组或成员不属于当前组织。", code: "NANFU_GROUP_INVALID" });
     f.failJoin(false);
     expect((await f.call("self-join", {})).body).toMatchObject({ ok: true, orgId: "org-1", userId: "a" });
+  } finally { f.close(); }
+});
+
+test("signing in with an invite code redeems it instead of taking the default seat", async () => {
+  const f = accountFixture();
+  try {
+    f.noOrg();
+    const expired = await f.call("signin", { email: "a@fixture.test", password: "synthetic-password", invite: "EXPIRED" });
+    expect(expired.status).toBe(200);
+    expect(expired.body.state.authenticated).toBe(true);
+    expect(expired.body.selfJoin).toEqual({ ok: false, error: "邀请码已过期，请向管理员申请新码。" });
+    await f.call("signout", {});
+    const member = await f.call("signin", { email: "a@fixture.test", password: "synthetic-password", invite: "MEMBER" });
+    expect(member.body.selfJoin).toEqual({ ok: false, error: "当前账号已属于组织，不能重复创建或加入组织。" });
+    expect(JSON.stringify(member.body)).not.toContain("42501");
+    await f.call("signout", {});
+    const blank = await f.call("signin", { email: "a@fixture.test", password: "synthetic-password", invite: "   " });
+    expect(blank.body.selfJoin).toEqual({ ok: true });
+    await f.call("signout", {});
+    const redeemed = await f.call("signin", { email: "a@fixture.test", password: "synthetic-password", invite: "INVITE-OK" });
+    expect(redeemed.body.selfJoin).toEqual({ ok: true, orgId: "org-7" });
+    expect(f.requests.filter(url => url.pathname.endsWith("/rpc/nanfu_org_redeem_invite"))).toHaveLength(3);
+    expect(f.requests.filter(url => url.pathname.endsWith("/rpc/nanfu_org_self_join"))).toHaveLength(1);
   } finally { f.close(); }
 });
 

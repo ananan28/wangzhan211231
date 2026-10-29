@@ -1066,6 +1066,40 @@ begin
 end $$;
 commit;
 
+-- A seat taken by nanfu_org_self_join closes the invite path, so a client that
+-- redeems invites must do it before falling back to the default workspace.
+begin;
+select set_config('request.jwt.claim.sub', '99999999-9999-9999-9999-999999999999', true);
+select set_config('request.jwt.claims', '{"sub":"99999999-9999-9999-9999-999999999999","email":"default-owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  insert into public.nanfu_test_codes (label, code)
+  select 'late-invite', public.nanfu_org_create_invite('member', null, 5);
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', 'cccccccc-cccc-cccc-cccc-cccccccccccc', true);
+select set_config('request.jwt.claims', '{"sub":"cccccccc-cccc-cccc-cccc-cccccccccccc","email":"solo@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare blocked boolean := false;
+begin
+  begin
+    perform public.nanfu_org_redeem_invite((select code from public.nanfu_test_codes where label = 'late-invite'));
+  exception when raise_exception then
+    if sqlerrm not like 'NANFU_FORBIDDEN: this account already belongs to an organization%' then raise; end if;
+    blocked := true;
+  end;
+  if not blocked then raise exception 'an account with an organization redeemed a second invite'; end if;
+  if (select count(*) from public.nanfu_org_members
+      where user_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc') <> 1 then
+    raise exception 'the refused redeem moved the account';
+  end if;
+end $$;
+commit;
+
 drop table if exists public.nanfu_test_codes;
 
 select 'nanfu RLS proof passed' as result;

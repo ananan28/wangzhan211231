@@ -13,6 +13,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
   const [overview, setOverview] = useState<NanfuOrgOverview | null>(null);
   const [organizationName, setOrganizationName] = useState("");
   const [inviteCode, setInviteCode] = useState("");
+  const [signInInvite, setSignInInvite] = useState("");
   const [organizationLoaded, setOrganizationLoaded] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -67,7 +68,10 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
     setInviteCode("");
     let authenticated = false;
     try {
-      const result = await nanfuAuthAction(action, action === "signin" || action === "signup" ? { email, password } : {}, controller.signal);
+      const credentials = { email, password };
+      const result = await nanfuAuthAction(action, action === "signup" || action === "signin"
+        ? (action === "signin" && signInInvite.trim() ? { ...credentials, invite: signInInvite.trim() } : credentials)
+        : {}, controller.signal);
       if (!current(generation)) return;
       if (action === "signup") {
         setSignup(false);
@@ -77,7 +81,8 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
         authenticated = state.authenticated;
         setAccount(state);
         setPersistent(result.persistent === true);
-        if (result.selfJoin && result.selfJoin.ok === false) setNotice(result.selfJoin.error ?? "加入默认组织失败，可稍后重试");
+        if (result.selfJoin?.ok === false) setNotice(result.selfJoin.error ?? "加入默认组织失败，可稍后重试");
+        else if (result.selfJoin?.orgId) setNotice("邀请码已兑换，已加入对应组织。");
         if (state.authenticated && state.userId) await load(generation, controller.signal, state.userId);
         if (action === "signout") setNotice("已退出南孚账号；本机环境保持不变。");
       }
@@ -87,7 +92,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
       setError(failure instanceof Error ? failure.message : "南孚服务暂时不可用，请重试");
       if (!authenticated && (action === "restore" || action === "signout")) setRetry(action);
     } finally {
-      if (current(generation)) { setPassword(""); setBusy(false); }
+      if (current(generation)) { setPassword(""); setSignInInvite(""); setBusy(false); }
     }
   };
   const refresh = async () => {
@@ -170,6 +175,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
         </> : <form className="nanfu-auth-form" onSubmit={event => { event.preventDefault(); void authenticate(signup ? "signup" : "signin"); }}>
           <label className="fld"><span>南孚邮箱</span><input type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} disabled={busy} /></label>
           <label className="fld"><span>南孚密码</span><input type="password" autoComplete={signup ? "new-password" : "current-password"} minLength={6} required value={password} onChange={event => setPassword(event.target.value)} disabled={busy} /></label>
+          {!signup && <label className="fld"><span>邀请码（选填）</span><input maxLength={128} autoComplete="off" value={signInInvite} onChange={event => setSignInInvite(event.target.value)} disabled={busy} placeholder="填写管理员给的邀请码，登录时直接加入该组织" /></label>}
           <button className="btn primary" type="submit" disabled={busy}>{signup ? "注册南孚账号" : "登录南孚账号"}</button>
           <button className="btn" type="button" disabled={busy} onClick={() => { setSignup(!signup); setPassword(""); setError(null); }}>{signup ? "已有账号，去登录" : "没有账号，去注册"}</button>
         </form>}
