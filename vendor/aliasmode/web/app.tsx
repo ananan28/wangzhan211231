@@ -114,6 +114,7 @@ import {
   isNanfuSignInRequired,
 } from "./api.ts";
 import { NanfuAccountPage } from "./nanfu-account.tsx";
+import { NanfuGate } from "./nanfu-gate.tsx";
 import { NanfuTransferPage } from "./nanfu-transfer.tsx";
 
 /** Run async tasks with bounded concurrency (so "Open 50" isn't 50 at once). */
@@ -398,23 +399,6 @@ const ICONS = {
 } as const;
 
 type IconName = keyof typeof ICONS;
-
-/**
- * Official project links, mirroring the footer on aliasmode.com. The GitHub URL
- * is this repository's own origin, so the two can never drift apart.
- */
-const PROJECT_LINKS = [
-  {
-    href: "https://github.com/aliasmode/aliasmode",
-    label: "GitHub",
-    path: "M12 .3a12 12 0 00-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 016 0C17.4 5.4 18.4 5.7 18.4 5.7c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0012 .3z",
-  },
-  {
-    href: "https://t.me/aliasmode",
-    label: "Telegram",
-    path: "M23.91 3.79 20.3 20.84c-.25 1.21-.98 1.5-1.99.93l-5.49-4.05-2.65 2.55c-.3.3-.55.55-1.12.55l.4-5.63 10.24-9.25c.45-.4-.1-.62-.69-.22L6.44 13.09.2 11.14c-1.36-.42-1.38-1.36.28-2.01L22.17 1.8c1.13-.42 2.12.26 1.74 1.99Z",
-  },
-] as const;
 
 function Icon({ name, className }: { name: IconName; className?: string }) {
   return (
@@ -1517,7 +1501,8 @@ function App() {
   // Profiles that need a proxy. Local mode only: a Cloud profile shows no
   // proxy until its encrypted payload is fetched, so the count would be wrong.
   const profilesWithoutProxy = isCloudMode ? 0 : profiles.filter((p) => !p.proxy?.trim()).length;
-  const workspaceReady = (ALLOW_LOCAL_MODE && appMode?.mode === "local") || (isCloudMode && cloudWorkspaceReady(cloudAuth));
+  // Login is enforced by NanfuGate, so the local workspace is always allowed.
+  const workspaceReady = appMode?.mode === "local" || (isCloudMode && cloudWorkspaceReady(cloudAuth));
   const canEditCloud = !isCloudMode || cloudAuth?.workspace?.role === "owner" || cloudAuth?.workspace?.role === "admin" ||
     team?.folders.some((folder) => folder.permission === "edit" && !folder.archivedAt) === true;
   const canManageCloudFolders = cloudAuth?.workspace?.role === "owner" || cloudAuth?.workspace?.role === "admin";
@@ -2226,10 +2211,11 @@ function App() {
 
   useEffect(() => {
     fetchAppMode().then(async (config) => {
-      if (
-        !ALLOW_LOCAL_MODE && config.mode === "local" &&
-        await chooseMode("cloud")
-      ) return;
+      // 南孚版不带 AliasMode 云端：首次启动直接落在本地工作区，登录由 NanfuGate 把关。
+      if (config.mode === "unconfigured") {
+        await chooseMode("local");
+        return;
+      }
       setAppMode(config);
       setRestartRequired(config.restartRequired === true);
     }).catch((error) => {
@@ -3489,9 +3475,8 @@ function App() {
                 <h1 id="onboarding-title">{t("Review the Cloud terms")}</h1>
                 <p>{t("Accept the terms to start using AliasMode Cloud.")}</p>
                 <div className="auth-actions">
-                  <a href="https://aliasmode.com/terms/" target="_blank" rel="noreferrer">{t("Terms")}</a>
-                  <a href="https://aliasmode.com/privacy/" target="_blank" rel="noreferrer">{t("Privacy")}</a>
-                  <a href="https://aliasmode.com/acceptable-use/" target="_blank" rel="noreferrer">{t("Acceptable Use")}</a>
+                  <a href="https://ananan28.github.io/nanfu-site/" target="_blank" rel="noreferrer">{t("Terms")}</a>
+                  <a href="https://ananan28.github.io/nanfu-site/privacy.html" target="_blank" rel="noreferrer">{t("Privacy")}</a>
                 </div>
                 {authErr && <div className="mode-error" role="alert">{authErr}</div>}
                 <button
@@ -3824,11 +3809,11 @@ function App() {
           </button>
           <a
             className="navitem"
-            href="https://aliasmode.com/support/"
+            href="https://ananan28.github.io/nanfu-site/"
             target="_blank"
             rel="noreferrer"
             data-tip={t("Support")}
-            title={t("Support — chat with the AliasMode team")}
+            title={t("Support")}
           >
             <Icon name="help" /><span className="navlabel">{t("Support")}</span>
           </a>
@@ -3836,28 +3821,6 @@ function App() {
             <Icon name="settings" /><span className="navlabel">{t("Settings")}</span>
           </button>
           <div className="sidecredit">
-            {/* Only the name is a link, and it points at its owner: "Developed by
-                Xreacher" goes to Xreacher, not to AliasMode. The project's own
-                links are the GitHub and Telegram marks beside it. */}
-            <span className="watermark">
-              {t("Developed by")}
-              <a href="https://xreacher.com/" target="_blank" rel="noreferrer" title="xreacher.com">Xreacher</a>
-            </span>
-            <div className="projectlinks">
-              {PROJECT_LINKS.map((link) => (
-                <a
-                  key={link.label}
-                  className="projectlink tip"
-                  href={link.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  data-tip={link.label}
-                  aria-label={t("AliasMode on {name}", { name: link.label })}
-                >
-                  <svg className="brandmark" viewBox="0 0 24 24" aria-hidden="true"><path d={link.path} /></svg>
-                </a>
-              ))}
-            </div>
             <p className="footer-mark" aria-hidden="true">南孚浏览器</p>
           </div>
         </div>
@@ -5682,6 +5645,8 @@ rootElement.addEventListener("click", (event) => {
 const root = createRoot(rootElement);
 root.render(
   <I18nProvider>
-    <App />
+    <NanfuGate>
+      <App />
+    </NanfuGate>
   </I18nProvider>
 );
