@@ -451,7 +451,8 @@ pub async fn launch_and_verify(
                         return Ok(port);
                     }
                 }
-                Some(CommandEvent::Stderr(line)) => {
+                Some(CommandEvent::Stderr(chunk)) => {
+                    let line = String::from_utf8_lossy(&chunk).trim_end().to_owned();
                     eprintln!("AliasMode sidecar startup emitted stderr: {line}");
                     if stderr_tail.len() == 40 {
                         stderr_tail.pop_front();
