@@ -13,7 +13,7 @@ import {
 } from "./nanfu-service.ts";
 import { handleUiRequest } from "./ui.ts";
 import type { NanfuCredentialStore } from "./nanfu-account.ts";
-import { fetchNanfuState, fetchNanfuEnvironments, nanfuAuthAction, NanfuApiError } from "./web/api.ts";
+import { fetchNanfuState, fetchNanfuEnvironments, nanfuAuthAction, NanfuApiError, isNanfuSignInRequired } from "./web/api.ts";
 
 function serviceRoleJwt(): string {
   const payload = Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url");
@@ -386,5 +386,19 @@ test("windows cannot be created, launched or imported before a Nanfu session exi
     await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" });
     const allowed = await f.callUi("/ui/api/profiles", { name: "合成环境" });
     expect(allowed.body.code).not.toBe("nanfu_signin_required");
+    expect(isNanfuSignInRequired(allowed.body)).toBe(false);
+  } finally { f.close(); }
+});
+
+test("a refused window write points the dashboard at Nanfu sign-in", async () => {
+  const f = accountFixture();
+  try {
+    const blocked = await f.callUi("/ui/api/profiles", { name: "合成环境" });
+    expect(blocked.status).toBe(401);
+    expect(isNanfuSignInRequired(blocked.body)).toBe(true);
+    expect(isNanfuSignInRequired({ ok: false, error: "别的失败" })).toBe(false);
+    expect(isNanfuSignInRequired({ ok: false, code: "nanfu_signin_required" })).toBe(true);
+    expect(isNanfuSignInRequired(null)).toBe(false);
+    expect(isNanfuSignInRequired("nanfu_signin_required")).toBe(false);
   } finally { f.close(); }
 });
