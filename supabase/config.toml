@@ -1,0 +1,10 @@
+project_id = "zojqxzaqumrtykcufqzg"
+
+# Both functions authenticate their callers themselves: the release function
+# accepts either a user access token or an upload token, and signup is the
+# anonymous registration entry point.
+[functions.nanfu-release]
+verify_jwt = false
+
+[functions.nanfu-signup]
+verify_jwt = false

@@ -1,7 +1,9 @@
 name: Nanfu Windows build
 on:
   push:
-    branches: [feature/chromium-migration]
+    branches:
+      - feature/chromium-migration
+      - qoder/nanfu-release-20261029
     paths:
       - .github/workflows/nanfu-windows-build.yml
       - vendor/aliasmode/web/**
@@ -97,3 +99,48 @@ jobs:
             ${{ runner.temp }}/nanfu-startup-*.txt
           if-no-files-found: error
           retention-days: 7
+      - name: Publish installer to the release channel
+        if: success()
+        shell: pwsh
+        env:
+          NANFU_UPLOAD_TOKEN: ${{ secrets.NANFU_UPLOAD_TOKEN }}
+          NANFU_RELEASE_VERSION: ${{ secrets.NANFU_RELEASE_VERSION }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "$env:NANFU_RELEASE_VERSION".Trim()
+          # No explicit version (or the documented placeholder) means this run
+          # is only a build check: keep the installer as an artifact.
+          if ([string]::IsNullOrWhiteSpace($version) -or $version -eq "0.1.0-beta.70") {
+            Write-Warning "NANFU_RELEASE_VERSION is not configured (placeholder 0.1.0-beta.70); skipping the release upload and keeping the build artifact only."
+            exit 0
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[a-z0-9.]+)?$') {
+            throw "NANFU_RELEASE_VERSION is not a valid release version."
+          }
+          $token = "$env:NANFU_UPLOAD_TOKEN".Trim()
+          if ([string]::IsNullOrWhiteSpace($token)) {
+            throw "NANFU_UPLOAD_TOKEN is required when NANFU_RELEASE_VERSION is set."
+          }
+          $installers = @(Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -File)
+          if ($installers.Count -ne 1) { throw "Expected one installer to publish" }
+          $installer = $installers[0]
+          $sha256 = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $response = Join-Path $env:RUNNER_TEMP "nanfu-release-response.json"
+          $status = & curl.exe -sS -o $response -w "%{http_code}" `
+            -X POST "https://zojqxzaqumrtykcufqzg.supabase.co/functions/v1/nanfu-release" `
+            -H "x-nanfu-upload-token: $token" `
+            -F "version=$version" `
+            -F "platform=win-x64" `
+            -F "sha256=$sha256" `
+            -F "file=@$($installer.FullName);type=application/octet-stream"
+          if ($LASTEXITCODE -ne 0) {
+            throw "curl failed while uploading the installer (exit $LASTEXITCODE)."
+          }
+          $status = "$status".Trim()
+          Write-Host "Release upload responded with HTTP $status"
+          if ($status -ne "200") {
+            if (Test-Path -LiteralPath $response) {
+              Get-Content -LiteralPath $response -Raw -Encoding utf8
+            }
+            throw "Release upload failed with HTTP $status."
+          }

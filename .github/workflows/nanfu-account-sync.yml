@@ -2,7 +2,9 @@ name: Nanfu account and sync tests
 on:
   workflow_dispatch:
   push:
-    branches: [qoder/nanfu-usability-20261028]
+    branches:
+      - qoder/nanfu-usability-20261028
+      - qoder/nanfu-release-20261029
     paths:
       - .github/workflows/nanfu-account-sync.yml
       - vendor/aliasmode/nanfu-*.ts
