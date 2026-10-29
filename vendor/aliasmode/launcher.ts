@@ -40,7 +40,7 @@ import { AUTOFILL_EXTENSION_REVISION, autofillExtensionDir } from "./autofill-ex
 import type { TranslationBridge } from "./translation.ts";
 import { translationExtensionDir } from "./translation-extension.ts";
 import {
-  FINGERPRINT_EXTENSION, FINGERPRINT_EXTENSION_REVISION, fingerprintExtensionDir, installFingerprintExtension,
+  FINGERPRINT_EXTENSION, FINGERPRINT_EXTENSION_REVISION, fingerprintExtensionDir, writeFingerprintExtension,
 } from "./fingerprint-extension.ts";
 import { allocatePort } from "./ports.ts";
 import {
@@ -1427,7 +1427,7 @@ export class Launcher {
     if (this.autofill) loadHelper(autofillExtensionDir(userDataDir));
     if (this.translation?.enabled()) loadHelper(translationExtensionDir(userDataDir));
     // The JS fingerprint layer only exists inside the Chromium runtime, and only
-    // when this launch actually wrote it (see installFingerprintExtension).
+    // when this launch actually wrote it (see writeFingerprintExtension).
     if (FINGERPRINT_EXTENSION && profile.chromiumRuntime) {
       const helper = fingerprintExtensionDir(userDataDir);
       if (existsSync(join(helper, "manifest.json"))) loadHelper(helper);
@@ -2030,16 +2030,16 @@ export class Launcher {
         this.log(`proxy relay ready for ${profileId}`);
         profile = this.requireUnchangedProfile(profileId, profileSnapshot, "proxy relay startup");
       }
-      // Rewrite the JS helper before the argv is built and the process spawned:
-      // a copy left by an older revision must never be the one that loads.
+      // Write the JS helper after the proxy-exit timezone is applied and before the
+      // argv is built: the plan embeds profile.timezone, so it must see the final one.
       if (FINGERPRINT_EXTENSION && profile.chromiumRuntime) {
         try {
-          const helper = installFingerprintExtension(userDataDir, profile);
-          this.log(`${profileId}: fingerprint helper rev ${helper.revision} ${helper.rewritten ? "written" : "unchanged"}`);
-        } catch (error) {
-          // Losing the JS layer is not a reason to refuse a launch; the engine's
-          // own coverage still applies and the next launch retries the write.
-          this.log(`${profileId}: fingerprint helper unavailable (${error instanceof Error ? error.message : "write failed"}); launching without it`);
+          writeFingerprintExtension(profile, userDataDir);
+          this.log(`${profileId}: fingerprint helper written`);
+        } catch {
+          // Losing the JS layer is not a reason to refuse a launch; the kernel still
+          // owns the identity and the next launch retries the write.
+          this.log(`${profileId}: fingerprint helper not written; launching without it`);
         }
       }
       const args = this.buildArgs(
