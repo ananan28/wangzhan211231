@@ -183,7 +183,7 @@ async function handleDownload(
   }
 
   const query = new URLSearchParams({
-    platform,
+    platform: `eq.${platform}`,
     select: "version,platform,file_name,object_key,sha256,byte_size",
     order: "published_at.desc",
     limit: "1",
