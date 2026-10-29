@@ -47,6 +47,8 @@ grant execute on function auth.jwt() to authenticated;
 \i supabase/migrations/20261029_nanfu_environments.sql
 \i supabase/migrations/20261029_nanfu_function_grants.sql
 \i supabase/migrations/20261029_nanfu_function_grants.sql
+\i supabase/migrations/20261029_nanfu_self_join.sql
+\i supabase/migrations/20261029_nanfu_self_join.sql
 
 do $$
 declare signature text; target regprocedure;
@@ -57,7 +59,8 @@ begin
     'public.nanfu_org_require(text)', 'public.nanfu_org_assert_target(public.nanfu_org_members,uuid)',
     'public.nanfu_env_visible(uuid,uuid,uuid,uuid)', 'public.nanfu_env_writable(uuid,uuid,uuid)',
     'public.nanfu_org_check_quota(uuid,uuid,integer)', 'public.nanfu_environments_touch()',
-    'public.nanfu_transfers_guard()', 'public.nanfu_environments_quota()'
+    'public.nanfu_transfers_guard()', 'public.nanfu_environments_quota()',
+    'public.nanfu_org_self_join()'
   ] loop
     target := to_regprocedure(signature);
     if target is null or has_function_privilege('anon', target, 'EXECUTE')
@@ -859,6 +862,207 @@ declare n bigint;
 begin
   select count(*) into n from public.nanfu_environments;
   if n <> 1 then raise exception 'manager still sees the removed subordinate, count %', n; end if;
+end $$;
+commit;
+
+-- ---------------------------------------------------------------------------
+-- 16. Free tier: an orphan account self-joins the default workspace, 0 means
+--     unlimited, an administrator is never bound by env_quota, and a
+--     self-created organization starts under the organization ceiling default.
+-- ---------------------------------------------------------------------------
+
+insert into auth.users (id, email) values
+  ('99999999-9999-9999-9999-999999999999', 'default-owner@example.com'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'self-joined@example.com'),
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'capped-admin@example.com'),
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'solo@example.com')
+on conflict (id) do nothing;
+
+-- The operator provisions the default workspace with this fixed id; recreate it
+-- as the table owner, uncapped, with its owner attached as a member row so the
+-- security-definer RPCs can see an administrator.
+insert into public.nanfu_orgs (id, owner_user_id, name, plan_env_max)
+values ('a21d2387-127a-4116-aedd-c16164ef1e58', '99999999-9999-9999-9999-999999999999', '默认组织', 0)
+on conflict (id) do nothing;
+
+insert into public.nanfu_org_roles (org_id, name, permissions, is_system)
+values ('a21d2387-127a-4116-aedd-c16164ef1e58', '成员', array['env.create', 'env.delete', 'env.transfer'], true)
+on conflict (org_id, name) do nothing;
+
+insert into public.nanfu_org_members (org_id, user_id, email, identity, env_quota)
+values ('a21d2387-127a-4116-aedd-c16164ef1e58', '99999999-9999-9999-9999-999999999999', 'default-owner@example.com', 'owner', 0)
+on conflict (user_id) do nothing;
+
+begin;
+select set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', true);
+select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","email":"self-joined@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare joined uuid; member public.nanfu_org_members;
+begin
+  joined := public.nanfu_org_self_join();
+  if joined <> 'a21d2387-127a-4116-aedd-c16164ef1e58' then raise exception 'self-join returned %', joined; end if;
+  select * into member from public.nanfu_org_members where user_id = auth.uid();
+  if member.identity <> 'member' then raise exception 'self-join granted the % identity', member.identity; end if;
+  if member.env_quota <> 20 then raise exception 'a free member starts with % windows', member.env_quota; end if;
+  if member.email <> 'self-joined@example.com' then raise exception 'self-join lost the account email'; end if;
+  if member.manager_user_id <> '99999999-9999-9999-9999-999999999999' then
+    raise exception 'self-join did not pin the manager to the organization owner';
+  end if;
+  if member.role_id is null or not exists (
+    select 1 from public.nanfu_org_roles r where r.id = member.role_id and r.name = '成员'
+  ) then raise exception 'self-join did not assign the built-in member role'; end if;
+  -- The client calls this on every sign-in and after a failed refresh, so a
+  -- second call must hand back the same organization instead of failing.
+  if public.nanfu_org_self_join() <> joined then raise exception 'self-join is not idempotent'; end if;
+end $$;
+commit;
+
+-- An account that already belongs somewhere keeps its own organization.
+begin;
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","email":"owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare own uuid;
+begin
+  select id into own from public.nanfu_orgs where owner_user_id = auth.uid();
+  if public.nanfu_org_self_join() <> own then raise exception 'self-join moved an existing member'; end if;
+end $$;
+commit;
+
+-- A capped administrator keeps creating windows: only the organization ceiling
+-- binds it. The invite path is what turns bbbb into an administrator.
+begin;
+select set_config('request.jwt.claim.sub', '99999999-9999-9999-9999-999999999999', true);
+select set_config('request.jwt.claims', '{"sub":"99999999-9999-9999-9999-999999999999","email":"default-owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  insert into public.nanfu_test_codes (label, code)
+  select 'default-admin-invite', public.nanfu_org_create_invite('admin', null, 1);
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', true);
+select set_config('request.jwt.claims', '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","email":"capped-admin@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare code text;
+begin
+  select public.nanfu_org_redeem_invite(c.code) into code from public.nanfu_test_codes c where c.label = 'default-admin-invite';
+  if code <> 'a21d2387-127a-4116-aedd-c16164ef1e58' then raise exception 'administrator invite joined %', code; end if;
+  if (select env_quota from public.nanfu_org_members where user_id = auth.uid()) <> 1 then
+    raise exception 'the invite did not carry the one-window allowance';
+  end if;
+  -- Three windows on an allowance of one: the administrator path returns before
+  -- env_quota is ever read.
+  insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+  values (auth.uid(), 'a21d2387-127a-4116-aedd-c16164ef1e58', 'admin-1', '{"v":1,"ct":"YQ=="}'),
+         (auth.uid(), 'a21d2387-127a-4116-aedd-c16164ef1e58', 'admin-2', '{"v":1,"ct":"Yg=="}'),
+         (auth.uid(), 'a21d2387-127a-4116-aedd-c16164ef1e58', 'admin-3', '{"v":1,"ct":"Yw=="}');
+end $$;
+commit;
+
+-- A plain member is bound, and the same member is unbound again at 0.
+begin;
+select set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', true);
+select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","email":"self-joined@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+  values (auth.uid(), 'a21d2387-127a-4116-aedd-c16164ef1e58', 'free-1', '{"v":1,"ct":"ZA=="}'),
+         (auth.uid(), 'a21d2387-127a-4116-aedd-c16164ef1e58', 'free-2', '{"v":1,"ct":"ZQ=="}');
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '99999999-9999-9999-9999-999999999999', true);
+select set_config('request.jwt.claims', '{"sub":"99999999-9999-9999-9999-999999999999","email":"default-owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+select public.nanfu_org_set_quota('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 2);
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', true);
+select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","email":"self-joined@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare blocked boolean := false;
+begin
+  begin
+    insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+    values (auth.uid(), 'a21d2387-127a-4116-aedd-c16164ef1e58', 'free-3', '{"v":1,"ct":"Zg=="}');
+  exception when raise_exception then
+    if sqlerrm not like 'NANFU_ENV_QUOTA:%' then raise; end if;
+    blocked := true;
+  end;
+  if not blocked then raise exception 'a member created a third window on an allowance of two'; end if;
+end $$;
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', '99999999-9999-9999-9999-999999999999', true);
+select set_config('request.jwt.claims', '{"sub":"99999999-9999-9999-9999-999999999999","email":"default-owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+select public.nanfu_org_set_quota('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 0);
+commit;
+
+begin;
+select set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', true);
+select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","email":"self-joined@example.com","role":"authenticated"}', true);
+set local role authenticated;
+insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+values (auth.uid(), 'a21d2387-127a-4116-aedd-c16164ef1e58', 'free-3', '{"v":1,"ct":"Zg=="}');
+do $$
+declare n bigint;
+begin
+  select count(*) into n from public.nanfu_environments
+   where owner_user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and org_id = 'a21d2387-127a-4116-aedd-c16164ef1e58';
+  if n <> 3 then raise exception 'an allowance of 0 should be unlimited, windows %', n; end if;
+end $$;
+commit;
+
+-- A self-created organization starts at the default ceiling.
+begin;
+select set_config('request.jwt.claim.sub', 'cccccccc-cccc-cccc-cccc-cccccccccccc', true);
+select set_config('request.jwt.claims', '{"sub":"cccccccc-cccc-cccc-cccc-cccccccccccc","email":"solo@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare own uuid; cap integer;
+begin
+  own := public.nanfu_org_create('个人团队');
+  select plan_env_max into cap from public.nanfu_orgs where id = own;
+  if cap <> 20 then raise exception 'a new organization defaults to a ceiling of %', cap; end if;
+  insert into public.nanfu_test_codes (label, code) values ('solo-org', own::text);
+end $$;
+commit;
+
+-- The ceiling is lowered by the operator (an authenticated role has no UPDATE
+-- policy on nanfu_orgs), and it still binds the organization owner.
+update public.nanfu_orgs set plan_env_max = 1
+ where id = (select code::uuid from public.nanfu_test_codes where label = 'solo-org');
+
+begin;
+select set_config('request.jwt.claim.sub', 'cccccccc-cccc-cccc-cccc-cccccccccccc', true);
+select set_config('request.jwt.claims', '{"sub":"cccccccc-cccc-cccc-cccc-cccccccccccc","email":"solo@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare own uuid; blocked boolean := false;
+begin
+  select code::uuid into own from public.nanfu_test_codes where label = 'solo-org';
+  insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+  values (auth.uid(), own, 'solo-1', '{"v":1,"ct":"Zw=="}');
+  begin
+    insert into public.nanfu_environments (owner_user_id, org_id, environment_id, payload)
+    values (auth.uid(), own, 'solo-2', '{"v":1,"ct":"aA=="}');
+  exception when raise_exception then
+    if sqlerrm not like 'NANFU_ORG_QUOTA:%' then raise; end if;
+    blocked := true;
+  end;
+  if not blocked then raise exception 'the organization ceiling did not bind its owner'; end if;
 end $$;
 commit;
 

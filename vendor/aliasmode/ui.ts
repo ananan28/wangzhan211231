@@ -366,6 +366,17 @@ function noStoreJson(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
+/**
+ * Windows are a signed-in feature: creating, launching or importing one needs a
+ * Nanfu session. Reads stay open so an existing local collection keeps showing
+ * its own rows and can point the user at sign-in instead of looking empty.
+ */
+function needsNanfuSession(method: string, pathname: string): boolean {
+  if (method !== "POST") return false;
+  return pathname === "/ui/api/profiles" || pathname === "/ui/api/import" || pathname === "/ui/api/import/upload"
+    || /^\/ui\/api\/profiles\/[^/]+\/open$/.test(pathname);
+}
+
 // Shell UI language preference. localStorage cannot persist it: the desktop
 // shell serves the UI from a random loopback port each launch, and localStorage
 // is origin-scoped (http://127.0.0.1:PORT), so it is wiped on every restart.
@@ -623,6 +634,18 @@ export async function handleUiRequest(
     }
     const { account, client, persistent } = nanfu;
     const action = pathname.slice("/ui/api/nanfu/".length);
+    // A signed-in account always ends up inside an organization: the default
+    // workspace takes anyone who has none. A failure here must never undo a
+    // sign-in, so it is reported as a retryable notice instead of an error.
+    const joinOrganization = async (): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        if (await client.orgMe()) return { ok: true };
+        await client.selfJoinOrg();
+        return { ok: true };
+      } catch {
+        return { ok: false, error: "加入默认组织失败，可稍后重试" };
+      }
+    };
     try {
       if (action === "state" && req.method === "GET") {
         return noStoreJson({ ok: true, state: account.state(), persistent });
@@ -635,7 +658,8 @@ export async function handleUiRequest(
         }
         if (action === "restore") {
           const state = await account.restore();
-          return noStoreJson({ ok: true, state, persistent });
+          const selfJoin = state.authenticated ? await joinOrganization() : { ok: true };
+          return noStoreJson({ ok: true, state, persistent, selfJoin });
         }
         const body = await req.json().catch(() => null) as { email?: unknown; password?: unknown } | null;
         if (!body || typeof body.email !== "string" || !isValidNanfuEmail(body.email) || typeof body.password !== "string" || !isValidNanfuPassword(body.password)) {
@@ -648,7 +672,16 @@ export async function handleUiRequest(
           return noStoreJson({ ok: true, email: result.email, verificationRequired: result.verificationRequired });
         }
         const state = await account.signIn(body.email, body.password);
-        return noStoreJson({ ok: true, state, persistent });
+        return noStoreJson({ ok: true, state, persistent, selfJoin: await joinOrganization() });
+      }
+      if (req.method === "POST" && action === "self-join") {
+        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
+        const revision = account.revision();
+        const orgId = await client.selfJoinOrg(req.signal);
+        account.assertCurrent(revision);
+        const organization = await client.orgMe(req.signal);
+        account.assertCurrent(revision);
+        return noStoreJson({ ok: true, orgId, organization, userId: account.state().userId });
       }
       if (req.method === "POST" && NANFU_ORGANIZATION_ACTIONS.includes(action as NanfuOrganizationAction)) {
         if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
@@ -701,6 +734,10 @@ export async function handleUiRequest(
       }
       return noStoreJson({ ok: false, error: "南孚账号操作失败，请重试；本机环境不受影响", retryable: true }, 503);
     }
+  }
+
+  if (options.nanfu && !options.nanfu.account.state().authenticated && needsNanfuSession(req.method, pathname)) {
+    return noStoreJson({ ok: false, error: "请先登录南孚账号，登录后才能新建、启动或导入环境", code: "nanfu_signin_required" }, 401);
   }
 
   if (pathname === "/ui/api/scripts" || pathname.startsWith("/ui/api/scripts/")) {

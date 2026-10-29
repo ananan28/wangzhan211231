@@ -86,6 +86,7 @@ function accountFixture() {
   let disabled = false;
   let verificationRequired = false;
   let emptyOrg = false;
+  let joinFails = false;
   let offline = false;
   let rejectRefresh = false;
   let pauseEnvironments: (() => Promise<void>) | undefined;
@@ -124,6 +125,10 @@ function accountFixture() {
         org_id: "org-1", identity: "member", role_name: "成员", permissions: ["env.create"],
         env_quota: 2, used: 1, status: disabled ? "disabled" : "active", locked,
       }]);
+      if (url.pathname === "/rest/v1/rpc/nanfu_org_self_join") {
+        if (joinFails) return Response.json({ code: "P0001", message: "NANFU_GROUP_INVALID: the default organization is not provisioned" }, { status: 400 });
+        return Response.json("org-1");
+      }
       if (url.pathname === "/rest/v1/nanfu_orgs") return Response.json([{ id: "org-1", name: "Synthetic organization" }]);
       if (url.pathname === "/rest/v1/rpc/nanfu_org_create") {
         const body = await req.json() as any;
@@ -167,8 +172,15 @@ function accountFixture() {
   };
   return {
     call, requests, credentials, token: () => token, baseUrl: `http://127.0.0.1:${ui.port}`,
+    callUi: async (path: string, body?: object) => {
+      const response = await fetch(`http://127.0.0.1:${ui.port}${path}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined,
+      });
+      return { status: response.status, body: await response.json() as any };
+    },
     restart: () => { runtime = createNanfuRuntime({ file, env: {}, credentials }); },
     lock: () => { locked = true; }, noOrg: () => { emptyOrg = true; },
+    failJoin: (value: boolean) => { joinFails = value; },
     disable: () => { disabled = true; }, verifyEmail: () => { verificationRequired = true; },
     offline: (value: boolean) => { offline = value; }, rejectRefresh: () => { rejectRefresh = true; },
     pause: (fn: () => Promise<void>) => { pauseEnvironments = fn; },
@@ -296,7 +308,7 @@ test("the frontend Nanfu client reaches real local routes with no-store and canc
     if (!path.startsWith("/ui/api/nanfu/")) return originalFetch(input, init);
     requests.push({ path, init });
     return originalFetch(new URL(path, f.baseUrl), init);
-  }) as typeof fetch);
+  }) as unknown as typeof fetch);
   try {
     expect((await fetchNanfuState()).state.authenticated).toBe(false);
     await expect(nanfuAuthAction("signin", { email: "a@fixture.test", password: "wrong-password" })).rejects.toBeInstanceOf(NanfuApiError);
@@ -338,5 +350,41 @@ test("organization management routes need a session, validate input and map refu
     expect(missing.body.error).toBe("服务端拒绝操作，请检查参数、目标状态或联系管理员。");
     await f.call("signout", {});
     expect((await f.call("organization-overview")).status).toBe(401);
+  } finally { f.close(); }
+});
+
+test("sign-in attaches the account to the default organization without risking the session", async () => {
+  const f = accountFixture();
+  try {
+    expect((await f.call("self-join", {})).status).toBe(401);
+    f.noOrg();
+    f.failJoin(true);
+    const signedIn = await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" });
+    expect(signedIn.status).toBe(200);
+    expect(signedIn.body.state.authenticated).toBe(true);
+    expect(signedIn.body.selfJoin).toEqual({ ok: false, error: "加入默认组织失败，可稍后重试" });
+    expect(f.token()).toBe("synthetic-refresh-a");
+    const retry = await f.call("self-join", {});
+    expect(retry.status).toBe(409);
+    expect(retry.body.error).toBe("分组或成员不属于当前组织。");
+    expect(JSON.stringify(retry.body)).not.toContain("NANFU_GROUP_INVALID");
+    f.failJoin(false);
+    expect((await f.call("self-join", {})).body).toMatchObject({ ok: true, orgId: "org-1", userId: "a" });
+  } finally { f.close(); }
+});
+
+test("windows cannot be created, launched or imported before a Nanfu session exists", async () => {
+  const f = accountFixture();
+  try {
+    for (const path of ["/ui/api/profiles", "/ui/api/profiles/env-1/open", "/ui/api/import", "/ui/api/import/upload"]) {
+      const blocked = await f.callUi(path, { name: "合成环境" });
+      expect(blocked.status).toBe(401);
+      expect(blocked.body.code).toBe("nanfu_signin_required");
+      expect(blocked.body.error).toContain("登录");
+    }
+    expect(f.requests.length).toBe(0);
+    await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" });
+    const allowed = await f.callUi("/ui/api/profiles", { name: "合成环境" });
+    expect(allowed.body.code).not.toBe("nanfu_signin_required");
   } finally { f.close(); }
 });

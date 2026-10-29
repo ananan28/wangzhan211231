@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  nanfuAuthAction, fetchNanfuEnvironments, fetchNanfuOverview, nanfuOrganizationAction, NanfuApiError,
+  nanfuAuthAction, nanfuSelfJoin, fetchNanfuEnvironments, fetchNanfuOverview, nanfuOrganizationAction, NanfuApiError,
   type NanfuAccountState, type NanfuOrganization, type NanfuVisibleEnvironment, type NanfuOrgOverview, type NanfuMutations,
 } from "./api.ts";
 import { NanfuManagement, nanfuIdentityName } from "./nanfu-management.tsx";
@@ -77,6 +77,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
         authenticated = state.authenticated;
         setAccount(state);
         setPersistent(result.persistent === true);
+        if (result.selfJoin && result.selfJoin.ok === false) setNotice(result.selfJoin.error ?? "加入默认组织失败，可稍后重试");
         if (state.authenticated && state.userId) await load(generation, controller.signal, state.userId);
         if (action === "signout") setNotice("已退出南孚账号；本机环境保持不变。");
       }
@@ -98,6 +99,23 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
       if (!current(generation)) return;
       if (failure instanceof NanfuApiError && failure.status === 401) setAccount({ authenticated: false });
       setError(failure instanceof Error ? failure.message : "组织列表暂时不可用");
+    } finally { if (current(generation)) setBusy(false); }
+  };
+  const join = async () => {
+    if (!account.userId || busy) return;
+    const userId = account.userId;
+    const { generation, controller } = begin();
+    setNotice(null);
+    try {
+      const result = await nanfuSelfJoin(controller.signal);
+      if (!current(generation)) return;
+      if (result.userId !== userId) throw new Error("账号已切换，请重新登录");
+      setNotice("已加入默认组织，可开始使用环境。");
+      await load(generation, controller.signal, userId);
+    } catch (failure) {
+      if (!current(generation)) return;
+      if (failure instanceof NanfuApiError && failure.status === 401) setAccount({ authenticated: false });
+      setError(failure instanceof Error ? failure.message : "加入默认组织失败，可稍后重试");
     } finally { if (current(generation)) setBusy(false); }
   };
   const mutate = async <K extends keyof NanfuMutations,>(action: K, input: NanfuMutations[K]["input"]): Promise<void> => {
@@ -137,7 +155,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
   return <section className="workspace nanfu-account-page" hidden={!active} aria-label="南孚账号与组织">
     <div className="settingspage">
       <h2 className="sect-title">南孚账号与组织</h2>
-      <p>南孚自有账号，与上游 AliasMode Cloud 独立。本机环境不会自动上传或转移。</p>
+      <p>南孚自有账号，与上游 AliasMode Cloud 独立。本机环境不会自动上传或删除；登录南孚账号后才能新建、启动或导入环境，已有环境在登录后归入你的组织。</p>
       {localCount !== null && <button className="btn" type="button" onClick={onLocal}>查看本机环境（{localCount}）</button>}
       <section className="settings-card"><header><h3>南孚账号</h3></header><div className="card-body">
         {busy && <p role="status">正在处理南孚账号或读取组织列表…</p>}
@@ -159,7 +177,8 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
       {account.authenticated && <section className="settings-card"><header><h3>当前组织与可见环境</h3></header><div className="card-body">
         <button className="btn" disabled={busy} onClick={() => void refresh()}>刷新组织列表</button>
         {!busy && organizationLoaded && !organization && <>
-          <p>当前账号尚未加入组织；本机环境仍可使用。</p>
+          <p>当前账号尚未加入组织；加入默认组织即可开始使用，或创建自己的组织。</p>
+          <button className="btn primary" data-testid="nanfu-self-join" disabled={busy} onClick={() => void join()}>加入默认组织</button>
           <form className="nanfu-form" aria-label="创建组织" onSubmit={event => { event.preventDefault(); void mutate("create-organization", { name: organizationName.trim() }); }}>
             <label className="fld"><span>组织名称</span><input required maxLength={120} value={organizationName} onChange={event => setOrganizationName(event.target.value)} /></label>
             <button className="btn primary" disabled={!organizationName.trim()} type="submit">创建组织（我成为管理员）</button>

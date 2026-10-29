@@ -54,8 +54,13 @@ export function nanfuAuthAction(
   action: "signup" | "signin" | "restore" | "signout",
   input: { email?: string; password?: string } = {},
   signal?: AbortSignal,
-): Promise<{ state?: NanfuAccountState; persistent?: boolean; email?: string; verificationRequired?: boolean }> {
+): Promise<{ state?: NanfuAccountState; persistent?: boolean; email?: string; verificationRequired?: boolean; selfJoin?: { ok: boolean; error?: string } }> {
   return nanfuJson(action, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal });
+}
+
+/** Attaches the signed-in account to the default organization, or re-reads the one it already has. */
+export function nanfuSelfJoin(signal?: AbortSignal): Promise<{ orgId: string; organization: NanfuOrganization | null; userId: string }> {
+  return nanfuJson("self-join", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", signal });
 }
 
 export function fetchNanfuEnvironments(signal?: AbortSignal): Promise<{

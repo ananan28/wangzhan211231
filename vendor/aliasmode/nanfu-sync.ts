@@ -266,6 +266,11 @@ export class NanfuSyncClient {
     return orgId;
   }
 
+  /** Joins the default organization, or hands back the one already held. */
+  selfJoinOrg(signal?: AbortSignal): Promise<string> {
+    return this.rpcValue("nanfu_org_self_join", {}, "string", signal);
+  }
+
   async orgMe(signal?: AbortSignal): Promise<NanfuOrganization | null> {
     const rows = await this.visibleRequest("/rpc/nanfu_org_me", { method: "POST", body: "{}", signal });
     if (!Array.isArray(rows)) throw new NanfuSyncError("Invalid organization response", 502);

@@ -436,3 +436,26 @@ test("organization failures become fixed copy that never repeats the service tex
     .toEqual({ status: 503, body: { ok: false, error: expect.stringContaining("操作结果未确认"), retryable: true } });
   expect(JSON.stringify(nanfuOrganizationError(new NanfuSyncError("upstream detail", 500, false)))).not.toContain("upstream detail");
 });
+
+test("self-join calls the default organization RPC with an empty body", async () => {
+  const seen: Array<{ url: string; init?: RequestInit }> = [];
+  const client = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test",
+    anonKey: "anon-key",
+    accessToken: async () => "synthetic-jwt",
+    fetchFn: async (url, init) => {
+      seen.push({ url: String(url), init });
+      return Response.json("org-default");
+    },
+  });
+  expect(await client.selfJoinOrg()).toBe("org-default");
+  expect(seen[0]?.url).toBe("https://nanfu.test/rest/v1/rpc/nanfu_org_self_join");
+  expect(seen[0]?.init?.method).toBe("POST");
+  expect(JSON.parse(String(seen[0]?.init?.body))).toEqual({});
+
+  const malformed = new NanfuSyncClient({
+    baseUrl: "https://nanfu.test", anonKey: "anon-key", accessToken: async () => "synthetic-jwt",
+    fetchFn: async () => Response.json({ org_id: "org-default" }),
+  });
+  await expect(malformed.selfJoinOrg()).rejects.toMatchObject({ message: "Invalid operation response", status: 502 });
+});

@@ -15,7 +15,7 @@ const text = (data: FormData, key: string) => String(data.get(key) ?? "").trim()
 function MemberSettings({ member, overview, owner, onMutate }: {
   member: NanfuMember; overview: NanfuOrgOverview; owner: boolean; onMutate: NanfuMutationHandler;
 }) {
-  if (member.identity === "owner") return <span>所有者受保护，配额由组织套餐控制。</span>;
+  if (member.identity === "owner") return <span>所有者受保护，不在此处单独设配额。</span>;
   return <>
     <form className="nanfu-form" aria-label={`修改成员 ${member.email || member.userId}`} onSubmit={event => {
       const data = dataOf(event);
@@ -67,7 +67,7 @@ export function NanfuManagement({ organization, overview, busy, onMutate }: {
     catch { setCopyStatus("无法访问剪贴板，请选中邀请码手动复制"); }
   };
   return <section className="settings-card" aria-label="组织管理"><header><h3>组织管理</h3></header><div className="card-body">
-    <p>组织窗口：{used} / {organization.planQuota === 0 ? "不限" : organization.planQuota}。总配额由套餐控制，当前接口仅支持调整成员配额。</p>
+    <p>组织窗口：{used} / {organization.planQuota === 0 ? "不限" : organization.planQuota}。0 表示不限量；这里只能逐个调整成员配额。</p>
     <p>锁定与停用均限制组织访问，分别记录；已有角色与上级可更换，当前接口不支持清空。所有更改仍由服务端核验权限。</p>
     <fieldset disabled={busy} className="nanfu-controls"><legend>成员与权限</legend>
       {!overview.members.length && <p>暂无可见成员。</p>}
