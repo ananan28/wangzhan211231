@@ -73,6 +73,8 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
   const used = overview.members.reduce((sum, member) => sum + member.used, 0);
   const allocated = overview.members.filter(member => member.identity !== "owner").reduce((sum, member) => sum + member.quota, 0);
   const inviteQuotaMax = organization.planQuota > 0 ? Math.max(0, organization.planQuota - allocated) : 2147483647;
+  const orgQuotaFull = organization.planQuota > 0 && used >= organization.planQuota;
+  const overAllocated = organization.planQuota > 0 && allocated > organization.planQuota;
   const copy = async (code: string) => {
     try { await navigator.clipboard.writeText(code); setCopyStatus("邀请码已复制"); }
     catch { setCopyStatus("无法访问剪贴板，请选中邀请码手动复制"); }
@@ -80,7 +82,9 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
   return <section className="settings-card" aria-label="组织管理">
     <header><h3>组织管理</h3>{onRefresh && <button type="button" className="btn" disabled={busy} onClick={onRefresh}>刷新成员</button>}</header>
     <div className="card-body">
-    <p>组织窗口：{used} / {organization.planQuota === 0 ? "不限" : organization.planQuota}。成员配额合计（不含所有者）：{allocated}{organization.planQuota === 0 ? "（组织不限）" : ` / ${organization.planQuota}`}。0 表示该成员不限量；实际窗口总数仍受组织配额约束。</p>
+    <p className={orgQuotaFull ? "modal-err" : ""}>组织窗口：{used} / {organization.planQuota === 0 ? "不限" : organization.planQuota}。成员配额合计（不含所有者）：{allocated}{organization.planQuota === 0 ? "（组织不限）" : ` / ${organization.planQuota}`}。0 表示该成员不限量；实际窗口总数仍受组织配额约束。</p>
+    {overAllocated && <p className="modal-err" role="alert">成员配额合计 {allocated} 已超过组织窗口 {organization.planQuota}：服务端按实际用量拦截，新建环境会失败。请下调成员配额，或让成员释放不再使用的环境。</p>}
+    {!overAllocated && orgQuotaFull && <p className="modal-err" role="alert">组织窗口已用满（{used} / {organization.planQuota}），任何成员新建或接收环境都会被服务端拒绝；本机窗口不计入组织额度。</p>}
     <p>锁定与停用均限制组织访问，分别记录；已有角色与上级可更换，当前接口不支持清空。所有更改仍由服务端核验权限。</p>
     <fieldset disabled={busy} className="nanfu-controls"><legend>成员与权限</legend>
       {!overview.members.length && <p>暂无可见成员。</p>}
@@ -88,7 +92,7 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
         {overview.members.map(member => <tr key={member.userId}>
           <td>{member.email || member.userId}<br />{nanfuIdentityName(member.identity)}<br /><small>{member.userId}</small></td>
           <td>{member.roleName ?? (member.identity === "owner" ? "所有者内置权限" : "未分配")}<br />上级：{overview.members.find(item => item.userId === member.managerUserId)?.email || member.managerUserId || "无"}</td>
-          <td>{member.status === "active" ? "启用" : "停用"} · {member.locked ? "已锁定" : "未锁定"}<br />{member.used} / {member.quota === 0 ? "不限" : member.quota}</td>
+          <td>{member.status === "active" ? "启用" : "停用"} · {member.locked ? "已锁定" : "未锁定"}<br /><span className={member.quota > 0 && member.used >= member.quota ? "modal-err" : ""}>{member.used} / {member.quota === 0 ? "不限" : member.quota}</span>{member.quota > 0 && member.used >= member.quota && <small> · 额度已满</small>}</td>
           <td><MemberSettings member={member} overview={overview} owner={owner} currentUserId={currentUserId} planQuota={organization.planQuota} onMutate={onMutate} /></td>
         </tr>)}
       </tbody></table></div>
@@ -112,7 +116,7 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
         <button className="btn" type="submit">保存分组授权</button>
       </form>
       {!overview.grants.length ? <p>暂无显式分组授权。</p> : <ul>{overview.grants.map(grant => <li key={`${grant.groupId}:${grant.userId}`}>{overview.groups.find(group => group.id === grant.groupId)?.name || grant.groupId} → {overview.members.find(member => member.userId === grant.userId)?.email || grant.userId}</li>)}</ul>}
-      <h4>邀请子账号</h4><p>邀请码单次使用，可设置过期时长；无多次使用选项。请对方先注册并确认邮箱，再登录；登录后在本页「兑换邀请码」输入该码即可加入组织。</p>
+      <h4>邀请子账号</h4><p>邀请码单次使用，可设置过期时长；无多次使用选项。请对方先注册并确认邮箱，再在登录页的「邀请码（选填）」填入该码登录，即可在登录时直接加入本组织。若对方先不带码登录，账号会自动落入默认组织，此后该邀请码在此账号上无法再兑换。</p>
       <form className="nanfu-form" aria-label="生成邀请码" onSubmit={event => {
         const data = dataOf(event); void onMutate("create-invite", { identity: text(data, "identity") as "admin" | "manager" | "member", roleId: text(data, "roleId") || undefined,
           managerUserId: text(data, "managerUserId") || undefined, quota: Number(text(data, "quota")), hours: Number(text(data, "hours")) });

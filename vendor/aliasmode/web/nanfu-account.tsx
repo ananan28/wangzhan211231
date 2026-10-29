@@ -154,6 +154,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
     return () => { request.current.generation++; request.current.controller.abort(); };
   }, []);
   const groups = [...new Set(environments.map(item => item.groupId).filter((id): id is string => !!id))];
+  const atOwnQuotaLimit = !!organization && organization.quota > 0 && organization.used >= organization.quota;
   const filtered = useMemo(() => environments.filter(item =>
     (!ownedOnly || item.ownerUserId === account.userId) && (group === "all" || item.groupId === group) &&
     [item.id, item.ownerUserId, item.groupId ?? ""].some(value => value.toLowerCase().includes(query.trim().toLowerCase()))
@@ -198,7 +199,8 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
         </>}
         {organization && <>
           <p data-testid="nanfu-organization">组织：{organization.name} · 身份：{nanfuIdentityName(organization.identity)} · 角色：{organization.roleName ?? (organization.identity === "owner" ? "所有者内置权限" : "未分配")}</p>
-          <p className={organization.quota > 0 && organization.used > organization.quota ? "modal-err" : ""}>本人配额：{organization.used} / {organization.quota === 0 ? "不限" : organization.quota}</p>
+          <p className={atOwnQuotaLimit ? "modal-err" : ""} data-testid="nanfu-member-quota">本人配额：{organization.used} / {organization.quota === 0 ? "不限" : organization.quota}</p>
+          {atOwnQuotaLimit && <p className="modal-err" role="alert">窗口额度已用满，新建或接收组织云端环境会被服务端拒绝；请删除不再使用的环境，或联系管理员调整额度。本机窗口不计入组织额度。</p>}
           {organization.locked || organization.status !== "active" ? <p role="alert">账号{organization.locked ? "已锁定" : "未锁定"} / {organization.status === "active" ? "启用" : "已停用"}，不能访问组织环境。请联系管理员。</p> : <>
             <p>仅显示服务端授权可见的元数据；未下载到本机的组织条目不可启动，本批不包含登录态迁移。</p>
             <div className="nanfu-filters">
