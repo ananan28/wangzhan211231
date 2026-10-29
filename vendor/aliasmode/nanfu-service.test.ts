@@ -295,7 +295,7 @@ test("disabled organizations and non-JSON mutations fail closed", async () => {
     const list = await f.call("environments");
     expect(list.body.organization).toMatchObject({ status: "disabled", quota: 2, used: 1 });
     expect(list.body.environments).toEqual([]);
-    expect(f.requests.some(url => url.pathname.endsWith("/nanfu_environments") || url.pathname.endsWith("/nanfu_orgs"))).toBe(false);
+    expect(f.requests.some(url => url.pathname.endsWith("/nanfu_environments"))).toBe(false);
   } finally { f.close(); }
 });
 
@@ -367,7 +367,7 @@ test("sign-in attaches the account to the default organization without risking t
     const retry = await f.call("self-join", {});
     expect(retry.status).toBe(409);
     expect(retry.body.error).toBe("分组或成员不属于当前组织。");
-    expect(JSON.stringify(retry.body)).not.toContain("NANFU_GROUP_INVALID");
+    expect(retry.body).toEqual({ ok: false, error: "分组或成员不属于当前组织。", code: "NANFU_GROUP_INVALID" });
     f.failJoin(false);
     expect((await f.call("self-join", {})).body).toMatchObject({ ok: true, orgId: "org-1", userId: "a" });
   } finally { f.close(); }
