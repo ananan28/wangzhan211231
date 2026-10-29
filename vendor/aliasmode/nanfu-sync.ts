@@ -319,6 +319,22 @@ export interface NanfuInviteInput {
   identity: "admin" | "manager" | "member"; roleId?: string; managerUserId?: string; quota: number; hours: number;
 }
 
+/** A directly created account: the person signs in with email + password. */
+export interface NanfuAccountInput {
+  email: string;
+  password: string;
+  identity: "admin" | "member";
+  quota: number;
+  /** Set for a sub-account: the member or administrator it belongs to. */
+  managerUserId?: string;
+}
+
+export interface NanfuCreatedAccount {
+  userId: string;
+  email: string;
+  identity: string;
+}
+
 export class NanfuSyncClient {
   private readonly visibleRequests = new Set<AbortController>();
   private readonly baseUrl: string;
@@ -550,6 +566,25 @@ export class NanfuSyncClient {
 
   async grantGroup(groupId: string, userId: string, granted: boolean, signal?: AbortSignal): Promise<void> {
     await this.visibleRequest("/rpc/nanfu_org_grant_group", { method: "POST", signal, body: JSON.stringify({ p_group: groupId, p_user: userId, p_granted: granted }) });
+  }
+
+  async createAccount(input: NanfuAccountInput, signal?: AbortSignal): Promise<NanfuCreatedAccount> {
+    const rows = await this.visibleRequest("/rpc/nanfu_org_create_account", {
+      method: "POST",
+      body: JSON.stringify({
+        p_email: input.email,
+        p_password: input.password,
+        p_identity: input.identity,
+        p_quota: input.quota,
+        p_parent: input.managerUserId ?? null,
+      }),
+      signal,
+    });
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    if (!row || typeof row.user_id !== "string" || typeof row.email !== "string") {
+      throw new NanfuSyncError("Invalid account response", 502);
+    }
+    return { userId: row.user_id, email: row.email, identity: String(row.identity ?? input.identity) };
   }
 
   createInvite(input: NanfuInviteInput, signal?: AbortSignal): Promise<string> {

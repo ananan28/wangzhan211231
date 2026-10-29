@@ -624,3 +624,38 @@ test("organization mutations enforce self and plan rules before calling the serv
     { userId: "00000000-0000-4000-8000-000000000003", quota: 70 }, undefined, context)).toEqual({});
   expect(calls).toEqual(["set-quota"]);
 });
+
+test("adding an account validates the form, guards the admin tier and submits once", async () => {
+  const calls: string[] = [];
+  const base = {
+    orgMe: async () => ({ orgId: "org-1", identity: "owner", planQuota: 0 }),
+    orgOverview: async () => ({ members: [], roles: [], groups: [], grants: [], invites: [] }),
+    createAccount: async (input: { email: string; identity: string; quota: number; managerUserId?: string }) => {
+      calls.push(`${input.email}:${input.identity}:${input.quota}:${input.managerUserId ?? "-"}`);
+      return { userId: "u-1", email: input.email, identity: input.identity };
+    },
+  };
+  const context = { callerUserId: "00000000-0000-4000-8000-000000000009" };
+  const client = base as unknown as NanfuSyncClient;
+  await expect(mutateNanfuOrganization(client, "create-account",
+    { email: "not-a-mail", password: "secret12", identity: "member", quota: 0 }, undefined, context))
+    .rejects.toThrow(/邮箱/);
+  await expect(mutateNanfuOrganization(client, "create-account",
+    { email: "a@fixture.test", password: "12345", identity: "member", quota: 0 }, undefined, context))
+    .rejects.toThrow(/密码/);
+  await expect(mutateNanfuOrganization(client, "create-account",
+    { email: "a@fixture.test", password: "secret12", identity: "member", quota: -1 }, undefined, context))
+    .rejects.toBeInstanceOf(NanfuInputError);
+  expect(calls).toEqual([]);
+
+  const admin = { ...base, orgMe: async () => ({ orgId: "org-1", identity: "admin", planQuota: 0 }) } as unknown as NanfuSyncClient;
+  await expect(mutateNanfuOrganization(admin, "create-account",
+    { email: "a@fixture.test", password: "secret12", identity: "admin", quota: 0 }, undefined, context))
+    .rejects.toThrow(/只有组织所有者/);
+
+  expect(await mutateNanfuOrganization(client, "create-account",
+    { email: " z@fixture.test ", password: "secret12", identity: "member", quota: 2,
+      managerUserId: "00000000-0000-4000-8000-000000000003" }, undefined, context))
+    .toEqual({ userId: "u-1", email: "z@fixture.test", identity: "member" });
+  expect(calls).toEqual(["z@fixture.test:member:2:00000000-0000-4000-8000-000000000003"]);
+});

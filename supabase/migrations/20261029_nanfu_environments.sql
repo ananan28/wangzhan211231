@@ -1455,6 +1455,125 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- 9b. Direct account creation: 所有者 / 管理员 / 成员 / 子账号
+-- ---------------------------------------------------------------------------
+-- The owner adds administrators; owners and administrators add members; a
+-- member may add sub-accounts under itself (a sub-account is simply a member
+-- whose manager_user_id is set). Accounts are created already confirmed so the
+-- new person can sign in immediately; the password is stored only as a bcrypt
+-- hash and is never returned.
+
+create or replace function public.nanfu_org_create_account(
+  p_email text,
+  p_password text,
+  p_identity text default 'member',
+  p_quota integer default 0,
+  p_parent uuid default null
+)
+returns table (user_id uuid, email text, identity text)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me public.nanfu_org_members;
+  mail text := lower(btrim(coalesce(p_email, '')));
+  parent uuid := p_parent;
+  parent_row public.nanfu_org_members;
+  new_id uuid := gen_random_uuid();
+  plan_max integer;
+  allocated integer;
+begin
+  if auth.uid() is null then
+    raise exception 'NANFU_FORBIDDEN: sign in first' using errcode = '28000';
+  end if;
+  select m.* into me from public.nanfu_org_members m where m.user_id = auth.uid();
+  if not found then
+    raise exception 'NANFU_FORBIDDEN: you do not belong to an organization' using errcode = '42501';
+  end if;
+  if me.status <> 'active' or me.locked then
+    raise exception 'NANFU_MEMBER_INACTIVE: this account is locked or disabled' using errcode = '42501';
+  end if;
+
+  if p_identity is null or p_identity not in ('admin', 'member') then
+    raise exception 'NANFU_INPUT: 账号类型只能是管理员或成员' using errcode = 'P0001';
+  end if;
+  if me.identity not in ('owner', 'admin') then
+    -- A member may only add sub-accounts under itself.
+    if p_identity <> 'member' then
+      raise exception 'NANFU_FORBIDDEN: 成员只能添加子账号' using errcode = '42501';
+    end if;
+    parent := me.user_id;
+  end if;
+  if p_identity = 'admin' and me.identity <> 'owner' then
+    raise exception 'NANFU_FORBIDDEN: 只有组织所有者可以添加管理员' using errcode = '42501';
+  end if;
+
+  if char_length(mail) > 320 or mail !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+    raise exception 'NANFU_EMAIL_INVALID: 邮箱格式不正确' using errcode = 'P0001';
+  end if;
+  if p_password is null or char_length(p_password) < 6 or char_length(p_password) > 72 then
+    raise exception 'NANFU_PASSWORD_INVALID: 密码须为 6 至 72 个字符' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from auth.users u where lower(u.email) = mail) then
+    raise exception 'NANFU_EMAIL_TAKEN: 该邮箱已经注册过南孚账号' using errcode = 'P0001';
+  end if;
+
+  if p_quota is null or p_quota < 0 then
+    raise exception 'NANFU_INPUT: 窗口配额不能为负数' using errcode = 'P0001';
+  end if;
+  select coalesce(o.plan_env_max, 0) into plan_max from public.nanfu_orgs o where o.id = me.org_id;
+  if plan_max > 0 and p_quota > 0 then
+    select coalesce(sum(greatest(m.env_quota, 0)), 0) into allocated
+      from public.nanfu_org_members m
+     where m.org_id = me.org_id and m.identity <> 'owner';
+    if allocated + p_quota > plan_max then
+      raise exception 'NANFU_ORG_QUOTA: 组织剩余可分配配额不足（上限 %，已分配 %）', plan_max, allocated using errcode = 'P0001';
+    end if;
+  end if;
+
+  if parent is not null then
+    select m.* into parent_row from public.nanfu_org_members m
+     where m.org_id = me.org_id and m.user_id = parent;
+    if not found then
+      raise exception 'NANFU_PARENT_INVALID: 上级账号不在本组织内' using errcode = 'P0001';
+    end if;
+    if parent_row.identity = 'owner' then
+      raise exception 'NANFU_PARENT_INVALID: 所有者不能作为上级' using errcode = 'P0001';
+    end if;
+  end if;
+
+  insert into auth.users (
+    instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+    raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+    confirmation_token, recovery_token, email_change_token_new, email_change
+  ) values (
+    coalesce((select u.instance_id from auth.users u where u.id = auth.uid()),
+             '00000000-0000-0000-0000-000000000000'::uuid),
+    new_id, 'authenticated', 'authenticated', mail,
+    extensions.crypt(p_password, extensions.gen_salt('bf')), now(),
+    '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, now(), now(),
+    '', '', '', ''
+  );
+
+  insert into auth.identities (id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at)
+  values (
+    gen_random_uuid(), new_id,
+    jsonb_build_object('sub', new_id::text, 'email', mail, 'email_verified', true, 'phone_verified', false),
+    'email', new_id::text, null, now(), now()
+  );
+
+  insert into public.nanfu_org_members (org_id, user_id, email, identity, manager_user_id, env_quota)
+  values (me.org_id, new_id, mail, p_identity, parent, p_quota);
+
+  return query select new_id, mail, p_identity;
+end;
+$$;
+
+revoke all on function public.nanfu_org_create_account(text, text, text, integer, uuid) from public, anon;
+grant execute on function public.nanfu_org_create_account(text, text, text, integer, uuid) to authenticated;
+
+-- ---------------------------------------------------------------------------
 -- 10. Function grants
 -- ---------------------------------------------------------------------------
 

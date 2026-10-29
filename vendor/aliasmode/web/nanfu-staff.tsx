@@ -6,8 +6,8 @@ import {
 import { NanfuManagement, nanfuIdentityName } from "./nanfu-management.tsx";
 
 /**
- * 员工管理单独成页：成员、角色权限、分组授权与邀请子账号。
- * 之前这些卡片和账号、环境转移堆在同一个设置页里，管理员找不到添加员工的入口。
+ * 员工管理单独成页：所有者 / 管理员 / 成员 / 子账号四层，
+ * 加人是「邮箱 + 密码 + 类型」一次提交，不需要邀请码。
  */
 export function NanfuStaffPage({ active }: { active: boolean }) {
   const [userId, setUserId] = useState("");
@@ -55,7 +55,9 @@ export function NanfuStaffPage({ active }: { active: boolean }) {
     try {
       const response = await nanfuOrganizationAction(action, input);
       const result = response.result;
-      setNotice("code" in result ? `邀请码已生成：${result.code}（单次使用，请复制发给对方）`
+      setNotice(action === "create-account" && "email" in result
+        ? `已添加账号 ${result.email}：把邮箱和密码告诉对方，对方直接登录就能用。`
+        : "code" in result ? `邀请码已生成：${result.code}（单次使用，请复制发给对方）`
         : "reclaimed" in result ? `成员已移除，已回收 ${result.reclaimed} 个组织环境。`
         : "操作已成功，成员列表已刷新。");
       await load();
@@ -80,32 +82,19 @@ export function NanfuStaffPage({ active }: { active: boolean }) {
     <section className="workspace nanfu-staff-page" hidden={!active} aria-label="员工管理">
       <div className="settingspage">
         <h2 className="sect-title">员工管理</h2>
-        <p>在这里添加员工、添加管理账号、分配角色与窗口配额。成员列表和邀请码都由南孚服务端核验权限。</p>
+        <p>账号分四层：所有者 → 管理员 → 成员 → 子账号。管理员由所有者添加、可以管理全部成员；子账号挂在某个成员或管理员名下。</p>
         {busy && <p role="status">正在读取组织成员…</p>}
         {notice && <p role="status">{notice}</p>}
         {error && <p className="modal-err" role="alert">{error}</p>}
         {loaded && !organization && !error && (
-          <p className="modal-err" role="alert">当前账号还没有加入组织，无法管理员工。请先到「南孚账号与组织」加入或创建组织。</p>
+          <p className="modal-err" role="alert">当前账号还没有加入组织，无法管理员工。请先到「南孚账号」加入或创建组织。</p>
         )}
         {organization && !canManage && (
           <p className="modal-err" role="alert">
-            只有组织所有者或管理员可以管理员工；当前身份：{nanfuIdentityName(organization.identity)}。
+            只有组织所有者或管理员可以添加和管理员工；当前身份：{nanfuIdentityName(organization.identity)}。如需子账号，请联系管理员。
           </p>
         )}
-        {organization && canManage && (
-          <section className="settings-card">
-            <header><h3>添加员工与管理员</h3></header>
-            <div className="card-body">
-              <ol className="steps">
-                <li>在下方「邀请子账号」选好身份，点「生成邀请码」。</li>
-                <li><b>添加员工</b>：身份选「成员」或「经理」，把邀请码发给对方。</li>
-                <li><b>添加管理账号</b>：身份选「管理员」，对方用该邀请码加入后即可管理员工和强制转移环境。</li>
-                <li>对方注册并确认邮箱后，在登录页填邀请码即可加入本组织；邀请码单次使用。</li>
-              </ol>
-            </div>
-          </section>
-        )}
-        {organization && overview && canManage && (
+        {organization && canManage && overview && (
           <NanfuManagement
             organization={organization}
             overview={overview}

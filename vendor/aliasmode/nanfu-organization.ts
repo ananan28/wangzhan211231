@@ -2,7 +2,7 @@ import { NanfuSyncClient, NanfuSyncError, type NanfuMember } from "./nanfu-sync.
 
 export const NANFU_ORGANIZATION_ACTIONS = [
   "create-organization", "create-role", "set-member", "set-quota", "create-group", "grant-group",
-  "create-invite", "redeem-invite", "remove-member", "request-transfer", "respond-transfer", "force-transfer",
+  "create-invite", "create-account", "redeem-invite", "remove-member", "request-transfer", "respond-transfer", "force-transfer",
 ] as const;
 export type NanfuOrganizationAction = typeof NANFU_ORGANIZATION_ACTIONS[number];
 
@@ -179,6 +179,29 @@ export async function mutateNanfuOrganization(
       return { code: await client.createInvite({ identity, roleId: uuid("roleId", true), managerUserId: uuid("managerUserId", true),
         quota, hours: integer("hours", 1, 8760) }, signal), uses: 1 };
     }
+    case "create-account": {
+      const email = text("email", 320);
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new NanfuInputError("邮箱格式不正确，请输入完整邮箱");
+      const password = body.password;
+      if (typeof password !== "string" || password.length < 6 || password.length > 72) throw new NanfuInputError("密码须为 6 至 72 个字符");
+      const identity = choice("identity", ["admin", "member"])!;
+      const quota = integer("quota");
+      if (context.callerUserId) {
+        const organization = await client.orgMe(signal);
+        if (organization) {
+          if (identity === "admin" && organization.identity !== "owner") {
+            throw new NanfuPolicyError("只有组织所有者可以添加管理员，请联系组织所有者。", 403);
+          }
+          if (quota > 0) {
+            const overview = await client.orgOverview(organization.orgId, signal);
+            assertNanfuQuotaAllocation({ planQuota: organization.planQuota, members: overview.members, quota });
+          }
+        }
+      }
+      return await client.createAccount({
+        email, password, identity, quota, managerUserId: uuid("managerUserId", true),
+      }, signal);
+    }
     case "redeem-invite": return { orgId: await client.redeemInvite(text("code", 128), signal) };
     case "remove-member": return { reclaimed: await client.removeMember(uuid("userId")!, boolean("reclaim"), signal) };
     case "request-transfer": return { transferId: await client.requestTransfer(text("environmentId", 128), uuid("toUserId")!, signal) };
@@ -195,6 +218,11 @@ export function nanfuOrganizationError(error: NanfuSyncError): { status: number;
     NANFU_GROUP_INVALID: "分组或成员不属于当前组织。",
     NANFU_FORBIDDEN: "当前账号无权执行此操作，请联系组织所有者或管理员。",
     ORG_ALREADY_MEMBER: "当前账号已属于组织，不能重复创建或加入组织。",
+    NANFU_EMAIL_TAKEN: "这个邮箱已经注册过南孚账号，请换一个邮箱，或让本人直接登录。",
+    NANFU_EMAIL_INVALID: "邮箱格式不正确，请检查后重试。",
+    NANFU_PASSWORD_INVALID: "密码须为 6 至 72 个字符。",
+    NANFU_PARENT_INVALID: "所选上级账号无效或不在本组织内。",
+    NANFU_INPUT: "填写的信息不完整或格式不正确，请检查后重试。",
     "42501": "操作被拒绝（42501）：权限不足、账号已属于组织，或目标受保护，请刷新确认。",
     "23505": "记录已存在或发生冲突（23505），请刷新确认；角色或分组名称也可能已存在。",
     INVITE_EXPIRED: "邀请码已过期，请向管理员申请新码。",
@@ -202,8 +230,14 @@ export function nanfuOrganizationError(error: NanfuSyncError): { status: number;
     TRANSFER_EXPIRED: "转移请求已过期，请重新发起。",
     "P0002": "目标记录或邀请码不存在。",
   };
+  const statuses: Record<string, number> = {
+    "42501": 403, NANFU_FORBIDDEN: 403, ORG_ALREADY_MEMBER: 403, NANFU_MEMBER_INACTIVE: 403,
+    NANFU_EMAIL_INVALID: 400, NANFU_PASSWORD_INVALID: 400, NANFU_PARENT_INVALID: 400, NANFU_INPUT: 400,
+    NANFU_EMAIL_TAKEN: 409, NANFU_ORG_QUOTA: 409, NANFU_ENV_QUOTA: 409, NANFU_GROUP_INVALID: 409,
+    "23505": 409, INVITE_EXPIRED: 409, INVITE_USED: 409, TRANSFER_EXPIRED: 409, "P0002": 404,
+  };
   const message = error.code && messages[error.code];
-  if (message) return { status: error.code === "42501" || error.code === "NANFU_FORBIDDEN" || error.code === "ORG_ALREADY_MEMBER" ? 403 : 409, body: { ok: false, error: message, code: error.code } };
+  if (message) return { status: statuses[error.code!] ?? 409, body: { ok: false, error: message, code: error.code } };
   if (error.status === 401 || error.code === "28000") return { status: 401, body: { ok: false, error: "请重新登录南孚账号。" } };
   if (error.status === 403) return { status: 403, body: { ok: false, error: "当前账号没有操作权限。" } };
   if (error.status >= 400 && error.status < 500) return { status: 400, body: { ok: false, error: "服务端拒绝操作，请检查参数、目标状态或联系管理员。" } };

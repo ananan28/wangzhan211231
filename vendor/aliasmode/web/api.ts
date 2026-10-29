@@ -14,7 +14,7 @@ import type { RuntimeDownload } from "../runtime-download.ts";
 import type { FolderInfo } from "../folders.ts";
 import type { TranslationSettings } from "../translation-core.ts";
 import type { NanfuAccountState } from "../nanfu-account.ts";
-import type { NanfuOrganization, NanfuVisibleEnvironment, NanfuOrgOverview, NanfuMember, NanfuMemberInput, NanfuInviteInput, NanfuEnvTransfer } from "../nanfu-sync.ts";
+import type { NanfuOrganization, NanfuVisibleEnvironment, NanfuOrgOverview, NanfuMember, NanfuMemberInput, NanfuInviteInput, NanfuAccountInput, NanfuEnvTransfer } from "../nanfu-sync.ts";
 export type { NanfuAccountState, NanfuOrganization, NanfuVisibleEnvironment, NanfuOrgOverview, NanfuMember, NanfuEnvTransfer };
 
 export interface NanfuMutations {
@@ -25,6 +25,7 @@ export interface NanfuMutations {
   "create-group": { input: { name: string }; result: { groupId: string } };
   "grant-group": { input: { groupId: string; userId: string; granted: boolean }; result: Record<string, never> };
   "create-invite": { input: NanfuInviteInput; result: { code: string; uses: number } };
+  "create-account": { input: NanfuAccountInput; result: { userId: string; email: string; identity: string } };
   "redeem-invite": { input: { code: string }; result: { orgId: string } };
   "remove-member": { input: { userId: string; reclaim: boolean }; result: { reclaimed: number } };
   "request-transfer": { input: { environmentId: string; toUserId: string }; result: { transferId: string } };

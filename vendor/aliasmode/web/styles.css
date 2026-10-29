@@ -20,6 +20,22 @@
 .nanfu-invites li { margin: 12px 0; overflow-wrap: anywhere; }
 .nanfu-invites .btn { margin-left: 10px; }
 
+/* Staff page: four-tier roster and a single-line add form. */
+.nanfu-staff-page .settingspage { overflow: auto; }
+.nanfu-staff-counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+.nanfu-staff-counts span { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--ink-soft); }
+.nanfu-add-account { margin-top: 10px; }
+.nanfu-add-account .fld { flex: 1 1 190px; }
+.nanfu-add-account .nanfu-hint { flex-basis: 100%; margin: 0; }
+.nanfu-hint { color: var(--muted); font-size: 12px; }
+.nanfu-group { margin-top: 18px; }
+.nanfu-group h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+.nanfu-count { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-size: 11px; font-weight: 400; color: var(--muted); }
+.nanfu-tag { margin-left: 6px; border-radius: 999px; padding: 0 7px; font-size: 11px; background: var(--surface-hover); border: 1px solid var(--line); color: var(--muted); }
+.nanfu-row-actions > summary { cursor: pointer; color: var(--ink-soft); }
+.nanfu-row-form { margin: 10px 0 0; }
+.nanfu-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+
 /* ============================================================================
    Typeface
 
