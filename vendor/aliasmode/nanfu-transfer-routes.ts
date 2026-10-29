@@ -435,9 +435,12 @@ export async function handleNanfuTransferRequest(
         throw new NanfuTransferHttpError(400, "当前版本只支持云端转移 Chromium 环境。");
       }
       const organization = await requireOrganization(client, signal);
-      const visible = await client.visibleEnvironments(organization.orgId, signal);
-      const environment = requireVisible(visibleMap(visible), environmentId);
-      if (environment.ownerUserId !== userId) {
+      // The organization list is empty until environments are registered with
+      // it, so a local profile must not be refused just because no row exists
+      // yet. A row that does exist still has to belong to the sender.
+      const visible = await client.visibleEnvironments(organization.orgId, signal).catch(() => []);
+      const registered = visibleMap(visible).get(environmentId);
+      if (registered && registered.ownerUserId !== userId) {
         throw new NanfuTransferHttpError(403, "只能云端转移你自己拥有的环境。");
       }
       const member = requireRecipient(await recipientDirectory(client, organization, visible, signal), toUserId);

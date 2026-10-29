@@ -114,11 +114,8 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
   const recipients = useMemo(() => members.filter((member) => member.userId !== userId), [members, userId]);
   const isAdmin = organization?.identity === "owner" || organization?.identity === "admin";
   const localNames = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile.name])), [profiles]);
-  const localById = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
-  const exportable = useMemo(() => profiles.filter((profile) => profile.engine !== "firefox"), [profiles]);
-  // Only an environment that is both owned here and present on this machine can
-  // be sealed and sent; a metadata-only row has no files to move.
-  const sendable = useMemo(() => mine.filter((item) => localById.has(item.id)), [mine, localById]);
+  const sendable = useMemo(() => profiles.filter((profile) => profile.engine !== "firefox"), [profiles]);
+  const exportable = sendable;
   const locked = !organization || organization.locked || organization.status !== "active";
   const pending = (data?.inbox ?? []).filter((row) => row.status === "pending");
   const resolved = (data?.inbox ?? []).filter((row) => row.status !== "pending");
@@ -242,11 +239,11 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
 
       {data && organization && !locked && <>
         <section className="settings-card" aria-label="云端转移"><header><h3>云端转移（含登录态）</h3></header><div className="card-body">
-          {!sendable.length ? <p>你在本机没有可转移的环境。只有同时属于你本人、且已下载到本机的 Chromium 环境可以云端转移。</p> : <>
+          {!sendable.length ? <p>本机还没有可以转移的 Chromium 环境；先新建或导入一个环境，再回来发送。</p> : <>
             <fieldset disabled={busy} className="nanfu-form">
               <label className="fld"><span>选择本机环境</span><select value={cloudEnvironmentId} onChange={(event) => setCloudEnvironmentId(event.target.value)}>
                 <option value="">请选择要转移的环境</option>
-                {sendable.map((item) => <option key={item.id} value={item.id}>{localNames.get(item.id) ?? item.id} · {item.id}</option>)}
+                {sendable.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.id}</option>)}
               </select></label>
               <label className="fld"><span>接收成员</span><select value={cloudRecipientId} onChange={(event) => setCloudRecipientId(event.target.value)}>
                 <option value="">请选择接收成员</option>
