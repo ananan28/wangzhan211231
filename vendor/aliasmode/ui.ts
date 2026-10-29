@@ -2470,7 +2470,8 @@ export async function handleUiRequest(
     if (!profile) return Response.json({ ok: false, error: "no such profile" }, { status: 404 });
     try {
       if (action[2] === "open") {
-        const home = /^https?:\/\//i.test(profile.platform.trim()) ? platformHomeUrl(profile.platform) : null;
+        const platform = (profile.platform ?? "").trim();
+        const home = /^https?:\/\//i.test(platform) ? platformHomeUrl(platform) : null;
         const r = await launcher.start(id, launchUrl ? [launchUrl] : home ? [home] : []);
         return openResponse(profile, r);
       }

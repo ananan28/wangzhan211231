@@ -281,12 +281,12 @@ test("the frontend Nanfu client reaches real local routes with no-store and canc
   const f = accountFixture();
   const originalFetch = globalThis.fetch;
   const requests: Array<{ path: string; init?: RequestInit }> = [];
-  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input, init) => {
     const path = String(input);
     if (!path.startsWith("/ui/api/nanfu/")) return originalFetch(input, init);
     requests.push({ path, init });
     return originalFetch(new URL(path, f.baseUrl), init);
-  });
+  }) as typeof fetch);
   try {
     expect((await fetchNanfuState()).state.authenticated).toBe(false);
     await expect(nanfuAuthAction("signin", { email: "a@fixture.test", password: "wrong-password" })).rejects.toBeInstanceOf(NanfuApiError);

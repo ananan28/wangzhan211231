@@ -8,6 +8,8 @@ import {
   usTimezoneForSeed,
 } from "./creation-defaults";
 
+const ZONES: readonly string[] = US_TIMEZONES;
+
 test("new profiles follow this computer's language by default", () => {
   expect(NEW_PROFILE_LOCALE).toBe("");
 });
@@ -17,19 +19,19 @@ test("the default US timezone is repeatable for the same seed", () => {
     const first = usTimezoneForSeed(seed);
     const second = usTimezoneForSeed(seed);
     expect(first).toBe(second);
-    expect(US_TIMEZONES).toContain(first);
+    expect(ZONES.includes(first)).toBe(true);
   }
 });
 
 test("different seeds reach more than one US zone", () => {
   const zones = new Set(Array.from({ length: 64 }, (_, index) => usTimezoneForSeed(String(index))));
   expect(zones.size).toBeGreaterThan(1);
-  for (const zone of zones) expect(US_TIMEZONES).toContain(zone);
+  for (const zone of zones) expect(ZONES.includes(zone)).toBe(true);
 });
 
 test("a blank seed still produces a stable US zone", () => {
   const zone = usTimezoneForSeed("");
-  expect(US_TIMEZONES).toContain(zone);
+  expect(ZONES.includes(zone)).toBe(true);
   expect(usTimezoneForSeed("   ")).toBe(zone);
 });
 

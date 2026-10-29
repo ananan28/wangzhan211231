@@ -70,7 +70,7 @@ test("invalid addresses are rejected before they reach the list", () => {
 
 test("loads defaults when nothing is stored and returns an empty list after deleting everything", () => {
   const storage = memoryStorage();
-  expect(loadFavoriteSites(storage)).toEqual(DEFAULT_FAVORITE_SITES);
+  expect(loadFavoriteSites(storage)).toEqual([...DEFAULT_FAVORITE_SITES]);
   saveFavoriteSites([], storage);
   expect(loadFavoriteSites(storage)).toEqual([]);
 });
@@ -88,6 +88,6 @@ test("round-trips user sites and drops corrupted entries", () => {
   ]));
   expect(loadFavoriteSites(corrupt)).toEqual([{ name: "ok", url: "https://example.com/" }]);
 
-  expect(loadFavoriteSites(memoryStorage("not json"))).toEqual(DEFAULT_FAVORITE_SITES);
-  expect(loadFavoriteSites(memoryStorage(JSON.stringify({})))).toEqual(DEFAULT_FAVORITE_SITES);
+  expect(loadFavoriteSites(memoryStorage("not json"))).toEqual([...DEFAULT_FAVORITE_SITES]);
+  expect(loadFavoriteSites(memoryStorage(JSON.stringify({})))).toEqual([...DEFAULT_FAVORITE_SITES]);
 });
