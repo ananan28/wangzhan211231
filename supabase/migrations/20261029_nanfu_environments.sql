@@ -918,6 +918,15 @@ begin
 end;
 $$;
 
+-- Organizations created before member.manage existed keep the old permission
+-- arrays on their seeded roles; give the 经理 role the new bit once. An owner
+-- who already removed it keeps that choice.
+update public.nanfu_org_roles r
+   set permissions = array_append(r.permissions, 'member.manage')
+ where r.is_system
+   and r.name = '经理'
+   and not ('member.manage' = any (r.permissions));
+
 create or replace function public.nanfu_org_me()
 returns table (
   org_id uuid,
