@@ -104,43 +104,62 @@ jobs:
         shell: pwsh
         env:
           NANFU_UPLOAD_TOKEN: ${{ secrets.NANFU_UPLOAD_TOKEN }}
-          NANFU_RELEASE_VERSION: ${{ secrets.NANFU_RELEASE_VERSION }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
           $ErrorActionPreference = "Stop"
-          $version = "$env:NANFU_RELEASE_VERSION".Trim()
-          # No explicit version (or the documented placeholder) means this run
-          # is only a build check: keep the installer as an artifact.
-          if ([string]::IsNullOrWhiteSpace($version) -or $version -eq "0.1.0-beta.70") {
-            Write-Warning "NANFU_RELEASE_VERSION is not configured (placeholder 0.1.0-beta.70); skipping the release upload and keeping the build artifact only."
-            exit 0
+          # The version is read from the app config so the published object key
+          # always matches the installer that was just built and smoke tested.
+          $version = (Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
+          if ("$version" -notmatch '^\d+\.\d+\.\d+(-[a-z0-9.]+)?$') {
+            throw "tauri.conf.json carries an invalid version: $version"
           }
-          if ($version -notmatch '^\d+\.\d+\.\d+(-[a-z0-9.]+)?$') {
-            throw "NANFU_RELEASE_VERSION is not a valid release version."
+          foreach ($name in @("NANFU_UPLOAD_TOKEN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              Write-Warning "$name is not configured; keeping the installer as a build artifact only."
+              exit 0
+            }
           }
           $token = "$env:NANFU_UPLOAD_TOKEN".Trim()
-          if ([string]::IsNullOrWhiteSpace($token)) {
-            throw "NANFU_UPLOAD_TOKEN is required when NANFU_RELEASE_VERSION is set."
-          }
           $installers = @(Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -File)
           if ($installers.Count -ne 1) { throw "Expected one installer to publish" }
           $installer = $installers[0]
           $sha256 = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size = $installer.Length
+          $objectKey = "nanfu/$version/win-x64/$($installer.Name)"
+          $endpoint = "https://0a8dc13181086e28114bb0c6b24eac54.r2.cloudflarestorage.com"
+          $bucket = "software-downloads"
+
+          Write-Host "Uploading $($installer.Name) ($size bytes) to r2://$bucket/$objectKey"
+          & curl.exe -sS -f --retry 3 --retry-delay 5 `
+            --aws-sigv4 "aws:amz:auto:s3" `
+            -u "$($env:R2_ACCESS_KEY_ID):$($env:R2_SECRET_ACCESS_KEY)" `
+            -T $installer.FullName "$endpoint/$bucket/$objectKey"
+          if ($LASTEXITCODE -ne 0) {
+            throw "R2 upload failed (exit $LASTEXITCODE)."
+          }
+
+          $payload = Join-Path $env:RUNNER_TEMP "nanfu-register.json"
+          @{
+            action = "register"
+            version = "$version"
+            platform = "win-x64"
+            fileName = "$($installer.Name)"
+            sha256 = $sha256
+            size = $size
+          } | ConvertTo-Json -Compress | Set-Content -LiteralPath $payload -Encoding utf8NoBOM
           $response = Join-Path $env:RUNNER_TEMP "nanfu-release-response.json"
           $status = & curl.exe -sS -o $response -w "%{http_code}" `
             -X POST "https://zojqxzaqumrtykcufqzg.supabase.co/functions/v1/nanfu-release" `
             -H "x-nanfu-upload-token: $token" `
-            -F "version=$version" `
-            -F "platform=win-x64" `
-            -F "sha256=$sha256" `
-            -F "file=@$($installer.FullName);type=application/octet-stream"
+            -H "content-type: application/json" `
+            --data-binary "@$payload"
           if ($LASTEXITCODE -ne 0) {
-            throw "curl failed while uploading the installer (exit $LASTEXITCODE)."
+            throw "curl failed while registering the release (exit $LASTEXITCODE)."
           }
           $status = "$status".Trim()
-          Write-Host "Release upload responded with HTTP $status"
+          Write-Host "Release registration responded with HTTP $status"
+          Get-Content -LiteralPath $response -Raw -Encoding utf8
           if ($status -ne "200") {
-            if (Test-Path -LiteralPath $response) {
-              Get-Content -LiteralPath $response -Raw -Encoding utf8
-            }
-            throw "Release upload failed with HTTP $status."
+            throw "Release registration failed with HTTP $status."
           }
