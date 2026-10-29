@@ -1505,8 +1505,8 @@ function App() {
   // Profiles that need a proxy. Local mode only: a Cloud profile shows no
   // proxy until its encrypted payload is fetched, so the count would be wrong.
   const profilesWithoutProxy = isCloudMode ? 0 : profiles.filter((p) => !p.proxy?.trim()).length;
-  // Login is enforced by NanfuGate, so the local workspace is always allowed.
-  const workspaceReady = appMode?.mode === "local" || (isCloudMode && cloudWorkspaceReady(cloudAuth));
+  // 南孚版只有本地工作区；登录由 NanfuGate 把关。
+  const workspaceReady = appMode?.mode === "local";
   const canEditCloud = !isCloudMode || cloudAuth?.workspace?.role === "owner" || cloudAuth?.workspace?.role === "admin" ||
     team?.folders.some((folder) => folder.permission === "edit" && !folder.archivedAt) === true;
   const canManageCloudFolders = cloudAuth?.workspace?.role === "owner" || cloudAuth?.workspace?.role === "admin";
@@ -2215,8 +2215,9 @@ function App() {
 
   useEffect(() => {
     fetchAppMode().then(async (config) => {
-      // 南孚版不带 AliasMode 云端：首次启动直接落在本地工作区，登录由 NanfuGate 把关。
-      if (config.mode === "unconfigured") {
+      // 南孚版不带 AliasMode 云端：只要不是本地模式就迁回本地，
+      // 旧安装留下的 "mode":"cloud" 也在这里清掉，绝不会去联系上游云。
+      if (config.mode !== "local") {
         await chooseMode("local");
         return;
       }
@@ -3459,123 +3460,35 @@ function App() {
       <>
         <main className="onboarding">
         <section className="onboarding-card" aria-labelledby="onboarding-title">
-          <div className="onboarding-brand"><AliasLoop />南孚浏览器 <span>by Xreacher</span></div>
+          <div className="onboarding-brand"><AliasLoop />南孚浏览器</div>
           {restartRequired ? (
             <>
-              <h1 id="onboarding-title">{appMode?.mode === "cloud" ? t("Switching to Cloud mode") : t("Switching to Local mode")}</h1>
+              <h1 id="onboarding-title">正在切换到本地模式</h1>
               {desktopInvoke() ? (
                 <>
-                  <p role="status">{t("AliasMode restarts to finish the switch.")}</p>
+                  <p role="status">南孚浏览器正在重启以完成切换。</p>
                   {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-                  <button className="mode-primary" type="button" onClick={() => void desktopInvoke()?.("restart_after_mode_change").catch((error) => setModeErr(String(error)))}>{t("Restart AliasMode")}</button>
+                  <button className="mode-primary" type="button" onClick={() => void desktopInvoke()?.("restart_after_mode_change").catch((error) => setModeErr(String(error)))}>重启南孚浏览器</button>
                 </>
               ) : (
                 <>
-                  <p>{t("Quit and reopen AliasMode to finish the switch.")}</p>
+                  <p>请关闭并重新打开南孚浏览器以完成切换。</p>
                   {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-                  <button className="mode-primary" type="button" onClick={() => window.close()}>{t("Quit AliasMode")}</button>
+                  <button className="mode-primary" type="button" onClick={() => window.close()}>关闭南孚浏览器</button>
                 </>
               )}
             </>
-          ) : appMode?.mode === "cloud" ? (
-            cloudAuth?.authenticated ? (
-              <>
-                <h1 id="onboarding-title">{t("Review the Cloud terms")}</h1>
-                <p>{t("Accept the terms to start using AliasMode Cloud.")}</p>
-                <div className="auth-actions">
-                  <a href="https://ananan28.github.io/nanfu-site/" target="_blank" rel="noreferrer">{t("Terms")}</a>
-                  <a href="https://ananan28.github.io/nanfu-site/privacy.html" target="_blank" rel="noreferrer">{t("Privacy")}</a>
-                </div>
-                {authErr && <div className="mode-error" role="alert">{authErr}</div>}
-                <button
-                  className="mode-primary"
-                  type="button"
-                  disabled={authBusy || !cloudAuth.legal}
-                  onClick={() => void acceptCurrentLegal()}
-                >
-                  {authBusy ? t("Working…") : cloudAuth.legal ? t("Accept and continue to Cloud") : t("Checking workspace…")}
-                </button>
-                {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-              </>
-            ) : savedSessionPhase === "restoring" ? (
-              <>
-                <h1 id="onboarding-title">{t("Restoring saved session")}</h1>
-                <p role="status">{t("Checking the saved Cloud session on this device…")}</p>
-              </>
-            ) : savedSessionPhase === "retryable-failure" ? (
-              <>
-                <h1 id="onboarding-title">{t("Restoring saved session")}</h1>
-                <p>{t("The saved session is still on this device. Reconnect and try again.")}</p>
-                {authErr && <div className="mode-error" role="alert">{authErr}</div>}
-                <div className="auth-actions">
-                  <button className="mode-primary" type="button" disabled={authBusy} onClick={() => void restoreSavedSession(true)}>{t("Try again")}</button>
-                  <button className="mode-secondary" type="button" disabled={authBusy} onClick={() => void signInInstead()}>{t("Sign in instead")}</button>
-                </div>
-              </>
-            ) : authView === "verify" ? (
-              <>
-                <h1 id="onboarding-title">{t("Check your email")}</h1>
-                <p>{t("Enter the 6-digit code we sent to {email}.", { email: confirmationEmail })}</p>
-                <form className="auth-form" onSubmit={(event) => { event.preventDefault(); void submitCloudAuth(); }}>
-                  <label>{t("Confirmation code")}
-                    <input
-                      className="code-input"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      autoFocus
-                      required
-                      value={authCode}
-                      onChange={(event) => setAuthCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                    />
-                  </label>
-                  {authErr && <div className="mode-error" role="alert">{authErr}</div>}
-                  {authNotice && <div className="auth-notice" role="status">{authNotice}</div>}
-                  <button className="mode-primary" type="submit" disabled={authBusy || authCode.length !== 6}>{authBusy ? t("Working…") : t("Confirm and sign in")}</button>
-                </form>
-                <div className="auth-actions">
-                  <button type="button" disabled={authBusy} onClick={() => void resendConfirmation()}>{t("Send a new code")}</button>
-                  <button type="button" disabled={authBusy} onClick={() => { setAuthErr(null); setAuthNotice(null); setAuthView("signin"); }}>{t("Back to sign in")}</button>
-                </div>
-                <p className="auth-hint">{t("Did not get it? Check your spam folder, or send a new code. If the email has a link instead of a code, open it, then sign in.")}</p>
-              </>
-            ) : (
-              <>
-                <h1 id="onboarding-title">{authView === "signin" ? t("Sign in to AliasMode Cloud") : t("Create your Cloud account")}</h1>
-                <p>{t("Sync your profiles across your computers and work with your team.")}</p>
-                <form className="auth-form" onSubmit={(event) => { event.preventDefault(); void submitCloudAuth(); }}>
-                  <label>{t("Email")}<input type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} /></label>
-                  <label>{t("Password")}<input type="password" autoComplete={authView === "signin" ? "current-password" : "new-password"} required value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} /></label>
-                  {authErr && <div className="mode-error" role="alert">{authErr}</div>}
-                  {authNotice && <div className="auth-notice" role="status">{authNotice}</div>}
-                  <button className="mode-primary" type="submit" disabled={authBusy}>{authBusy ? t("Working…") : authView === "signin" ? t("Sign in") : t("Create account")}</button>
-                </form>
-                <div className="auth-actions">
-                  <button type="button" onClick={() => { setAuthErr(null); setAuthNotice(null); setAuthView(authView === "signin" ? "signup" : "signin"); }}>
-                    {authView === "signin" ? t("Create an account") : t("Back to sign in")}
-                  </button>
-                  {authView === "signin" && <button type="button" disabled={authBusy} onClick={() => void forgotPassword()}>{t("Forgot password?")}</button>}
-                </div>
-                {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
-              </>
-            )
           ) : appMode ? (
             <>
-              <h1 id="onboarding-title">{t("How do you want to use AliasMode?")}</h1>
-              <p>{t("Choose where browser profiles live for this installation.")}</p>
-              <div className="mode-options">
-                <button className="mode-option primary" type="button" disabled={modeBusy} onClick={() => chooseMode("cloud")}>
-                  <span className="badge"><Icon name="cloud" className="lg" /></span>
-                  <strong>AliasMode Cloud</strong>
-                  <span>{t("Sync your profiles across your computers and work with your team.")}</span>
-                </button>
-              </div>
+              <h1 id="onboarding-title">正在准备本地工作区</h1>
+              <p role="status">正在把数据切换到本机，请稍候。</p>
               {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
             </>
           ) : (
             <>
-              <h1 id="onboarding-title">{t("Starting AliasMode")}</h1>
-              <p>{connErr ?? t("Loading your configuration…")}</p>
-              {connErr && <button className="mode-primary" type="button" onClick={() => window.location.reload()}>{t("Try again")}</button>}
+              <h1 id="onboarding-title">正在启动南孚浏览器</h1>
+              <p>{connErr ?? "正在读取配置…"}</p>
+              {connErr && <button className="mode-primary" type="button" onClick={() => window.location.reload()}>重试</button>}
             </>
           )}
           </section>

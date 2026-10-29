@@ -380,16 +380,16 @@ fn present_unexpected_exit(app: &AppHandle, code: Option<i32>) {
         if let Ok(url) = fallback.parse() {
             let _ = window.navigate(url);
         }
-        let _ = window.set_title("AliasMode service stopped");
+        let _ = window.set_title("南孚浏览器本地服务已停止");
     }
     let detail = code
         .map(|value| format!(" (exit code {value})"))
         .unwrap_or_default();
     app.dialog()
         .message(format!(
-            "AliasMode's local service stopped unexpectedly{detail}. Restart AliasMode before opening another browser. Browser cleanup could not be confirmed."
+            "南孚浏览器的本地服务意外停止{detail}。请重新启动应用，然后再打开浏览器环境；无法确认浏览器是否已安全关闭。"
         ))
-        .title("AliasMode service stopped")
+        .title("南孚浏览器本地服务已停止")
         .kind(MessageDialogKind::Error)
         .buttons(MessageDialogButtons::Ok)
         .show(|_| {});
