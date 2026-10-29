@@ -72,6 +72,19 @@ kernel/
 - 边界：托管 runner 装不下 Chromium，CI 不做完整构建；**补丁未经编译验证**，
   目前只证明对 `155.0.8059.85` 的真实文件上下文正确。
 
+## 自建构建机要求
+
+要真正编译并出货，最低配置如下（托管 runner 凑不出来）：
+
+- **磁盘 1TB NVMe**：全量检出 30–50GB，`out/Default` 加 PDB/调试信息 60–120GB，缓存 50–100GB。
+- **内存 64GB**：32GB 在链接阶段会吃紧。
+- **CPU 16–32 线程**：Windows 冷构建约 4–8 小时，增量 10–40 分钟；Linux 略快。
+- **签名**：Windows 需要 Authenticode（EV 证书或 Azure Trusted Signing）；macOS 需要 Developer ID + notarization（Apple 账号）；Linux 无强制签名。
+- **缓存**：sccache/ccache 50–100GB 或 reclient，命中后增量可到分钟级。
+- **托管 runner 装不下**：磁盘、内存、时长都不够；GitHub 托管 runner 只能做补丁上下文校验（`kernel-patches.yml`），不能编译。
+
+下面的经验值表用于估算，不是承诺。
+
 ## 构建需要什么（经验值，非承诺）
 
 | 项目 | 评估 |
