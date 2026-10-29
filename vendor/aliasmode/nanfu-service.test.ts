@@ -215,7 +215,12 @@ test("real HTTP routes use the configured Nanfu runtime and never expose signup 
     expect(query.searchParams.has("owner_user_id")).toBe(false);
     expect(query.searchParams.get("select")).not.toContain("payload");
     expect(f.requests.some(url => url.pathname.includes("bootstrap"))).toBe(false);
-    expect((await f.call("signin", { email: "b@fixture.test", password: "synthetic-password" })).status).toBe(401);
+    // A second sign-in while a session is live is refused with 409, not 401:
+    // the gate shows "already signed in" and opens the workspace.
+    const second = await f.call("signin", { email: "b@fixture.test", password: "synthetic-password" });
+    expect(second.status).toBe(409);
+    expect(second.body.alreadySignedIn).toBe(true);
+    expect(second.body.state.userId).toBe("a");
     expect((await f.call("signout", {})).body.state.authenticated).toBe(false);
     expect(f.token()).toBeNull();
   } finally { f.close(); }
