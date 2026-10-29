@@ -3,6 +3,25 @@
   "identifier": "com.nanfu.browser",
   "bundle": {
     "publisher": "南孚浏览器",
-    "createUpdaterArtifacts": false
+    "createUpdaterArtifacts": false,
+    "resources": {
+      "resources/playwright/": "playwright/",
+      "resources/chromium/": "chromium/"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "compression": "lzma",
+        "template": "windows/installer.nsi",
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "windows/header.bmp",
+        "sidebarImage": "windows/sidebar.bmp",
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    }
   }
 }

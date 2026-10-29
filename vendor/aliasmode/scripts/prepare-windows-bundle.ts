@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { extractZipTo } from "../unzip.ts";
 import { ALIASMODE_VERSION } from "../version.ts";
-import { WINDOWS_CHROMIUM_METADATA } from "../aliasmode-chromium.ts";
+import { WINDOWS_CHROMIUM_DIR, WINDOWS_CHROMIUM_METADATA } from "../aliasmode-chromium.ts";
+import { sha256File } from "../browser-install.ts";
 
 export const NODE_WINDOWS_X64_VERSION = "22.23.2";
 export const NODE_WINDOWS_X64_SHA256 = "1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97";
@@ -20,6 +21,10 @@ export interface PrepareWindowsBundleOptions {
   compileSidecar?: (output: string) => Promise<void>;
   downloadNode?: () => Promise<Uint8Array>;
   installNode?: (playwrightRoot: string) => Promise<void>;
+  /** The extracted pinned Chromium build that the installer ships; NANFU_CHROMIUM_RUNTIME by default. */
+  chromiumRuntime?: string;
+  /** The executable hash to require of that build; the pinned one unless a test supplies a stand-in. */
+  expectedChromiumSha256?: string;
 }
 
 export const WINDOWS_SIDECAR_TARGET = "bun-windows-x64-baseline";
@@ -118,6 +123,20 @@ export function stageAgentRuntime(cwd: string, playwrightRoot: string, platform:
   }
 }
 
+// The interface languages 南孚 ships a locale pack for; Chromium falls back to en-US for the rest.
+const BUNDLED_LOCALES = new Set(["en-US.pak", "en-GB.pak", "zh-CN.pak", "zh-TW.pak", "ja.pak", "ko.pak", "ru.pak"]);
+
+function keepBundledRuntimeFile(source: string, path: string): boolean {
+  const parts = relative(source, path).split(/[\\/]/);
+  return parts[0] !== "locales" || parts.length === 1 || BUNDLED_LOCALES.has(parts[1]!);
+}
+
+/** Copy the pinned build next to the app, so a profile never waits for a download. */
+export function stageBundledChromium(source: string, destination: string): void {
+  mkdirSync(dirname(destination), { recursive: true });
+  cpSync(source, destination, { recursive: true, filter: (path) => keepBundledRuntimeFile(source, path) });
+}
+
 export async function prepareWindowsBundle(
   options: PrepareWindowsBundleOptions = {},
 ): Promise<PreparedBrowserMetadata> {
@@ -165,6 +184,20 @@ export async function prepareWindowsBundle(
   }
   if (!statSync(join(playwrightRoot, "node", "node.exe"), { throwIfNoEntry: false })?.isFile()) throw new Error("official Node runtime is incomplete");
   stageAgentRuntime(cwd, playwrightRoot, "win32");
+
+  const chromiumRoot = join(resources, "chromium");
+  rmSync(chromiumRoot, { recursive: true, force: true });
+  mkdirSync(chromiumRoot, { recursive: true });
+  const bundled = options.chromiumRuntime ?? process.env.NANFU_CHROMIUM_RUNTIME;
+  if (bundled) {
+    const source = resolve(bundled);
+    const executable = join(source, WINDOWS_CHROMIUM_METADATA.executable);
+    if (!statSync(executable, { throwIfNoEntry: false })?.isFile()) throw new Error("bundled Chromium runtime is incomplete");
+    if (await sha256File(executable) !== (options.expectedChromiumSha256 ?? WINDOWS_CHROMIUM_METADATA.sha256)) {
+      throw new Error("bundled Chromium executable SHA-256 mismatch");
+    }
+    stageBundledChromium(source, join(chromiumRoot, WINDOWS_CHROMIUM_DIR));
+  }
 
   const metadata: PreparedBrowserMetadata = { chromium: WINDOWS_CHROMIUM_METADATA };
   writeFileSync(join(generated, "browser.json"), `${JSON.stringify(metadata, null, 2)}\n`, "utf8");

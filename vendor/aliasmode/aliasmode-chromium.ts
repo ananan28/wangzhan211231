@@ -4,7 +4,7 @@
  * executable SHA-256, and lives in the app's data folder, which survives app updates.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import {
   CLOAKBROWSER_MACOS_VERSION, CLOAKBROWSER_VERSION, CLOAKBROWSER_WINDOWS_X64_ARCHIVE_SHA256,
   CLOAKBROWSER_WINDOWS_X64_EXECUTABLE_SHA256, renameWhenUnlocked, sha256File,
@@ -35,6 +35,9 @@ const WINDOWS_BUILD = {
   // --aliasmode-keep-alive keeps the browser running after its last window closes.
   keepAlive: true,
 };
+/** The folder name the pinned Windows runtime gets both in the installation and in the data folder. */
+export const WINDOWS_CHROMIUM_DIR = WINDOWS_BUILD.dir;
+
 export const WINDOWS_CHROMIUM_METADATA = {
   executable: WINDOWS_BUILD.executable,
   sha256: WINDOWS_BUILD.executableSha256,
@@ -331,8 +334,27 @@ function partialName(spec: PinnedRuntime): string {
   return `.${spec.dir}.${spec.archiveSha256.slice(0, 16)}.part`;
 }
 
+/**
+ * The copy that the Windows installer ships next to the app, so a fresh install opens a
+ * profile without downloading anything. NANFU_CHROMIUM_RUNTIME_DIR points at it directly.
+ */
+async function bundledRuntime(spec: PinnedRuntime, hashFile: (path: string) => Promise<string>, platform: NodeJS.Platform): Promise<string | null> {
+  if (platform !== "win32" || spec.runtime !== "aliasmode") return null;
+  const installed = dirname(process.execPath);
+  const directories = process.env.NANFU_CHROMIUM_RUNTIME_DIR
+    ? [process.env.NANFU_CHROMIUM_RUNTIME_DIR]
+    : [join(installed, "chromium", spec.dir), join(installed, "resources", "chromium", spec.dir)];
+  for (const directory of directories) {
+    const executable = join(directory, spec.executable);
+    if (existsSync(executable) && await hashFile(executable) === spec.executableSha256) return executable;
+  }
+  return null;
+}
+
 async function install(spec: PinnedRuntime, root: string, deps: AliasmodeChromiumDeps, platform: NodeJS.Platform): Promise<string> {
   const hashFile = deps.hashFile ?? sha256File;
+  const bundled = await bundledRuntime(spec, hashFile, platform);
+  if (bundled) return bundled;
   const target = join(root, spec.dir);
   const executable = join(target, spec.executable);
   if (existsSync(executable) && await hashFile(executable) === spec.executableSha256) {

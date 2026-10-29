@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareWindowsBundle, stageAgentRuntime, WINDOWS_SIDECAR_TARGET } from "./prepare-windows-bundle.ts";
-import { WINDOWS_CHROMIUM_METADATA } from "../aliasmode-chromium.ts";
+import { WINDOWS_CHROMIUM_DIR, WINDOWS_CHROMIUM_METADATA } from "../aliasmode-chromium.ts";
 import { MCP_MODE } from "../sidecar-entry.ts";
 import { ALIASMODE_VERSION } from "../version.ts";
 
@@ -128,6 +129,42 @@ test("Windows bundle rejects a missing Node executable", async () => {
       cwd, platform: "win32", arch: "x64", compileSidecar: compileTestSidecar,
       installNode: async () => {},
     })).rejects.toThrow("official Node runtime is incomplete");
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("Windows bundle ships the pinned Chromium runtime without the unused locales", async () => {
+  const cwd = workspace();
+  const runtime = join(cwd, "chromium-source");
+  mkdirSync(join(runtime, "locales"), { recursive: true });
+  writeFileSync(join(runtime, "chrome.exe"), "chrome");
+  writeFileSync(join(runtime, "resources.pak"), "resources");
+  for (const locale of ["en-US.pak", "zh-CN.pak", "de.pak"]) writeFileSync(join(runtime, "locales", locale), locale);
+  try {
+    await prepareWindowsBundle({
+      cwd, platform: "win32", arch: "x64", compileSidecar: compileTestSidecar, installNode: installTestNode,
+      chromiumRuntime: runtime,
+      expectedChromiumSha256: createHash("sha256").update("chrome").digest("hex"),
+    });
+    const destination = join(cwd, "src-tauri", "resources", "chromium", WINDOWS_CHROMIUM_DIR);
+    expect(readFileSync(join(destination, "chrome.exe"), "utf8")).toBe("chrome");
+    expect(readFileSync(join(destination, "resources.pak"), "utf8")).toBe("resources");
+    expect(existsSync(join(destination, "locales", "en-US.pak"))).toBe(true);
+    expect(existsSync(join(destination, "locales", "zh-CN.pak"))).toBe(true);
+    expect(existsSync(join(destination, "locales", "de.pak"))).toBe(false);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("Windows bundle rejects a replaced Chromium runtime", async () => {
+  const cwd = workspace();
+  const runtime = join(cwd, "chromium-source");
+  mkdirSync(runtime, { recursive: true });
+  writeFileSync(join(runtime, "chrome.exe"), "replaced chrome");
+  try {
+    await expect(prepareWindowsBundle({
+      cwd, platform: "win32", arch: "x64", compileSidecar: compileTestSidecar, installNode: installTestNode,
+      chromiumRuntime: runtime,
+      expectedChromiumSha256: WINDOWS_CHROMIUM_METADATA.sha256,
+    })).rejects.toThrow("bundled Chromium executable SHA-256 mismatch");
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
