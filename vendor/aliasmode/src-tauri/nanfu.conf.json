@@ -6,7 +6,7 @@
     "copyright": "Copyright © 2026 南孚浏览器",
     "shortDescription": "多账号防关联浏览器",
     "longDescription": "南孚浏览器：为多账号运营提供独立的浏览器环境与指纹隔离，支持环境转移、团队配额与云端同步。",
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "resources": {
       "resources/playwright/": "playwright/",
       "resources/chromium/": "chromium/"
@@ -26,6 +26,14 @@
         "headerImage": "windows/header.bmp",
         "sidebarImage": "windows/sidebar.bmp",
         "installerHooks": "windows/installer-hooks.nsh"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMxMzc4NzdENzBEMUUxRDgKUldUWTRkRndmWWMzTVo2OFZZaC8zb0E2Z1krVURhV1RUdFVpVHFhbGVQOXR0Y2VsM2JOMzllby8K",
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

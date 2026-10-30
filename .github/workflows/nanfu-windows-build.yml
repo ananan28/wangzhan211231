@@ -63,6 +63,8 @@ jobs:
           & $candidates[0].FullName scripts/prepare-windows-bundle.ts
           if ($LASTEXITCODE -ne 0) { throw "Bundle preparation failed" }
       - name: Build development installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.NANFU_UPDATER_PRIVATE_KEY }}
         run: bunx tauri build --config src-tauri/nanfu.conf.json --bundles nsis --no-sign
       - name: Verify branded installation starts
         shell: pwsh
@@ -168,3 +170,39 @@ jobs:
           if ($status -ne "200") {
             throw "Release registration failed with HTTP $status."
           }
+      - name: Publish updater manifest
+        if: success()
+        shell: pwsh
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
+          $bundleDir = "src-tauri/target/release/bundle/nsis"
+          # Tauri signs the installer and writes a one-platform manifest beside it.
+          $manifest = Get-ChildItem $bundleDir -Filter "*.json" -File |
+            Where-Object { (Get-Content $_.FullName -Raw) -match '"platforms"' } |
+            Select-Object -First 1
+          if (-not $manifest) { throw "No updater manifest was produced" }
+          $installers = @(Get-ChildItem $bundleDir -Filter "*.exe" -File | Where-Object { $_.Name -like "*setup*" })
+          if ($installers.Count -ne 1) { throw "Expected one installer beside the manifest" }
+          $installer = $installers[0]
+          $manifestJson = Get-Content $manifest.FullName -Raw | ConvertFrom-Json
+          # The generated url is relative to the manifest; point it at the already-published installer.
+          $manifestJson.platforms.'windows-x86_64'.url = "https://dl.xzckfn.eu.cc/nanfu/$version/win-x64/$($installer.Name)"
+          if (-not ($manifestJson.platforms.'windows-x86_64'.signature)) { throw "Updater manifest has no signature" }
+          $body = $manifestJson | ConvertTo-Json -Depth 8 -Compress
+          $objectKey = "nanfu/update/win-x64/latest-v2.json"
+          $endpoint = "https://0a8dc13181086e28114bb0c6b24eac54.r2.cloudflarestorage.com"
+          $bucket = "software-downloads"
+          $tmp = Join-Path $env:RUNNER_TEMP "latest-v2.json"
+          Set-Content -LiteralPath $tmp -Value $body -Encoding utf8NoBOM
+          & curl.exe -sS -f --retry 3 --retry-delay 5 `
+            --aws-sigv4 "aws:amz:auto:s3" `
+            -u "$($env:R2_ACCESS_KEY_ID):$($env:R2_SECRET_ACCESS_KEY)" `
+            -H "content-type: application/json" `
+            -T $tmp "$endpoint/$bucket/$objectKey"
+          if ($LASTEXITCODE -ne 0) { throw "R2 updater manifest upload failed" }
+          Write-Host "Updater manifest published to $objectKey"
+          Write-Host $body
