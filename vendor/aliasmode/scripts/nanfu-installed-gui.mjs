@@ -246,7 +246,7 @@ async function upload(path) {
 async function openProfile(profile = { id: profileId, name: profileName }, expectExtension = true) {
   await page.getByRole("button", { name: "All profiles", exact: false }).click();
   const opened = page.waitForResponse(response => response.url().endsWith(`/profiles/${profile.id}/open`) && response.request().method() === "POST", { timeout: 240000 });
-  await page.getByRole("button", { name: `Open ${profile.name}`, exact: true }).click();
+  await page.getByRole("button", { name: `打开 ${profile.name}`, exact: true }).click();
   const response = await opened;
   const result = await response.json();
   assert.equal(response.ok(), true, JSON.stringify(result));
@@ -488,7 +488,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   await page.locator(".sidebar").getByRole("button", { name: "New Profile", exact: true }).click();
   await page.locator(".modal-backdrop").getByLabel("Name", { exact: true }).fill(profileName);
   await page.getByRole("button", { name: "Create profile", exact: true }).click();
-  await page.getByRole("button", { name: `Edit ${profileName}`, exact: true }).waitFor();
+  await page.getByRole("button", { name: `编辑 ${profileName}`, exact: true }).waitFor();
   const roster = await api("/ui/api/profiles");
   const profile = roster.profiles.find(item => item.name === profileName);
   assert.ok(profile);
@@ -512,7 +512,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   await page.getByRole("button", { name: /^Manage extensions/ }).click();
   await page.locator(".extname").filter({ hasText: extensionName }).waitFor();
   await page.getByRole("button", { name: "All profiles", exact: false }).click();
-  await page.getByRole("button", { name: `Edit ${profileName}`, exact: true }).click();
+  await page.getByRole("button", { name: `编辑 ${profileName}`, exact: true }).click();
   await page.locator(".modal-backdrop").getByLabel(extensionName, { exact: true }).check();
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await page.locator(".modal-backdrop").waitFor({ state: "hidden" });
@@ -571,7 +571,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   await page.locator(".sidebar").getByRole("button", { name: "New Profile", exact: true }).click();
   await page.locator(".modal-backdrop").getByLabel("Name", { exact: true }).fill(otherName);
   await page.getByRole("button", { name: "Create profile", exact: true }).click();
-  await page.getByRole("button", { name: `Edit ${otherName}`, exact: true }).waitFor();
+  await page.getByRole("button", { name: `编辑 ${otherName}`, exact: true }).waitFor();
   const profiles = (await api("/ui/api/profiles")).profiles;
   const other = profiles.find(item => item.name === otherName);
   assert.ok(other);
