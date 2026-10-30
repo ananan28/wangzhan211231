@@ -985,6 +985,16 @@ export async function deleteProfiles(ids: string[]): Promise<any> {
   return apiJson(r, "/ui/api/profiles/delete");
 }
 
+/** 克隆窗口：同一份配置与浏览器数据，新的环境号与指纹。 */
+export async function cloneProfiles(ids: string[], copies = 1): Promise<any> {
+  const r = await fetch("/ui/api/profiles/clone", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids, copies }),
+  });
+  return apiJson(r, "/ui/api/profiles/clone");
+}
+
 export interface ProxyCheckInput {
   type?: string;
   host: string;

@@ -96,6 +96,7 @@ import {
   uploadExports,
   moveProfiles,
   deleteProfiles,
+  cloneProfiles,
   createProfile,
   fetchProfileEdit,
   updateProfile,
@@ -1445,6 +1446,7 @@ function App() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const deleteInFlight = useRef(false);
+  const cloneInFlight = useRef(false);
   const rosterLoader = useRef(serialLoader(() => loadRoster()));
   // Active profile export: null when idle, otherwise how far the server-side
   // collection has progressed ({completed: total} = file being built).
@@ -2641,6 +2643,31 @@ function App() {
       await load();
     } catch (e) {
       setActionErr(String(e));
+    }
+  };
+
+  /** 克隆窗口：配置、扩展和浏览器数据整份复制，新的环境号与新指纹。 */
+  const cloneWindows = async (ids: string[]) => {
+    if (ids.length === 0 || cloneInFlight.current) return;
+    cloneInFlight.current = true;
+    setActionErr(null);
+    try {
+      const r = await cloneProfiles(ids);
+      if (r.ok === false) {
+        setActionErr(r.error || "克隆失败");
+        return;
+      }
+      const created = (r.created ?? []) as Array<{ id: string; name: string }>;
+      const running = ((r.skipped ?? []) as Array<{ reason?: string }>).filter((item) => item.reason === "running").length;
+      flash(running > 0
+        ? `已克隆 ${created.length} 个窗口；另有 ${running} 个正在运行，关掉后再克隆`
+        : `已克隆 ${created.length} 个窗口，指纹已重新生成`);
+      setSelected(new Set());
+      await load();
+    } catch (e) {
+      setActionErr(String(e));
+    } finally {
+      cloneInFlight.current = false;
     }
   };
 
@@ -4137,6 +4164,11 @@ function App() {
             </>
           )}
           <span className="spacer" />
+          {!isCloudMode && (
+            <button className="btn tip" data-tip="克隆选中环境：配置、扩展和登录状态照搬，指纹重新生成" disabled={!selected.size} onClick={() => void cloneWindows([...selected])}>
+              <Icon name="copy" className="sm" />克隆选中
+            </button>
+          )}
           {(!isCloudMode || selectedEditable) && (
             <button className="btn danger tip" data-tip={appMode?.legacyRemote ? t("Delete selected profiles") : t("Move selected profiles to Trash")} disabled={!selected.size || deleting} onClick={deleteSelected}>
               <Icon name="trash" className="sm" />{deleting ? t("Processing…") : appMode?.legacyRemote ? t("Delete") : t("Move {count} to Trash", { count: selected.size.toLocaleString() })}
@@ -4242,6 +4274,16 @@ function App() {
                         {canEditRow && (
                           <button className="iconbtn tip" data-tip={t("Edit profile")} aria-label={`编辑 ${p.name}`} onClick={() => openEdit(p.id)}>
                             <Icon name="edit" className="sm" />
+                          </button>
+                        )}
+                        {!isCloudMode && !p.running && (
+                          <button
+                            className="iconbtn tip"
+                            data-tip="克隆此窗口：内容与扩展照搬，指纹重新生成"
+                            aria-label={`克隆 ${p.name}`}
+                            onClick={() => void cloneWindows([p.id])}
+                          >
+                            <Icon name="copy" className="sm" />
                           </button>
                         )}
                         {p.engine === "chromium" && (
