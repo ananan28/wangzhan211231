@@ -181,19 +181,26 @@ jobs:
           $ErrorActionPreference = "Stop"
           $version = (Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
           $bundleDir = "src-tauri/target/release/bundle/nsis"
-          # Tauri signs the installer and writes a one-platform manifest beside it.
-          $manifest = Get-ChildItem $bundleDir -Filter "*.json" -File |
-            Where-Object { (Get-Content $_.FullName -Raw) -match '"platforms"' } |
-            Select-Object -First 1
-          if (-not $manifest) { throw "No updater manifest was produced" }
           $installers = @(Get-ChildItem $bundleDir -Filter "*.exe" -File | Where-Object { $_.Name -like "*setup*" })
-          if ($installers.Count -ne 1) { throw "Expected one installer beside the manifest" }
+          if ($installers.Count -ne 1) { throw "Expected one installer beside the signature" }
           $installer = $installers[0]
-          $manifestJson = Get-Content $manifest.FullName -Raw | ConvertFrom-Json
-          # The generated url is relative to the manifest; point it at the already-published installer.
-          $manifestJson.platforms.'windows-x86_64'.url = "https://dl.xzckfn.eu.cc/nanfu/$version/win-x64/$($installer.Name)"
-          if (-not ($manifestJson.platforms.'windows-x86_64'.signature)) { throw "Updater manifest has no signature" }
-          $body = $manifestJson | ConvertTo-Json -Depth 8 -Compress
+          $sigFile = "$($installer.FullName).sig"
+          if (-not (Test-Path -LiteralPath $sigFile)) { throw "No updater signature was produced" }
+          $signature = (Get-Content -LiteralPath $sigFile -Raw).Trim()
+          if (-not $signature) { throw "Updater signature is empty" }
+          # Tauri only signs the installer; the manifest is assembled here.
+          $manifest = [ordered]@{
+            version = "$version"
+            notes = ""
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                url = "https://dl.xzckfn.eu.cc/nanfu/$version/win-x64/$($installer.Name)"
+                signature = "$signature"
+              }
+            }
+          }
+          $body = $manifest | ConvertTo-Json -Depth 8 -Compress
           $objectKey = "nanfu/update/win-x64/latest-v2.json"
           $endpoint = "https://0a8dc13181086e28114bb0c6b24eac54.r2.cloudflarestorage.com"
           $bucket = "software-downloads"
