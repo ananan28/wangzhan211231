@@ -682,7 +682,7 @@ test("Firefox cache cleanup preserves native storage and lock files", async () =
     writeFileSync(join(root, file), "test data");
   }
   await f.launcher.start(f.profile.id);
-  expect(await f.launcher.clearCache(f.profile.id)).toEqual({ cleared: false });
+  expect(await f.launcher.clearCache(f.profile.id)).toEqual({ cleared: false, freedBytes: 0 });
   expect(existsSync(join(root, "cache2/state"))).toBe(true);
   expect(await f.launcher.stop(f.profile.id)).toBe(true);
   for (const dir of ["cache2", "startupCache", "shader-cache"]) expect(existsSync(join(root, dir))).toBe(false);
