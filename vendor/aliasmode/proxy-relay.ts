@@ -100,6 +100,7 @@ function handleClient(
     }
     client.pause(); // Buffer later bytes until the upstream is ready; pipe() resumes reading.
     client.removeListener("data", onData);
+    client.read(0); // Keep EOF detection active without consuming buffered request bytes.
     const head = buf.subarray(0, headEnd + 4).toString("latin1");
     const rest = buf.subarray(headEnd + 4); // bytes already past the head (a plain-HTTP body, usually empty)
     const firstLine = head.split("\r\n")[0] ?? "";
