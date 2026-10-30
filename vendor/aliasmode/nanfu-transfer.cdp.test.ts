@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { chromium, type Browser } from "playwright-core";
 import { NanfuCipher, NanfuDecryptError } from "./nanfu-crypto.ts";
 import { exportNanfuEnvironment } from "./nanfu-sync.ts";
@@ -267,3 +267,170 @@ test.skipIf(!enabled)("a live environment survives export and import without los
 
   await second.stop();
 }, 180_000);
+
+test.skipIf(!enabled)("staff account forms validate and remain usable in real Chromium", async () => {
+  // Keep the entry beneath the remote repo so React resolves from its node_modules.
+  const entryDir = mkdtempSync(join(process.cwd(), ".nanfu-management-cdp-"));
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  let chrome: Awaited<ReturnType<typeof connectChrome>> | undefined;
+  try {
+    const web = join(process.cwd(), "web").replace(/\\/g, "/");
+    const entry = join(entryDir, "fixture.tsx");
+    writeFileSync(entry, `
+      import React from "react";
+      import { createRoot } from "react-dom/client";
+      import { NanfuManagement } from ${JSON.stringify(`${web}/nanfu-management.tsx`)};
+      import ${JSON.stringify(`${web}/styles.css`)};
+      const organization = {
+        orgId: "fixture-org", name: "合成组织", identity: "owner", roleName: null,
+        permissions: [], quota: 0, used: 0, planQuota: 0, status: "active", locked: false,
+      };
+      const member = {
+        roleId: null, roleName: null, managerUserId: null, quota: 0, used: 0,
+        status: "active", locked: false,
+      };
+      const overview = {
+        members: [
+          { ...member, userId: "fixture-owner", email: "owner@nanfu.local", identity: "owner", displayName: "合成所有者" },
+          { ...member, userId: "fixture-employee", email: "employee@nanfu.local", identity: "member", displayName: "合成员工" },
+        ],
+        roles: [], groups: [], grants: [], invites: [],
+      };
+      window.__nanfuMutations = [];
+      const onMutate = async (action, input) => { window.__nanfuMutations.push({ action, input }); };
+      const root = createRoot(document.getElementById("root"));
+      window.__renderNanfu = (busy = false) => root.render(
+        <section className="workspace nanfu-staff-page"><div className="settingspage">
+          <NanfuManagement organization={organization} overview={overview}
+            currentUserId="fixture-owner" busy={busy} onMutate={onMutate} />
+        </div></section>
+      );
+      window.__renderNanfu();
+    `);
+    const build = await Bun.build({
+      entrypoints: [entry], target: "browser", write: false,
+      naming: "[name].[ext]", publicPath: "/", loader: { ".woff2": "file" },
+    });
+    if (!build.success) throw new Error(build.logs.map(String).join("\n"));
+    const assets = new Map(build.outputs.map(output => [`/${basename(output.path)}`, output]));
+    const script = build.outputs.find(output => output.path.endsWith(".js"));
+    const styles = build.outputs.filter(output => output.path.endsWith(".css"));
+    expect(script).toBeDefined();
+    expect(styles.length).toBeGreaterThan(0);
+    server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch(request) {
+        const path = new URL(request.url).pathname;
+        if (path === "/") return new Response(`<!doctype html><html lang="zh-CN"><head>
+          <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Nanfu management fixture</title>
+          ${styles.map(style => `<link rel="stylesheet" href="/${basename(style.path)}">`).join("")}
+          </head><body><div id="root"></div><script type="module" src="/${basename(script!.path)}"></script></body></html>`,
+          { headers: { "content-type": "text/html; charset=utf-8" } });
+        if (path === "/favicon.ico") return new Response(null, { status: 204 });
+        const asset = assets.get(path);
+        return asset ? new Response(asset) : new Response("Not found", { status: 404 });
+      },
+    });
+    const origin = `http://127.0.0.1:${server.port}`;
+    chrome = await connectChrome();
+    const context = await chrome.browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
+    context.setDefaultTimeout(8_000);
+    const externalRequests: string[] = [];
+    const errors: string[] = [];
+    await context.route("**/*", route => {
+      if (new URL(route.request().url()).origin === origin) return route.continue();
+      externalRequests.push(route.request().url());
+      return route.abort();
+    });
+    const page = await context.newPage();
+    page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+    page.on("pageerror", error => errors.push(error.message));
+    await page.goto(origin);
+    const add = page.getByRole("form", { name: "添加账号", exact: true });
+    await add.waitFor({ state: "visible" });
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    const mutations = () => page.evaluate(() => (window as any).__nanfuMutations);
+    const created = [{ action: "create-account", input: {
+      email: "测试员工", password: "Fixture123", identity: "member", quota: 0,
+      managerUserId: undefined, roleId: undefined, groupIds: [], name: undefined,
+    } }];
+    await add.locator('[name="email"]').fill("测试员工");
+    await add.locator('[name="password"]').fill("Fixture123");
+    await add.getByRole("button", { name: "添加账号", exact: true }).click();
+    await page.waitForFunction(() => (window as any).__nanfuMutations.length === 1);
+    expect(await mutations()).toEqual(created);
+
+    for (const [name, password, message] of [
+      ["测试员工", "abcdef", "必须包含英文字母和数字"],
+      ["张 三", "Fixture123", "不能包含空白"],
+    ] as const) {
+      await add.locator('[name="email"]').fill(name);
+      await add.locator('[name="password"]').fill(password);
+      await add.getByRole("button", { name: "添加账号", exact: true }).click();
+      await page.waitForFunction(message => document.querySelector('form[aria-label="添加账号"] [role="alert"]')?.textContent?.includes(message), message);
+      expect(await add.getByRole("alert").isVisible()).toBe(true);
+      expect(await mutations()).toEqual(created);
+    }
+
+    const reset = page.getByRole("form", { name: "重置密码 合成员工", exact: true, includeHidden: true });
+    const actions = page.locator("details.nanfu-row-actions").filter({ has: reset });
+    await actions.locator(":scope > summary").click();
+    await reset.locator('[name="password"]').fill("abcdef");
+    await reset.getByRole("button", { name: "重置密码", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('form[aria-label="重置密码 合成员工"] [role="alert"]')?.textContent?.includes("必须包含英文字母和数字"));
+    expect(await reset.getByRole("alert").isVisible()).toBe(true);
+    expect(await mutations()).toEqual(created);
+    await reset.locator('[name="password"]').fill("Reset123");
+    await reset.getByRole("button", { name: "重置密码", exact: true }).click();
+    await page.waitForFunction(() => (window as any).__nanfuMutations.length === 2);
+    const completed = [...created, { action: "reset-password", input: { userId: "fixture-employee", password: "Reset123" } }];
+    expect(await mutations()).toEqual(completed);
+    expect(await reset.locator('[name="password"]').inputValue()).toBe("");
+
+    for (const width of [1440, 800]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await add.scrollIntoViewIfNeeded();
+      const boxes = await add.locator('input:visible, select:visible, button[type="submit"]:visible').evaluateAll(nodes => nodes.map((node, index) => {
+        const { left, right, top, bottom, width, height } = node.getBoundingClientRect();
+        return { field: node.getAttribute("name") || `${node.tagName}-${index}`, left, right, top, bottom, width, height };
+      }));
+      expect(boxes.length).toBe(7);
+      for (const box of boxes) {
+        expect(box.width).toBeGreaterThan(0);
+        expect(box.height).toBeGreaterThan(0);
+        expect(box.left).toBeGreaterThanOrEqual(0);
+        expect(box.right).toBeLessThanOrEqual(width);
+      }
+      const overlaps = boxes.flatMap((box, index) => boxes.slice(index + 1)
+        .filter(other => Math.min(box.right, other.right) > Math.max(box.left, other.left)
+          && Math.min(box.bottom, other.bottom) > Math.max(box.top, other.top))
+        .map(other => `${width}: ${box.field} / ${other.field}`));
+      expect(overlaps).toEqual([]);
+      // Check the page containers, not tables: their own horizontal scrolling is intentional.
+      const overflowing = await page.evaluate(() => ["html", "body", "#root", ".nanfu-staff-page", ".settingspage"].filter(selector => {
+        const node = document.querySelector(selector)!;
+        return node.scrollWidth > node.clientWidth + 1;
+      }));
+      expect(overflowing).toEqual([]);
+    }
+
+    await add.locator('[name="email"]').fill("测试员工");
+    await add.locator('[name="password"]').fill("Fixture123");
+    await page.evaluate(() => (window as any).__renderNanfu(true));
+    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('form[aria-label="添加账号"] button[type="submit"]')?.disabled);
+    expect(await add.getByRole("button", { name: "添加账号", exact: true }).isDisabled()).toBe(true);
+    expect(await reset.getByRole("button", { name: "重置密码", exact: true }).isDisabled()).toBe(true);
+    // Also exercise the busy guard if a submission arrives without clicking the disabled button.
+    await add.evaluate(form => (form as HTMLFormElement).requestSubmit());
+    expect(await mutations()).toEqual(completed);
+    expect(externalRequests).toEqual([]);
+    expect(errors).toEqual([]);
+  } finally {
+    try { await chrome?.stop(); }
+    finally {
+      await server?.stop(true);
+      rmSync(entryDir, { recursive: true, force: true });
+    }
+  }
+}, 60_000);

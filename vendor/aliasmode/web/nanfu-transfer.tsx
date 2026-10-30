@@ -143,9 +143,9 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
       setCloudEnvironmentId("");
       const parts = [
         result.hasLoginState ? `登录态已打包（${result.cookies} 个 Cookie、${result.origins} 个站点存储）` : "该环境还没有保存登录态，对方打开后需自行登录",
-        result.extensions ? `${result.extensions} 个扩展` : "",
+        result.extensions ? `${result.extensions} 个扩展文件（不含扩展内部账号数据）` : "",
       ].filter(Boolean);
-      return `已发送到 ${result.recipientEmail} 的云端收件箱：${parts.join("，")}。对方在「环境转移」页点“接受并导入”，打开就是已登录状态。`;
+      return `已发送到 ${result.recipientEmail} 的云端收件箱：${parts.join("，")}。对方可在「环境转移」页点“接受并导入”；网站可能要求重新登录或验证，请确认可用后再清理源窗口。`;
     });
   };
 
@@ -156,7 +156,7 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
       setUploadId("");
       const parts = [
         result.hasLoginState ? `登录态已加密（${result.cookies} 个 Cookie、${result.origins} 个站点存储）` : "该环境还没有保存登录态",
-        result.extensions ? `${result.extensions} 个扩展` : "",
+        result.extensions ? `${result.extensions} 个扩展文件（不含扩展内部账号数据）` : "",
       ].filter(Boolean);
       const hint = result.deviceCount > 1
         ? `已对 ${result.deviceCount} 台登记设备加密。`
@@ -170,7 +170,7 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
     void run(async (signal) => {
       const result = await nanfuDownloadCloudEnvironment(row.id, signal);
       return `已下载并导入“${result.name}”${result.renamed ? "（与本机重名，已自动改名，未覆盖原有环境）" : ""}，`
-        + `${result.hasLoginState ? `登录态一并恢复（${result.cookies} 个 Cookie、${result.origins} 个站点存储）` : "但云端包未包含登录态，请自行登录网站"}，直接启动即可。`;
+        + `${result.hasLoginState ? `已保存待恢复的登录态（${result.cookies} 个 Cookie、${result.origins} 个站点存储，网站可能要求重新验证）` : "但云端包未包含登录态，请自行登录网站"}，直接启动即可。`;
     }).finally(() => setDownloadingId(null));
   };
 
@@ -187,7 +187,7 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
     void run(async (signal) => {
       const result = await nanfuAcceptCloudEnvironment(row.id, signal);
       return `已导入“${result.name}”${result.renamed ? "（与本机重名，已自动改名，未覆盖原有环境）" : ""}，`
-        + `${result.hasLoginState ? `登录态一并恢复（${result.cookies} 个 Cookie、${result.origins} 个站点存储）` : "但发送方未包含登录态，请自行登录网站"}，直接启动即可。`;
+        + `${result.hasLoginState ? `已保存待恢复的登录态（${result.cookies} 个 Cookie、${result.origins} 个站点存储，网站可能要求重新验证）` : "但发送方未包含登录态，请自行登录网站"}，直接启动即可。`;
     }).finally(() => setAcceptingId(null));
   };
 
@@ -273,7 +273,8 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
   return <section className="workspace nanfu-transfer-page" hidden={!active} aria-label="环境转移">
     <div className="settingspage">
       <h2 className="sect-title">环境转移</h2>
-      <p>把整个环境搬到云端：指纹、代理、扩展文件和登录态一起加密上传，只有接收人能解开。对方点“接受并导入”后直接启动，网站已是登录状态，不需要导出文件。</p>
+      <p>把环境配置、指纹、代理、扩展文件和已采集的网站登录态加密发送给接收人，无需手动导出文件。网站可能要求重新登录或验证，请确认目标窗口可用后再清理源窗口。</p>
+      <p role="note">当前只转移扩展程序文件，不包含扩展内部的账号、密码库和存储数据。管理员回收只改变组织归属，不等于搬运完整环境或取得云端包解密权限。</p>
       {busy && <p role="status">正在处理转移或读取列表…</p>}
       {notice && <p role="status">{notice}</p>}
       {error && <p className="modal-err" role="alert">{error}</p>}
@@ -286,7 +287,7 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
         <section className="settings-card" aria-label="我的云端">
           <header><h3>我的云端（同一账号跨机器）</h3></header>
           <div className="card-body">
-            <p>把本机窗口的配置、指纹、代理、扩展文件与登录态（Cookie、站点存储）在本机加密后上传；云端只保存密文，只有同一账号已登记的设备能解开。另一台机器用同一账号登录后，在这里点“下载并打开”即可，窗口会直接保持登录。</p>
+            <p>把窗口配置、指纹、代理、扩展文件与已采集的网站登录态在本机加密后上传。只有上传时已登记的设备能解开；新电脑请先登录并打开本页登记，再由原电脑重新上传。扩展内部账号数据暂不包含，网站也可能要求重新验证。</p>
             {cloud?.error && <p role="alert">{cloud.error}</p>}
             {cloud && !cloud.deviceKeyPublished && <p role="alert">本机设备密钥尚未登记到云端，上传和下载可能失败；请检查网络后点“刷新转移列表”。</p>}
             {!sendable.length ? <p>本机还没有 Chromium 引擎的窗口可上传。</p> : <fieldset disabled={busy || !cloudReady} className="nanfu-form">
@@ -330,7 +331,7 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
                 {recipients.map((member) => <option key={member.userId} value={member.userId}>{member.email || member.userId}</option>)}
               </select></label>
               <button className="btn primary" type="button" disabled={!cloudEnvironmentId || !cloudRecipientId} onClick={sendToCloud}>发送到对方云端</button>
-              <p>发送前会自动保存当前登录态（窗口正在运行时直接抓取，不用先关闭）。对方不需要你给任何密码或文件，接受后即可使用。仅支持 Chromium 引擎窗口；Camoufox / Firefox 引擎暂不支持。</p>
+              <p>窗口运行时会先采集当前网站登录态，采集失败会停止发送；关闭的窗口使用上次保存的快照。扩展内部账号数据暂不包含，请在目标电脑验证网站和扩展后再清理源数据。仅支持 Chromium 引擎窗口。</p>
             </fieldset>
           </>}
         </div></section>

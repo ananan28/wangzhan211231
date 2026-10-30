@@ -203,7 +203,7 @@ function MemberRow({ member, overview, owner, currentUserId, busy, onMutate }: {
           <option value="active">启用</option><option value="disabled">停用</option>
         </select></label>
         <label className="nanfu-check"><input type="checkbox" name="locked" defaultChecked={member.locked} disabled={busy} />锁定登录</label>
-        <label className="nanfu-check"><input type="checkbox" name="reclaim" disabled={busy} />停用前把窗口回收给所有者</label>
+        <label className="nanfu-check"><input type="checkbox" name="reclaim" disabled={busy} />停用前把窗口归属改给所有者（不搬运数据）</label>
         <button className="btn" type="submit" disabled={busy}>保存</button>
       </form>
       <h5>授权分组</h5>
@@ -240,11 +240,11 @@ function MemberRow({ member, overview, owner, currentUserId, busy, onMutate }: {
       <h5>移除</h5>
       <form className="nanfu-form nanfu-row-form" aria-label={`移除 ${memberLabel(member)}`} onSubmit={event => {
         event.preventDefault();
-        if (window.confirm(`移除 ${memberLabel(member)}？其组织内窗口会先回收给所有者。本机数据不删除。`)) {
+        if (window.confirm(`移除 ${memberLabel(member)}？只会把组织内窗口归属改给所有者，不会搬运本机文件或恢复云端加密包。请先确认所需数据已完成转移。本机数据不删除。`)) {
           void onMutate("remove-member", { userId: member.userId, reclaim: true });
         }
       }}>
-        <p className="nanfu-hint">移除前会先把这个账号名下的窗口回收给组织所有者，不会删除任何本机数据。</p>
+        <p className="nanfu-hint">这里只回收窗口归属，不搬运本机文件，也不解密原账号的云端包。请先完成所需数据转移，再移除账号；本机数据不会删除。</p>
         <button className="btn danger" type="submit" disabled={busy}>移除账号</button>
       </form>
     </details>}</td>
