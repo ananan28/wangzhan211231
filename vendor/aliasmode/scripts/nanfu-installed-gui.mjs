@@ -227,7 +227,7 @@ async function apiPost(path, body) {
 
 async function upload(path) {
   const chooser = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Upload ZIP/CRX", exact: true }).click();
+  await page.getByRole("button", { name: "上传 ZIP / CRX 扩展包", exact: true }).click();
   await chooser;
   const cdp = await page.context().newCDPSession(page);
   try {
@@ -530,7 +530,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (request.method() === "POST" && new URL(request.url()).pathname === "/ui/api/extensions/delete") deletionRequests++;
   });
   const removalDialog = page.getByRole("dialog", { name: "Remove extension", exact: true });
-  const removeButton = page.locator(".extrow").filter({ hasText: extensionName }).getByRole("button", { name: "Remove", exact: true });
+  const removeButton = page.locator(".extrow").filter({ hasText: extensionName }).getByRole("button", { name: "移除扩展", exact: true });
   await removeButton.click();
   await removalDialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await removalDialog.waitFor({ state: "hidden" });
@@ -560,7 +560,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   await page.getByRole("button", { name: /^Manage extensions/ }).click();
   await removeButton.click();
   await removalDialog.getByRole("button", { name: "Remove extension", exact: true }).click();
-  await page.getByText("No extensions yet", { exact: true }).waitFor();
+  await page.getByText("尚未安装扩展", { exact: true }).waitFor();
   assert.equal(deletionRequests, 2);
   assert.equal((await api("/ui/api/extensions")).extensions.length, 0);
   assert.deepEqual((await api(`/ui/api/profiles/${profileId}`)).profile.extensions, []);
