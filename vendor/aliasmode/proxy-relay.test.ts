@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 import net from "node:net";
 import { startProxyRelay } from "./proxy-relay.ts";
 
@@ -44,7 +44,10 @@ function fakeUpstream(requireAuth = true): Promise<{ port: number; close(): void
 /** Minimal authenticated SOCKS5 server. After CONNECT it either echoes tunnel
  * bytes or answers a direct HTTP request, letting the relay bridge be tested
  * without relying on Chromium or an external proxy. */
-function fakeSocksUpstream(requireAuth = true): Promise<{
+function fakeSocksUpstream(requireAuth = true, hooks: {
+  onConnect?: (release: () => void) => void;
+  onTunnelData?: (socket: net.Socket, chunk: Buffer) => void;
+} = {}): Promise<{
   port: number;
   close(): void;
   targets(): string[];
@@ -52,9 +55,12 @@ function fakeSocksUpstream(requireAuth = true): Promise<{
 }> {
   const targets: string[] = [];
   const httpHeads: string[] = [];
+  const sockets = new Set<net.Socket>();
   const server = net.createServer((sock) => {
+    sockets.add(sock);
+    sock.once("close", () => sockets.delete(sock));
     let buf = Buffer.alloc(0);
-    let state: "greeting" | "auth" | "connect" | "tunnel" = "greeting";
+    let state: "greeting" | "auth" | "connect" | "waiting" | "tunnel" = "greeting";
     const consume = (count: number) => {
       const part = buf.subarray(0, count);
       buf = buf.subarray(count);
@@ -96,11 +102,25 @@ function fakeSocksUpstream(requireAuth = true): Promise<{
           const host = request.subarray(5, 5 + hostLength).toString("ascii");
           const port = request.readUInt16BE(5 + hostLength);
           targets.push(`${host}:${port}`);
+          if (hooks.onConnect) {
+            state = "waiting";
+            hooks.onConnect(() => {
+              if (sock.destroyed || state !== "waiting") return;
+              sock.write(Buffer.from([5, 0, 0, 1, 127, 0, 0, 1, 0, 1]));
+              state = "tunnel";
+              process();
+            });
+            return;
+          }
           sock.write(Buffer.from([5, 0, 0, 1, 127, 0, 0, 1, 0, 1]));
           state = "tunnel";
           continue;
         }
-        if (buf.length === 0) return;
+        if (state === "waiting" || buf.length === 0) return;
+        if (hooks.onTunnelData) {
+          hooks.onTunnelData(sock, consume(buf.length));
+          return;
+        }
         if (/^(?:GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH)\s/i.test(buf.toString("latin1"))) {
           const end = buf.indexOf("\r\n\r\n");
           if (end < 0) return;
@@ -118,7 +138,11 @@ function fakeSocksUpstream(requireAuth = true): Promise<{
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => resolve({
       port: (server.address() as net.AddressInfo).port,
-      close: () => server.close(),
+      close: () => {
+        for (const socket of sockets) socket.destroy();
+        sockets.clear();
+        server.close();
+      },
       targets: () => [...targets],
       httpHeads: () => [...httpHeads],
     }));
@@ -327,3 +351,101 @@ test("relay.close destroys accepted clients and upstream sockets, not only the l
   await Promise.all([clientClosed, upstreamClosed]);
   up.close();
 });
+
+for (const method of ["POST", "CONNECT"] as const) {
+  test(`SOCKS5 ${method}: preserves split payload while the handshake is gated`, async () => {
+    const partial = Buffer.from([0x41, 0x80]);
+    const remaining = Buffer.from([0x00, 0xff, 0x42, 0x0d, 0x0a, 0x7f, 0x43]);
+    const payload = Buffer.concat([partial, remaining]);
+    const headers = `Host: example.com\r\nContent-Length: ${payload.length}\r\n`;
+    const firstWrite = Buffer.concat([
+      Buffer.from(method === "POST"
+        ? `POST http://example.com/upload?q=1 HTTP/1.1\r\n${headers}\r\n`
+        : "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"),
+      partial,
+    ]);
+    const expected = method === "POST"
+      ? Buffer.concat([Buffer.from(`POST /upload?q=1 HTTP/1.1\r\n${headers}Connection: close\r\n\r\n`), payload])
+      : payload;
+    const reply = method === "POST"
+      ? Buffer.from("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi")
+      : payload;
+    let received = Buffer.alloc(0);
+    let reached!: (release: () => void) => void;
+    const handshake = new Promise<() => void>((resolve) => { reached = resolve; });
+    let up: Awaited<ReturnType<typeof fakeSocksUpstream>> | undefined;
+    let relay: Awaited<ReturnType<typeof startProxyRelay>> | undefined;
+    let client: net.Socket | undefined;
+    let relayClient: net.Socket | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopWatching = () => {};
+    try {
+      up = await fakeSocksUpstream(false, {
+        onConnect: reached,
+        onTunnelData: (socket, chunk) => {
+          received = Buffer.concat([received, chunk]);
+          // Do not answer a POST after just its headers: require the entire body.
+          if (received.length >= expected.length && !socket.writableEnded) socket.end(reply);
+        },
+      });
+      // Restore the factory before yielding so other connections are not intercepted.
+      const createServer = net.createServer;
+      const capture = spyOn(net, "createServer").mockImplementation((...args: unknown[]) => {
+        const server = Reflect.apply(createServer, net, args) as net.Server;
+        server.once("connection", (socket: net.Socket) => { relayClient = socket; });
+        return server;
+      });
+      let starting: ReturnType<typeof startProxyRelay>;
+      try {
+        starting = startProxyRelay({ type: "socks5", host: "127.0.0.1", port: up.port, user: "", pass: "" });
+      } finally {
+        capture.mockRestore();
+      }
+      relay = await starting;
+      let fail!: (error: Error) => void;
+      const failed = new Promise<never>((_, reject) => { fail = reject; });
+      timer = setTimeout(() => fail(new Error(`gated SOCKS5 ${method} timed out`)), 2000);
+      const sock = client = net.connect({ host: "127.0.0.1", port: relay.port });
+      const chunks: Buffer[] = [];
+      sock.on("error", fail);
+      sock.on("data", (chunk: Buffer) => chunks.push(chunk));
+      const completed = new Promise<Buffer>((resolve) => {
+        sock.once("close", () => resolve(Buffer.concat(chunks)));
+      });
+      sock.once("connect", () => sock.write(firstWrite));
+
+      const release = await Promise.race([handshake, failed]);
+      expect(relayClient).toBeDefined();
+      const accepted = relayClient!;
+      // A readable listener changes stream mode, so assert before attaching it.
+      expect(accepted.isPaused()).toBe(true);
+      const buffered = new Promise<void>((resolve) => {
+        const onReadable = () => {
+          // A write callback proves only local flushing, not arrival at the relay.
+          if (accepted.bytesRead < firstWrite.length + remaining.length) return;
+          stopWatching();
+          resolve();
+        };
+        stopWatching = () => accepted.removeListener("readable", onReadable);
+        accepted.on("readable", onReadable);
+      });
+      sock.write(remaining);
+      await Promise.race([buffered, failed]);
+      expect(received.length).toBe(0);
+      release();
+
+      const got = await Promise.race([completed, failed]);
+      expect(received).toEqual(expected);
+      expect(got).toEqual(method === "POST"
+        ? reply
+        : Buffer.concat([Buffer.from("HTTP/1.1 200 Connection established\r\n\r\n"), reply]));
+    } finally {
+      clearTimeout(timer);
+      stopWatching();
+      client?.destroy();
+      relayClient?.destroy();
+      relay?.close();
+      up?.close();
+    }
+  });
+}

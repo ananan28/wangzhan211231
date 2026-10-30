@@ -175,13 +175,15 @@ pub fn request_quit(app: AppHandle) {
 
 pub fn install_close_handler(window: WebviewWindow) {
     let window_to_hide = window.clone();
-    window.on_window_event(move |event| {
-        if let WindowEvent::CloseRequested { api, .. } = event {
-            // The close button parks the app in the tray so a stray click cannot take
-            // down running profiles; quitting is an explicit choice in the tray menu.
+    window.on_window_event(move |event| match event {
+        WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
             let _ = window_to_hide.hide();
         }
+        WindowEvent::Resized(_) if window_to_hide.is_minimized().unwrap_or(false) => {
+            let _ = window_to_hide.hide();
+        }
+        _ => {}
     });
 }
 

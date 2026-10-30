@@ -98,6 +98,7 @@ function handleClient(
       if (buf.length > MAX_HEAD) client.destroy();
       return;
     }
+    client.pause(); // Buffer later bytes until the upstream is ready; pipe() resumes reading.
     client.removeListener("data", onData);
     const head = buf.subarray(0, headEnd + 4).toString("latin1");
     const rest = buf.subarray(headEnd + 4); // bytes already past the head (a plain-HTTP body, usually empty)

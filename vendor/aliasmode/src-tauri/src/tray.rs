@@ -39,8 +39,8 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
 
 pub fn reveal(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
         let _ = window.unminimize();
+        let _ = window.show();
         let _ = window.set_focus();
     }
 }

@@ -3,6 +3,8 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { chromium } from "playwright-core";
 
 const reportDir = process.env.NANFU_GUI_REPORT_DIR;
@@ -28,6 +30,76 @@ async function waitFor(check, label, timeout = 120000) {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
   throw new Error(`Timed out: ${label}`);
+}
+
+async function verifyNativeWindowLifecycle() {
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class NanfuWindow {
+  private delegate bool EnumCallback(IntPtr handle, IntPtr unused);
+  [DllImport("user32.dll")] private static extern bool EnumWindows(EnumCallback callback, IntPtr unused);
+  [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr handle, out uint owner);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr handle);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr handle);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
+  public static IntPtr Find(uint processId) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows((handle, unused) => {
+      uint owner;
+      GetWindowThreadProcessId(handle, out owner);
+      if (owner != processId || !IsWindowVisible(handle)) return true;
+      found = handle;
+      return false;
+    }, IntPtr.Zero);
+    return found;
+  }
+}
+'@
+$appPid = [int](Get-Content -LiteralPath (Join-Path $env:NANFU_GUI_REPORT_DIR 'tauri.pid'))
+$appPath = Join-Path $env:NANFU_INSTALL_ROOT 'aliasmode.exe'
+$app = Get-Process -Id $appPid -ErrorAction Stop
+$sidecars = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $appPid" | Where-Object { $_.Name -like 'aliasmode-sidecar*.exe' })
+if ($sidecars.Count -ne 1) { throw 'Expected one installed sidecar before window lifecycle test' }
+$sidecarPid = [int]$sidecars[0].ProcessId
+$window = [NanfuWindow]::Find([uint32]$appPid)
+if ($window -eq [IntPtr]::Zero) { throw 'Installed main window is not visible' }
+function Assert-WindowState([bool]$visible) {
+  $deadline = [DateTime]::UtcNow.AddSeconds(10)
+  do {
+    $app.Refresh()
+    if ($app.HasExited -or -not (Get-Process -Id $sidecarPid -ErrorAction SilentlyContinue)) {
+      throw 'Window action terminated the desktop or sidecar'
+    }
+    if ([NanfuWindow]::IsWindowVisible($window) -eq $visible -and (-not $visible -or -not [NanfuWindow]::IsIconic($window))) { return }
+    Start-Sleep -Milliseconds 50
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Installed window did not reach visible=$visible"
+}
+function Restore-ExistingWindow {
+  $second = Start-Process -FilePath $appPath -PassThru
+  if (-not $second.WaitForExit(15000)) { throw 'Second launch did not return to the existing desktop' }
+  if ($second.ExitCode -ne 0) { throw 'Second launch failed to restore the existing desktop' }
+  Assert-WindowState $true
+}
+if (-not [NanfuWindow]::PostMessage($window, 0x0112, [IntPtr]0xF020, [IntPtr]::Zero)) { throw 'Minimize request failed' }
+Assert-WindowState $false
+Restore-ExistingWindow
+if (-not [NanfuWindow]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) { throw 'Close request failed' }
+Assert-WindowState $false
+Restore-ExistingWindow
+@{ minimizedToTray=$true; closedToTray=$true; restoredExistingWindow=$true; sidecarStayedAlive=$true } | ConvertTo-Json -Compress
+`;
+  const { stdout } = await promisify(execFile)("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64"),
+  ], { timeout: 90000, windowsHide: true });
+  const result = JSON.parse(stdout.trim());
+  assert.deepEqual(result, {
+    minimizedToTray: true, closedToTray: true, restoredExistingWindow: true, sidecarStayedAlive: true,
+  });
+  return result;
 }
 
 function storedZip(files) {
@@ -297,6 +369,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   page.on("console", message => { if (message.type() === "error") report.consoleErrors.push(message.text()); });
   page.on("dialog", dialog => dialog.accept());
   assert.equal(await page.evaluate(() => typeof window.__TAURI_INTERNALS__?.invoke), "function", "Must test the installed Tauri window");
+  report.nativeWindowLifecycle = await verifyNativeWindowLifecycle();
+  await stage("installed-minimize-close-and-restore");
   await page.evaluate(() => localStorage.setItem("aliasmode.shell.language", "en-US"));
   await page.reload();
   await page.locator(".sidenav").waitFor();
