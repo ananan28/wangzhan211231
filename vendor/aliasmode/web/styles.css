@@ -7,6 +7,8 @@
 .nanfu-advanced > .card-body { padding: 13px; }
 .nanfu-auth-form, .nanfu-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
 .nanfu-auth-form .fld, .nanfu-filters .fld { flex: 1 1 220px; min-width: 0; }
+.nanfu-auth-form .nanfu-advanced { flex: 1 1 100%; border: 1px solid var(--line); border-radius: 10px; padding-bottom: 12px; }
+.nanfu-auth-form .nanfu-advanced > .fld { padding: 0 14px; }
 .nanfu-account-page .settingspage { overflow: auto; }
 .nanfu-account-page p { overflow-wrap: anywhere; margin: 12px 0; }
 .nanfu-table-wrap { overflow: auto; max-width: 100%; }

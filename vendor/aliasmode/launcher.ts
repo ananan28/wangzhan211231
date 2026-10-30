@@ -1845,7 +1845,11 @@ export class Launcher {
             await this.navigate(currentWs, startupUrls.length ? startupUrls : tabs, true);
             nativeSessionRestored = !startupUrls.length && tabs.length > 0;
           } else if (startupUrls.length && (opts.autoNavigate ?? true)) {
-            await this.navigate(currentWs, startupUrls);
+            // The browser is already on screen, so a startup URL it already shows is
+            // the tab the user left open rather than a second copy of it.
+            const alreadyOpen = await this.restoredPageUrls(existing.debugPort, profileId, 0);
+            const missing = this.startupUrlsToOpen(startupUrls, alreadyOpen);
+            if (missing.length > 0) await this.navigate(currentWs, missing);
           }
           this.log(
             trackedProc
@@ -2254,8 +2258,12 @@ export class Launcher {
         // land on its platform. An inconclusive probe (null) keeps deferring to the
         // restore so a late page never gets a second tab beside it.
         const restoredUserPage = nativeSessionRestored || (restoreLastSession && startupTargets === null);
+        // A restored tab that already shows a startup URL must not get a twin beside it.
+        const missingStartup = startupUrls.length > 0
+          ? this.startupUrlsToOpen(startupUrls, await this.restoredPageUrls(port, profileId))
+          : [];
         const urlsToOpen = startupUrls.length > 0
-          ? startupUrls
+          ? missingStartup
           : home && !restoredUserPage
             ? [home]
             : [];
@@ -2875,6 +2883,79 @@ export class Launcher {
       if (Date.now() >= deadline) return latest;
       await Bun.sleep(50);
     } while (true);
+  }
+
+  /**
+   * Pages the browser already shows. A restored session lands here within a few
+   * hundred milliseconds; a profile that only has the card or a blank tab counts
+   * as "nothing restored" so startup URLs open without waiting for the deadline.
+   */
+  private async restoredPageUrls(port: number, profileId: string, waitMs = 1_200): Promise<string[]> {
+    const deadline = Date.now() + waitMs;
+    const cardUrl = profileCardUrl(profileId);
+    for (;;) {
+      try {
+        const response = await this.fetchFn(`http://127.0.0.1:${port}/json/list`);
+        if (response.ok) {
+          const raw = await response.json();
+          if (Array.isArray(raw)) {
+            const pages = raw.filter((target) => target?.type === "page" && typeof target.url === "string");
+            const userUrls = pages
+              .map((target) => canonicalUserPageUrl(target.url))
+              .filter((url): url is string => !!url);
+            if (userUrls.length > 0) return userUrls;
+            const onlyNeutral = pages.every((target) =>
+              target.url === cardUrl
+              || target.url === UNGOOGLED_FIRST_RUN_URL
+              || target.url === "about:blank"
+              || target.url.startsWith("chrome://newtab")
+              || target.url.startsWith("chrome://new-tab-page"));
+            if (onlyNeutral) return [];
+          }
+        }
+      } catch {}
+      if (Date.now() >= deadline) return [];
+      await Bun.sleep(80);
+    }
+  }
+
+  /**
+   * Startup URLs the browser does not already show. An exact match is the tab the
+   * user left open. A bare home page also counts as open when any page of that
+   * site is up, so a restored bsky.app/home does not collect a second bsky.app tab.
+   */
+  private startupUrlsToOpen(urls: string[], open: string[]): string[] {
+    const normalize = (value: string) => {
+      try {
+        const parsed = new URL(value);
+        parsed.hash = "";
+        return parsed.href.replace(/\/$/, "");
+      } catch {
+        return value;
+      }
+    };
+    const openHrefs = new Set(open.map(normalize));
+    const openHosts = new Set<string>();
+    for (const url of open) {
+      try {
+        openHosts.add(new URL(url).hostname.toLowerCase());
+      } catch {}
+    }
+    const kept: string[] = [];
+    const seen = new Set<string>();
+    for (const url of urls) {
+      const href = normalize(url);
+      if (seen.has(href)) continue;
+      seen.add(href);
+      if (openHrefs.has(href)) continue;
+      try {
+        const parsed = new URL(url);
+        const bareHome = parsed.pathname === "/" || parsed.pathname === "";
+        if (bareHome && openHosts.has(parsed.hostname.toLowerCase())) continue;
+      } catch {}
+      kept.push(url);
+    }
+    return kept;
   }
 
   private hasNativeSessionArtifacts(userDataDir: string): boolean {

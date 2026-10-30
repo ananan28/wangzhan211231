@@ -234,7 +234,9 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
         </> : <form className="nanfu-auth-form" onSubmit={event => { event.preventDefault(); void authenticate("signin"); }}>
           <label className="fld"><span>登录名或邮箱</span><input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} required value={email} onChange={event => setEmail(event.target.value)} placeholder="姓名拼音或缩写，如 zhangsan；也可填完整邮箱" disabled={busy} /></label>
           <label className="fld"><span>密码</span><input type="password" autoComplete="current-password" minLength={6} required value={password} onChange={event => setPassword(event.target.value)} disabled={busy} /></label>
-          <label className="fld"><span>邀请码（选填）</span><input maxLength={128} autoComplete="off" value={signInInvite} onChange={event => setSignInInvite(event.target.value)} disabled={busy} placeholder="填写管理员给的邀请码，登录时直接加入该组织" /></label>
+          <details className="nanfu-advanced"><summary>我是新成员，有邀请码</summary>
+            <label className="fld"><span>邀请码</span><input maxLength={128} autoComplete="off" value={signInInvite} onChange={event => setSignInInvite(event.target.value)} disabled={busy} placeholder="填写管理员给的邀请码，登录时直接加入该组织" /></label>
+          </details>
           <button className="btn primary" type="submit" disabled={busy}>登录南孚账号</button>
           <p className="nanfu-hint">账号由组织管理员创建：用管理员给的登录名（拼音或缩写）直接登录，不需要邮箱。没有账号或忘记密码，请联系管理员。</p>
         </form>}
