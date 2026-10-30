@@ -102,22 +102,24 @@ function saveIdentity(root: string, identity: NanfuTransferIdentity): void {
 /** Load this device's transfer keypair, creating it on first use. */
 export function loadOrCreateTransferIdentity(root: string): NanfuTransferIdentity {
   const file = join(root, KEY_FILE);
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(readFileSync(file, "utf8"));
-    if (isIdentity(parsed)) {
-      // Keys written before device ids existed are upgraded in place so the
-      // same install keeps its published public key.
-      if (typeof parsed.deviceId === "string" && parsed.deviceId) return parsed;
-      const upgraded: NanfuTransferIdentity = { ...parsed, deviceId: randomUUID() };
-      saveIdentity(root, upgraded);
-      return upgraded;
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      const identity = createTransferIdentity();
+      saveIdentity(root, identity);
+      return identity;
     }
-  } catch {
-    // Missing or unreadable: a fresh keypair is the only useful answer.
+    throw new NanfuCloudTransferError("本机云端转移密钥无法读取，已保留原文件；请恢复密钥备份后重试。");
   }
-  const identity = createTransferIdentity();
-  saveIdentity(root, identity);
-  return identity;
+  if (!isIdentity(parsed)) {
+    throw new NanfuCloudTransferError("本机云端转移密钥格式已损坏，已保留原文件；请恢复密钥备份后重试。");
+  }
+  if (typeof parsed.deviceId === "string" && parsed.deviceId) return parsed;
+  const upgraded: NanfuTransferIdentity = { ...parsed, deviceId: randomUUID() };
+  saveIdentity(root, upgraded);
+  return upgraded;
 }
 
 function publicKeyOf(encoded: string) {

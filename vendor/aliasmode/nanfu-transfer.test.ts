@@ -527,6 +527,52 @@ test("the device identity is created once and reused from the state directory", 
   }
 });
 
+test("damaged cloud key files are preserved instead of silently replaced", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nanfu-damaged-key-"));
+  const file = join(root, "nanfu-transfer-key.json");
+  try {
+    for (const contents of ["", "{broken", "null", "{}", JSON.stringify({ publicKey: "fixture", privateKey: "fixture" })]) {
+      await writeFile(file, contents);
+      expect(() => loadOrCreateTransferIdentity(root)).toThrow("已保留原文件");
+      expect(await readFile(file, "utf8")).toBe(contents);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an unreadable cloud key path is left untouched", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nanfu-unreadable-key-"));
+  const file = join(root, "nanfu-transfer-key.json");
+  try {
+    await mkdir(file);
+    await writeFile(join(file, "sentinel"), "synthetic backup");
+    expect(() => loadOrCreateTransferIdentity(root)).toThrow("已保留原文件");
+    expect(await readFile(join(file, "sentinel"), "utf8")).toBe("synthetic backup");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("adding a device ID to an existing key preserves access to old ciphertext", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nanfu-existing-key-"));
+  try {
+    const identity = createTransferIdentity();
+    const sealed = sealTransferPayload(identity.publicKey, "synthetic prior package", "fixture-transfer");
+    await writeFile(join(root, "nanfu-transfer-key.json"), JSON.stringify({
+      publicKey: identity.publicKey, privateKey: identity.privateKey,
+    }));
+    const upgraded = loadOrCreateTransferIdentity(root);
+    expect(upgraded.publicKey).toBe(identity.publicKey);
+    expect(upgraded.privateKey).toBe(identity.privateKey);
+    expect(upgraded.deviceId).toBeTruthy();
+    expect(openTransferPayload(upgraded, sealed, "fixture-transfer")).toBe("synthetic prior package");
+    expect(loadOrCreateTransferIdentity(root)).toEqual(upgraded);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("extension archives travel with the payload and survive a round trip", () => {
   const built = buildCloudTransferPayload({
     environment, session: rawSession, extensionNames: ["Demo"], extensionArchives: [cloudArchive],
