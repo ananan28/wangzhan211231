@@ -117,7 +117,7 @@ export function NanfuGate({ children }: { children: ReactNode }) {
           <aside className="gate-aside" aria-hidden="true">
             <div className="gate-logo">南</div>
             <h2 className="gate-aside-title">南孚浏览器</h2>
-            <p className="gate-aside-text">每个环境独立指纹、独立代理、独立存储，会话留在本机。</p>
+            <p className="gate-aside-text">每个环境独立指纹、独立代理；登录态加密打包后可随环境转移到另一台机器。</p>
             <ul className="gate-feature-list">
               <li>环境指纹隔离</li>
               <li>独立代理出口</li>
