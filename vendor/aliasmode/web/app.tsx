@@ -1447,6 +1447,7 @@ function App() {
   const [deleting, setDeleting] = useState(false);
   const deleteInFlight = useRef(false);
   const cloneInFlight = useRef(false);
+  const [cloning, setCloning] = useState(false);
   const rosterLoader = useRef(serialLoader(() => loadRoster()));
   // Active profile export: null when idle, otherwise how far the server-side
   // collection has progressed ({completed: total} = file being built).
@@ -2646,10 +2647,10 @@ function App() {
     }
   };
 
-  /** 克隆窗口：配置、扩展和浏览器数据整份复制，新的环境号与新指纹。 */
   const cloneWindows = async (ids: string[]) => {
     if (ids.length === 0 || cloneInFlight.current) return;
     cloneInFlight.current = true;
+    setCloning(true);
     setActionErr(null);
     try {
       const r = await cloneProfiles(ids);
@@ -2658,16 +2659,23 @@ function App() {
         return;
       }
       const created = (r.created ?? []) as Array<{ id: string; name: string }>;
-      const running = ((r.skipped ?? []) as Array<{ reason?: string }>).filter((item) => item.reason === "running").length;
-      flash(running > 0
-        ? `已克隆 ${created.length} 个窗口；另有 ${running} 个正在运行，关掉后再克隆`
-        : `已克隆 ${created.length} 个窗口，指纹已重新生成`);
-      setSelected(new Set());
+      const skipped = (r.skipped ?? []) as Array<{ id: string; reason?: string }>;
+      const failed = (r.failed ?? []) as Array<{ id: string; error: string }>;
+      if (created.length) flash(`已克隆 ${created.length} 个窗口，指纹已重新生成`);
+      const problems: string[] = [];
+      const running = skipped.filter((item) => item.reason === "running").length;
+      const missing = skipped.length - running;
+      if (running) problems.push(`${running} 个窗口正在使用，请关闭后重试`);
+      if (missing) problems.push(`${missing} 个源窗口已不存在`);
+      if (failed.length) problems.push(`${failed.length} 个源窗口克隆未完成：${failed[0]!.error}`);
+      if (problems.length) setActionErr(problems.join("；"));
+      setSelected(new Set([...skipped, ...failed].map((item) => item.id)));
       await load();
     } catch (e) {
       setActionErr(String(e));
     } finally {
       cloneInFlight.current = false;
+      setCloning(false);
     }
   };
 
@@ -4165,8 +4173,8 @@ function App() {
           )}
           <span className="spacer" />
           {!isCloudMode && (
-            <button className="btn tip" data-tip="克隆选中环境：配置、扩展和登录状态照搬，指纹重新生成" disabled={!selected.size} onClick={() => void cloneWindows([...selected])}>
-              <Icon name="copy" className="sm" />克隆选中
+            <button className="btn tip" data-tip="克隆关闭的环境：复制配置、扩展及本机数据，生成新指纹" disabled={!selected.size || cloning} onClick={() => void cloneWindows([...selected])}>
+              <Icon name="copy" className="sm" />{cloning ? "正在克隆，请稍候…" : "克隆选中"}
             </button>
           )}
           {(!isCloudMode || selectedEditable) && (
@@ -4281,6 +4289,7 @@ function App() {
                             className="iconbtn tip"
                             data-tip="克隆此窗口：内容与扩展照搬，指纹重新生成"
                             aria-label={`克隆 ${p.name}`}
+                            disabled={cloning}
                             onClick={() => void cloneWindows([p.id])}
                           >
                             <Icon name="copy" className="sm" />

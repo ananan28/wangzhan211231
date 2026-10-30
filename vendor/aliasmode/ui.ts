@@ -67,8 +67,7 @@ import { convertMobilePersonaToDesktop, editedProfileHardware, isMobileUserAgent
 import { setFirefoxScreen, syncFirefoxTimezone } from "./firefox-config.ts";
 import { addBrowserCookie } from "./session.ts";
 import { join, resolve, dirname } from "node:path";
-import { existsSync, readdirSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { cp as copyTree } from "node:fs/promises";
+import { readdirSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { validAgentAuthorization } from "./agent-control.ts";
 import { ScriptError, prefetchPythonFor, type ScriptLibrary, type ScriptSupervisor } from "./scripts.ts";
 import type { PythonRuntime } from "./python-runtime.ts";
@@ -368,21 +367,6 @@ function cloudCloseResponse(result: CloudBrowserCloseResult): Response {
 
 function noStoreJson(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
-}
-
-/**
- * 克隆环境时复制浏览器数据目录（扩展、书签、登录状态都在里面），但跳过锁文件：
- * 复制一把锁会让新环境启动时以为目录已被占用。目录可能有几 GB，异步复制，
- * 免得整块卡住管理界面的请求线程。
- */
-async function copyProfileData(from: string, to: string): Promise<void> {
-  if (!existsSync(from)) return;
-  await copyTree(from, to, {
-    recursive: true,
-    force: true,
-    errorOnExist: false,
-    filter: (src) => !/(^|[\\/])(SingletonLock|SingletonSocket|SingletonCookie|lockfile|DevToolsActivePort)$/.test(src),
-  });
 }
 
 /** 「名字 副本」，重名时依次「名字 副本 2」「名字 副本 3」，保证克隆出的窗口名字不撞车。 */
@@ -1677,28 +1661,38 @@ export async function handleUiRequest(
   }
 
   if (pathname === "/ui/api/profiles/clone" && req.method === "POST") {
-    // 克隆：配置、扩展、浏览器数据（含扩展里的登录状态）整份复制，指纹与新环境号重新生成。
+    const rejected = rejectUntrustedJsonMutation(req);
+    if (rejected) return rejected;
+    let body: { ids?: unknown; copies?: unknown };
     try {
-      const rejected = rejectUntrustedJsonMutation(req);
-      if (rejected) return rejected;
-      const body = (await req.json()) as { ids?: unknown; copies?: unknown };
-      const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
-      if (ids.length === 0) return Response.json({ ok: false, error: "请先选择要克隆的环境" }, { status: 400 });
-      if (remote || options.cloudBrowser) {
-        return Response.json({ ok: false, error: "克隆目前只支持南孚本机环境" }, { status: 400 });
-      }
-      const copies = Math.min(Math.max(Number.isInteger(body.copies) ? Number(body.copies) : 1, 1), 20);
-      const created: Array<{ id: string; name: string; sourceId: string }> = [];
-      const skipped: Array<{ id: string; reason: "not-found" | "running" }> = [];
-      for (const sourceId of ids) {
-        const source = store.getProfile(sourceId);
-        if (!source) { skipped.push({ id: sourceId, reason: "not-found" }); continue; }
-        // 打开中的浏览器占着数据目录，复制出来的是坏档，先关再克隆。
-        if (launcher.profileDeletionBlocked(sourceId)) { skipped.push({ id: sourceId, reason: "running" }); continue; }
-        for (let n = 0; n < copies; n++) {
+      body = await req.json();
+    } catch {
+      return noStoreJson({ ok: false, error: "克隆请求格式不正确" }, 400);
+    }
+    if (!body || !Array.isArray(body.ids) || body.ids.length === 0
+      || body.ids.some((id) => typeof id !== "string" || !id.trim())) {
+      return noStoreJson({ ok: false, error: "请先选择要克隆的环境" }, 400);
+    }
+    if (remote || options.cloudBrowser) {
+      return noStoreJson({ ok: false, error: "克隆目前只支持南孚本机环境" }, 400);
+    }
+    const copies = body.copies ?? 1;
+    if (typeof copies !== "number" || !Number.isInteger(copies) || copies < 1 || copies > 20) {
+      return noStoreJson({ ok: false, error: "每个环境的克隆数量须为 1 至 20" }, 400);
+    }
+    const ids = [...new Set(body.ids as string[])];
+    const created: Array<{ id: string; name: string; sourceId: string }> = [];
+    const skipped: Array<{ id: string; reason: "not-found" | "running" }> = [];
+    const failed: Array<{ id: string; error: string }> = [];
+    for (const sourceId of ids) {
+      const source = store.getProfile(sourceId);
+      if (!source) { skipped.push({ id: sourceId, reason: "not-found" }); continue; }
+      if (launcher.profileDeletionBlocked(sourceId)) { skipped.push({ id: sourceId, reason: "running" }); continue; }
+      for (let n = 0; n < copies; n++) {
+        try {
           const profile = buildNewProfile({
             engine: source.engine ?? "chromium",
-            ...(source.chromiumRuntime ? { chromiumRuntime: source.chromiumRuntime } : {}),
+            chromiumRuntime: source.engine === "firefox" ? undefined : source.chromiumRuntime ?? "cloakbrowser",
             name: cloneProfileName(source.name, (name) => store.listProfiles().some((item) => name === item.name)),
             group: source.group,
             platform: source.platform,
@@ -1711,30 +1705,23 @@ export async function handleUiRequest(
             screen: `${source.screenWidth}x${source.screenHeight}`,
             platformOs: source.platformOs,
             locale: source.locale,
-            ...(source.timezoneManual ? { timezone: source.timezone } : {}),
-          }, (id) => !!store.getProfile(id));
-          // 扩展与标签是数据不是指纹，照搬；指纹种子留在 buildNewProfile 里重新生成。
+          }, (id) => !!store.getProfile(id) || store.isTrashed(id));
           profile.extensions = [...(source.extensions ?? [])];
           profile.tags = [...(source.tags ?? [])];
-          if (profile.proxy) {
-            await attachTimezones([profile], options.timezoneFetch).catch(() => {});
-            syncFirefoxTimezone(profile);
-          }
-          store.upsertProfile(profile);
-          try {
-            await copyProfileData(launcher.userDataDir(sourceId), launcher.userDataDir(profile.id));
-          } catch (error) {
-            store.trashProfile(profile.id);
-            throw error;
-          }
-          launcher.prefetchFirefoxFontPacks?.([profile]);
+          profile.cookies = structuredClone(source.cookies);
+          profile.proxyError = source.proxyError;
+          profile.timezone = source.timezone;
+          profile.timezoneManual = source.timezoneManual;
+          syncFirefoxTimezone(profile);
+          await launcher.cloneProfileData(source, profile);
           created.push({ id: profile.id, name: profile.name, sourceId });
+        } catch {
+          failed.push({ id: sourceId, error: "克隆未完成；请确认源窗口已关闭、磁盘空间充足且数据目录可读后重试" });
+          break;
         }
       }
-      return Response.json({ ok: true, created, skipped });
-    } catch (e) {
-      return Response.json({ ok: false, error: msg(e) }, { status: 500 });
     }
+    return noStoreJson({ ok: true, created, skipped, failed });
   }
 
   if (pathname === "/ui/api/profiles/move" && req.method === "POST") {

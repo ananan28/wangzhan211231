@@ -29,7 +29,7 @@ import {
   statSync,
   statfsSync,
 } from "node:fs";
-import { readdir, rm, stat } from "node:fs/promises";
+import { cp, lstat, readdir, rm, stat } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { dlopen, ptr } from "bun:ffi";
 import type { CookieRecord, LaunchInfo, Profile, ProxySpec } from "./types.ts";
@@ -925,6 +925,7 @@ export class Launcher {
    * overlap during that window.
    */
   private startsInFlight = new Map<string, Promise<LaunchStartResult>>();
+  private clonesInFlight = new Set<string>();
   private startModesInFlight = new Map<string, boolean>();
   /** Launch generations retained after a rejected start, keyed to that rejection. */
   private failedStartGenerations = new WeakMap<object, LaunchGeneration>();
@@ -1658,6 +1659,7 @@ export class Launcher {
     launchArgs: string[] = [],
     opts: LaunchStartOptions = {},
   ): Promise<LaunchStartResult> {
+    if (this.clonesInFlight.has(profileId)) throw new Error("环境正在克隆，请完成后再启动");
     const stopping = this.stopsInFlight.get(profileId);
     const inFlight = this.startsInFlight.get(profileId);
     const requestedHeadless = opts.headless ?? this.headless;
@@ -3571,8 +3573,63 @@ export class Launcher {
   profileDeletionBlocked(profileId: string): boolean {
     return this.startsInFlight.has(profileId)
       || this.stopsInFlight.has(profileId)
+      || this.clonesInFlight.has(profileId)
       || this.procs.has(profileId)
       || this.store.getLaunch(profileId) !== null;
+  }
+
+  async cloneProfileData(source: Profile, profile: Profile): Promise<void> {
+    const from = this.userDataDir(source.id);
+    const to = this.userDataDir(profile.id);
+    if (this.profileDeletionBlocked(source.id) || this.profileDeletionBlocked(profile.id)) {
+      throw new Error("环境正在使用，请关闭后再克隆");
+    }
+    if (source.id === profile.id || this.store.getProfile(profile.id) || this.store.isTrashed(profile.id)) {
+      throw new Error("克隆目标环境已存在");
+    }
+    this.clonesInFlight.add(source.id);
+    this.clonesInFlight.add(profile.id);
+    let allocated = false;
+    try {
+      await this.cacheClears.get(source.id);
+      if (!isDeepStrictEqual(this.store.getProfile(source.id), source)) throw new Error("源环境已变更，请重新克隆");
+      const bundle = this.store.getSessionBundle(source.id);
+      const pending = this.store.getPendingSessionBundle(source.id);
+      if (existsSync(from)) {
+        const holders = await this.findProfileDirHolderPidsFn(from);
+        if (holders === null || holders.length > 0) throw new Error("无法确认源环境已关闭，请关闭浏览器后重试");
+      }
+      mkdirSync(dirname(to), { recursive: true });
+      mkdirSync(to);
+      allocated = true;
+      if (existsSync(from)) {
+        await cp(from, to, {
+          recursive: true,
+          force: false,
+          errorOnExist: true,
+          filter: async (path) => {
+            if (["SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile", "DevToolsActivePort", "parent.lock", ".parentlock"].includes(basename(path))) return false;
+            const entry = await lstat(path);
+            if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
+              throw new Error("环境含链接或特殊文件，已停止克隆以保护数据");
+            }
+            return true;
+          },
+        });
+      }
+      if (!isDeepStrictEqual(this.store.getProfile(source.id), source)
+        || this.store.getSessionBundle(source.id) !== bundle
+        || this.store.getPendingSessionBundle(source.id) !== pending) {
+        throw new Error("源环境在复制期间发生变更，请重新克隆");
+      }
+      this.store.insertClonedProfile(source.id, profile);
+    } catch (error) {
+      if (allocated) await rm(to, { recursive: true, force: true });
+      throw error;
+    } finally {
+      this.clonesInFlight.delete(source.id);
+      this.clonesInFlight.delete(profile.id);
+    }
   }
 
   /** Native-close URLs; Cloud capture accepts only the exact launch generation. */
@@ -3976,8 +4033,15 @@ export class Launcher {
    * deleting them under a running Chrome risks corruption. Never throws.
    */
   async clearCache(profileId: string): Promise<{ cleared: boolean; freedBytes: number }> {
+    if (this.clonesInFlight.has(profileId) || this.cacheClears.has(profileId)) return { cleared: false, freedBytes: 0 };
     const dirs = this.store.getProfile(profileId)?.engine === "firefox" ? FIREFOX_CACHE_DIRS : CACHE_DIRS;
-    return this.clearCacheDirs(profileId, dirs, "clearCache");
+    const result = this.clearCacheDirs(profileId, dirs, "clearCache");
+    const clearing = result.then(() => {}).finally(() => {
+      if (this.cacheClears.get(profileId) === clearing) this.cacheClears.delete(profileId);
+    });
+    this.cacheClears.set(profileId, clearing);
+    await clearing;
+    return result;
   }
 
   private clearPostStopCache(profileId: string): void {
@@ -4242,6 +4306,7 @@ export class Launcher {
    * when refused (the caller can still drop the SQLite row, which is path-safe).
    */
   removeUserDataDir(profileId: string): boolean {
+    if (this.clonesInFlight.has(profileId)) return false;
     const dir = this.containedUserDataDir(profileId, "removeUserDataDir");
     if (!dir) return false;
     rmSync(dir, { recursive: true, force: true });

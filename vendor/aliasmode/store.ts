@@ -454,6 +454,19 @@ export class ProfileStore {
     apply(profiles);
   }
 
+  insertClonedProfile(sourceId: string, profile: Profile): void {
+    this.transaction(() => {
+      if (!this.getProfile(sourceId)) throw new Error("源环境不存在");
+      if (this.getProfile(profile.id) || this.isTrashed(profile.id)) throw new Error("克隆目标环境已存在");
+      if (this.listProfiles().some((item) => item.name === profile.name)) throw new Error("克隆名称已被使用，请重试");
+      this.upsertProfile(profile);
+      this.db.query(`UPDATE profiles SET
+        session_json = (SELECT session_json FROM profiles WHERE id = ?),
+        session_restore_pending = (SELECT session_restore_pending FROM profiles WHERE id = ?)
+        WHERE id = ?`).run(sourceId, sourceId, profile.id);
+    })();
+  }
+
   getSessionBundle(id: string): string | null {
     return this.db.query<{ session_json: string }, [string]>(
       `SELECT session_json FROM profiles WHERE id = ?`,
