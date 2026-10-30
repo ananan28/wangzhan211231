@@ -215,6 +215,16 @@ async function api(path) {
   }, path);
 }
 
+async function apiPost(path, body) {
+  return page.evaluate(async ([path, body]) => {
+    const response = await fetch(path, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(`Write API failed: ${response.status}`);
+    return response.json();
+  }, [path, body]);
+}
+
 async function upload(path) {
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Upload ZIP/CRX", exact: true }).click();
@@ -467,6 +477,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   assert.equal(report.unexpectedFixtureRequests, undefined, "Unexpected account-service calls during sign-in");
   assert.ok(report.transferKeyRegistrations >= 1, "Signing in must enroll the machine's transfer key");
 
+  // The shell's language is persisted server-side and wins over localStorage
+  // after a reload, so pin it before asserting on any label.
+  await apiPost("/ui/api/shell-language", { language: "en-US" });
   await page.evaluate(() => localStorage.setItem("aliasmode.shell.language", "en-US"));
   await page.reload();
   await page.locator(".sidenav").waitFor();
