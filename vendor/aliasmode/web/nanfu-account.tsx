@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  nanfuAuthAction, nanfuSelfJoin, fetchNanfuEnvironments, nanfuOrganizationAction, nanfuLoginName, normalizeNanfuLogin, NanfuApiError, changeNanfuPassword,
+  nanfuAuthAction, nanfuSelfJoin, fetchNanfuEnvironments, nanfuOrganizationAction, nanfuLoginName, NanfuApiError, changeNanfuPassword,
   fetchNanfuLoginName, setNanfuLoginName, clearNanfuLoginName,
   type NanfuAccountState, type NanfuOrganization, type NanfuVisibleEnvironment, type NanfuMutations,
 } from "./api.ts";
-import { NANFU_MIN_PASSWORD_LENGTH } from "../nanfu-account.ts";
+import { NANFU_MAX_PASSWORD_LENGTH, NANFU_MIN_PASSWORD_LENGTH, nanfuPasswordProblem } from "../nanfu-account.ts";
 import { nanfuIdentityName } from "./nanfu-management.tsx";
 
 export function NanfuAccountPage({ active, localCount, onLocal }: { active: boolean; localCount: number | null; onLocal: () => void }) {
@@ -79,7 +79,8 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
     try {
       // A bare login name becomes <name>@nanfu.local, so employees never need
       // an inbox; a full address is used as typed.
-      const credentials = { email: action === "signin" ? normalizeNanfuLogin(email) : email.trim(), password };
+      // 登录名原样交给服务端解析：中文名拼成 <名字>@nanfu.local 会变成无效账号地址。
+      const credentials = { email: email.trim(), password };
       const result = await nanfuAuthAction(action, action === "signin"
         ? (signInInvite.trim() ? { ...credentials, invite: signInInvite.trim() } : credentials)
         : {}, controller.signal);
@@ -164,7 +165,8 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
   };
   const changePassword = async () => {
     if (busy) return;
-    if (nextPassword.length < NANFU_MIN_PASSWORD_LENGTH) { setError(`新密码至少 ${NANFU_MIN_PASSWORD_LENGTH} 位`); return; }
+    const problem = nanfuPasswordProblem(nextPassword);
+    if (problem) { setError(problem); return; }
     if (nextPassword !== confirmPassword) { setError("两次输入的新密码不一致"); return; }
     const { generation, controller } = begin(false);
     setNotice(null);
@@ -232,8 +234,8 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
           <p data-testid="nanfu-identity">已登录：{account.email ? nanfuLoginName(account.email) : account.userId}</p>
           <button className="btn danger" onClick={() => void authenticate("signout")}>退出南孚账号 / 切换账号</button>
         </> : <form className="nanfu-auth-form" onSubmit={event => { event.preventDefault(); void authenticate("signin"); }}>
-          <label className="fld"><span>登录名或邮箱</span><input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} required value={email} onChange={event => setEmail(event.target.value)} placeholder="姓名拼音或缩写，如 zhangsan；也可填完整邮箱" disabled={busy} /></label>
-          <label className="fld"><span>密码</span><input type="password" autoComplete="current-password" minLength={6} required value={password} onChange={event => setPassword(event.target.value)} disabled={busy} /></label>
+          <label className="fld"><span>登录名或邮箱</span><input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} required value={email} onChange={event => setEmail(event.target.value)} placeholder="中文名或拼音，如 海拓集团技术部；也可填完整邮箱" disabled={busy} /></label>
+          <label className="fld"><span>密码</span><input type="password" autoComplete="current-password" minLength={NANFU_MIN_PASSWORD_LENGTH} maxLength={NANFU_MAX_PASSWORD_LENGTH} required value={password} onChange={event => setPassword(event.target.value)} disabled={busy} /></label>
           <details className="nanfu-advanced"><summary>我是新成员，有邀请码</summary>
             <label className="fld"><span>邀请码</span><input maxLength={128} autoComplete="off" value={signInInvite} onChange={event => setSignInInvite(event.target.value)} disabled={busy} placeholder="填写管理员给的邀请码，登录时直接加入该组织" /></label>
           </details>
@@ -245,7 +247,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
         {loginManaged ? <p>本账号由管理员创建，登录名由管理员分配，不能自己修改。如需更改请联系组织管理员。</p> : <>
           <p>{loginName ? <>当前用户名：<b data-testid="nanfu-login-name-value">{loginName}</b>；也可以用注册邮箱登录。</> : "当前用注册邮箱登录；设置用户名后，可只输入用户名登录。"}</p>
           <form className="nanfu-form" aria-label="设置用户名" onSubmit={event => { event.preventDefault(); void saveLoginName(); }}>
-            <label className="fld"><span>用户名</span><input value={loginDraft} onChange={event => setLoginDraft(event.target.value)} placeholder="2 至 63 位字母、数字、点、下划线和横线，如 zhangsan" autoCapitalize="none" autoComplete="off" spellCheck={false} maxLength={63} disabled={busy} /></label>
+            <label className="fld"><span>用户名</span><input value={loginDraft} onChange={event => setLoginDraft(event.target.value)} placeholder="2-63 位，可用中文、字母、数字、点、下划线和横线，如 海拓集团技术部" autoCapitalize="none" autoComplete="off" spellCheck={false} maxLength={63} disabled={busy} /></label>
             <button className="btn primary" type="submit" disabled={busy || !loginDraft.trim() || loginDraft.trim().toLowerCase() === loginName}>保存用户名</button>
             {loginName && <button className="btn" type="button" disabled={busy} onClick={() => void dropLoginName()}>改回用邮箱登录</button>}
           </form>
@@ -255,11 +257,11 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
       {account.authenticated && <section className="settings-card" data-testid="nanfu-password-card"><header><h3>修改密码</h3></header><div className="card-body">
         <form className="nanfu-form" aria-label="修改登录密码" onSubmit={event => { event.preventDefault(); void changePassword(); }}>
           <label className="fld"><span>当前密码</span><input type="password" autoComplete="current-password" required value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} disabled={busy} /></label>
-          <label className="fld"><span>新密码</span><input type="password" autoComplete="new-password" minLength={NANFU_MIN_PASSWORD_LENGTH} maxLength={72} required value={nextPassword} onChange={event => setNextPassword(event.target.value)} disabled={busy} /></label>
-          <label className="fld"><span>再输一次新密码</span><input type="password" autoComplete="new-password" minLength={NANFU_MIN_PASSWORD_LENGTH} maxLength={72} required value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} disabled={busy} /></label>
+          <label className="fld"><span>新密码</span><input type="password" autoComplete="new-password" minLength={NANFU_MIN_PASSWORD_LENGTH} maxLength={NANFU_MAX_PASSWORD_LENGTH} required value={nextPassword} onChange={event => setNextPassword(event.target.value)} disabled={busy} /></label>
+          <label className="fld"><span>再输一次新密码</span><input type="password" autoComplete="new-password" minLength={NANFU_MIN_PASSWORD_LENGTH} maxLength={NANFU_MAX_PASSWORD_LENGTH} required value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} disabled={busy} /></label>
           <button className="btn primary" type="submit" disabled={busy || !currentPassword || nextPassword.length < NANFU_MIN_PASSWORD_LENGTH || nextPassword !== confirmPassword}>保存新密码</button>
         </form>
-        <p className="nanfu-hint">忘记密码不能自助找回：请联系组织管理员在「员工管理」里重置；所有者账号由平台方重置。</p>
+        <p className="nanfu-hint">密码 {NANFU_MIN_PASSWORD_LENGTH}-{NANFU_MAX_PASSWORD_LENGTH} 位，需同时包含英文字母和数字（可含符号）。忘记密码不能自助找回：请联系组织管理员在「员工管理」里重置。</p>
       </div></section>}
       {account.authenticated && <section className="settings-card"><header><h3>当前组织与可见环境</h3></header><div className="card-body">
         <button className="btn" disabled={busy} onClick={() => void refresh()}>刷新组织列表</button>

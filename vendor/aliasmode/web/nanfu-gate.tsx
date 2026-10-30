@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { fetchNanfuState, nanfuAuthAction, nanfuSelfJoin, normalizeNanfuLogin, NanfuApiError, type NanfuAccountState } from "./api.ts";
+import { fetchNanfuState, nanfuAuthAction, nanfuSelfJoin, NanfuApiError, type NanfuAccountState } from "./api.ts";
 
 /**
  * Mandatory sign-in for the 南孚 build. The workspace stays local, while the
@@ -12,6 +12,7 @@ export function NanfuGate({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [invite, setInvite] = useState("");
+  const [showInvite, setShowInvite] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -49,8 +50,10 @@ export function NanfuGate({ children }: { children: ReactNode }) {
     setError(null);
     setNotice(null);
     try {
+      // 登录名原样交给服务端：服务端会把「海拓集团技术部」这类中文名解析成账号地址，
+      // 由前端拼接 @nanfu.local 会让中文名直接撞上“登录名或密码不正确”。
       const result = await nanfuAuthAction("signin", {
-        email: normalizeNanfuLogin(email),
+        email: email.trim(),
         password,
         ...(invite.trim() ? { invite: invite.trim() } : {}),
       });
@@ -92,9 +95,16 @@ export function NanfuGate({ children }: { children: ReactNode }) {
   if (busy && !account) {
     return (
       <main className="onboarding">
-        <section className="onboarding-card" aria-busy="true">
-          <div className="onboarding-brand">南孚浏览器</div>
+        <section className="onboarding-card gate-card gate-loading" aria-busy="true">
+          <div className="gate-brand">
+            <div className="gate-logo" aria-hidden="true">南</div>
+            <div>
+              <div className="gate-brand-name">南孚浏览器</div>
+              <div className="gate-brand-sub">多环境指纹隔离</div>
+            </div>
+          </div>
           <h1>正在连接南孚账号…</h1>
+          <p className="gate-note">首次启动需要几秒完成校验，请稍候。</p>
         </section>
       </main>
     );
@@ -103,58 +113,98 @@ export function NanfuGate({ children }: { children: ReactNode }) {
   if (!account?.authenticated) {
     return (
       <main className="onboarding">
-        <section className="onboarding-card" aria-labelledby="nanfu-gate-title">
-          <div className="onboarding-brand">南孚浏览器</div>
-          <h1 id="nanfu-gate-title">登录南孚账号</h1>
-          <p>账号由管理员分配；用管理员给的登录名（姓名拼音或缩写，如 zhangsan）和密码直接登录，不需要邮箱。没有账号或忘记密码，请联系管理员。</p>
-          <form
-            className="auth-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void signIn();
-            }}
-          >
-            <label>
-              登录名或邮箱
-              <input
-                type="text"
-                autoComplete="username"
-                autoCapitalize="none"
-                spellCheck={false}
-                required
-                value={email}
-                disabled={busy}
-                placeholder="姓名拼音或缩写，如 zhangsan"
-                onChange={(event) => setEmail(event.target.value)}
-              />
-            </label>
-            <label>
-              密码
-              <input
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                disabled={busy}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </label>
-            <label>
-              邀请码（首次加入组织时填写）
-              <input
-                type="text"
-                autoComplete="off"
-                value={invite}
-                disabled={busy}
-                onChange={(event) => setInvite(event.target.value)}
-              />
-            </label>
-            {error && <div className="mode-error" role="alert">{error}</div>}
-            {notice && <div className="auth-notice" role="status">{notice}</div>}
-            <button className="mode-primary" type="submit" disabled={busy}>
-              {busy ? "登录中…" : "登录"}
-            </button>
-          </form>
+        <section className="onboarding-card gate-card" aria-labelledby="nanfu-gate-title">
+          <aside className="gate-aside" aria-hidden="true">
+            <div className="gate-logo">南</div>
+            <h2 className="gate-aside-title">南孚浏览器</h2>
+            <p className="gate-aside-text">每个环境独立指纹、独立代理、独立存储，会话留在本机。</p>
+            <ul className="gate-feature-list">
+              <li>环境指纹隔离</li>
+              <li>独立代理出口</li>
+              <li>云端环境转移</li>
+            </ul>
+          </aside>
+
+          <div className="gate-panel">
+            <header className="gate-header">
+              <span className="gate-eyebrow">南孚浏览器</span>
+              <h1 id="nanfu-gate-title">登录南孚账号</h1>
+              <p className="gate-lede">用管理员分配给你的登录名和密码直接登录，不需要邮箱。</p>
+            </header>
+
+            <form
+              className="gate-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void signIn();
+              }}
+            >
+              <label className="gate-field">
+                <span>登录名或邮箱</span>
+                <input
+                  type="text"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  required
+                  value={email}
+                  disabled={busy}
+                  placeholder="例如：海拓集团技术部"
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+              </label>
+
+              <label className="gate-field">
+                <span>密码</span>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  maxLength={12}
+                  value={password}
+                  disabled={busy}
+                  placeholder="6-12 位，字母与数字组合"
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </label>
+
+              <div className="gate-invite">
+                <button
+                  type="button"
+                  className="gate-invite-toggle"
+                  aria-expanded={showInvite}
+                  onClick={() => setShowInvite((open) => !open)}
+                >
+                  {showInvite ? "收起邀请码" : "我是新成员，有邀请码"}
+                </button>
+                {showInvite && (
+                  <label className="gate-field">
+                    <span>邀请码</span>
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      value={invite}
+                      disabled={busy}
+                      placeholder="填写管理员给的邀请码，登录后自动加入组织"
+                      onChange={(event) => setInvite(event.target.value)}
+                    />
+                  </label>
+                )}
+              </div>
+
+              {error && <div className="gate-alert gate-alert-error" role="alert">{error}</div>}
+              {notice && <div className="gate-alert gate-alert-info" role="status">{notice}</div>}
+
+              <button className="gate-submit" type="submit" disabled={busy || !email.trim() || !password}>
+                {busy ? "登录中…" : "登录"}
+              </button>
+            </form>
+
+            <footer className="gate-footer">
+              <span>账号由组织管理员创建</span>
+              <a href="https://ananan28.github.io/nanfu-site/" target="_blank" rel="noreferrer">去官网注册</a>
+            </footer>
+          </div>
         </section>
       </main>
     );

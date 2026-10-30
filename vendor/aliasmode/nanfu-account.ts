@@ -78,11 +78,25 @@ export function normalizeNanfuLogin(value: string): string {
   return login.includes("@") ? login : `${login}${NANFU_LOGIN_SUFFIX}`;
 }
 
-/** Supabase requires at least six characters; keep the rule explicit for the UI. */
+/** Supabase requires at least six characters; the product adds an upper bound. */
 export const NANFU_MIN_PASSWORD_LENGTH = 6;
+export const NANFU_MAX_PASSWORD_LENGTH = 12;
 
+/** 6-12 characters mixing letters and digits; symbols are allowed but optional. */
 export function isValidNanfuPassword(value: string): boolean {
-  return value.length >= NANFU_MIN_PASSWORD_LENGTH;
+  return value.length >= NANFU_MIN_PASSWORD_LENGTH
+    && value.length <= NANFU_MAX_PASSWORD_LENGTH
+    && /[A-Za-z]/.test(value)
+    && /[0-9]/.test(value);
+}
+
+/** The reason a password is rejected, or null when it passes. */
+export function nanfuPasswordProblem(value: string): string | null {
+  if (value.length < NANFU_MIN_PASSWORD_LENGTH || value.length > NANFU_MAX_PASSWORD_LENGTH) {
+    return `密码需为 ${NANFU_MIN_PASSWORD_LENGTH}-${NANFU_MAX_PASSWORD_LENGTH} 位`;
+  }
+  if (!/[A-Za-z]/.test(value) || !/[0-9]/.test(value)) return "密码需同时包含英文字母和数字";
+  return null;
 }
 
 function retryableStatus(status: number): boolean {
@@ -458,7 +472,7 @@ export class NanfuAccountRuntime {
     const email = this.emailValue;
     if (!email || !this.hasSession()) throw new Error("Sign in before changing the password");
     if (!isValidNanfuPassword(nextPassword)) {
-      throw new Error(`The new password must be at least ${NANFU_MIN_PASSWORD_LENGTH} characters`);
+      throw new Error(nanfuPasswordProblem(nextPassword) ?? "密码不符合要求");
     }
     const revision = this.generation;
     const session = await this.auth.signIn(email, currentPassword);

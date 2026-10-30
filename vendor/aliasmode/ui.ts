@@ -18,7 +18,7 @@ import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from
 import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import type { NanfuRuntime } from "./nanfu-service.ts";
-import { NANFU_LOGIN_SUFFIX, NANFU_MIN_PASSWORD_LENGTH, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword, normalizeNanfuLogin } from "./nanfu-account.ts";
+import { NANFU_LOGIN_SUFFIX, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword, nanfuPasswordProblem, normalizeNanfuLogin } from "./nanfu-account.ts";
 import { NanfuSyncError, isNanfuUuid } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
 import { NANFU_TRANSFER_ROUTE_PREFIX, handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
@@ -736,7 +736,7 @@ export async function handleUiRequest(
         const currentPassword = typeof body?.currentPassword === "string" ? body.currentPassword : "";
         const nextPassword = typeof body?.nextPassword === "string" ? body.nextPassword : "";
         if (!currentPassword) return noStoreJson({ ok: false, error: "请输入当前密码" }, 400);
-        if (!isValidNanfuPassword(nextPassword)) return noStoreJson({ ok: false, error: `新密码至少 ${NANFU_MIN_PASSWORD_LENGTH} 位` }, 400);
+        if (!isValidNanfuPassword(nextPassword)) return noStoreJson({ ok: false, error: nanfuPasswordProblem(nextPassword) ?? "密码不符合要求" }, 400);
         if (nextPassword.length > 72) return noStoreJson({ ok: false, error: "新密码最多 72 位" }, 400);
         if (currentPassword === nextPassword) return noStoreJson({ ok: false, error: "新密码不能与当前密码相同" }, 400);
         const revision = account.revision();
@@ -764,8 +764,12 @@ export async function handleUiRequest(
           return noStoreJson({ ok: true, state, persistent, selfJoin });
         }
         const body = await req.json().catch(() => null) as { email?: unknown; password?: unknown; invite?: unknown } | null;
-        if (!body || typeof body.email !== "string" || typeof body.password !== "string" || !isValidNanfuPassword(body.password)) {
-          return noStoreJson({ ok: false, error: "请输入有效邮箱及至少6位密码" }, 400);
+        if (!body || typeof body.email !== "string" || typeof body.password !== "string" || !body.password) {
+          return noStoreJson({ ok: false, error: "请输入登录名和密码" }, 400);
+        }
+        if (action === "signup") {
+          const weak = nanfuPasswordProblem(body.password);
+          if (weak) return noStoreJson({ ok: false, error: weak }, 400);
         }
         if (action === "signup") {
           if (!isValidNanfuEmail(body.email)) return noStoreJson({ ok: false, error: "请输入有效邮箱及至少6位密码" }, 400);
@@ -776,11 +780,12 @@ export async function handleUiRequest(
         }
         const typed = body.email.trim().toLowerCase();
         let login = normalizeNanfuLogin(typed);
-        // A name typed without "@" may be a chosen sign-in name; the resolver
-        // runs before any token exists, so a failure falls back to the
-        // administrator-created <name>@nanfu.local form.
-        if (typed && !typed.includes("@")) {
-          const resolved = await account.resolveLoginName(typed).catch(() => null);
+        // A chosen sign-in name may arrive bare ("zhangsan") or already expanded
+        // by the UI ("zhangsan@nanfu.local"); the resolver runs before any token
+        // exists, so a miss falls back to the administrator-created address.
+        const bare = typed.endsWith(NANFU_LOGIN_SUFFIX) ? typed.slice(0, -NANFU_LOGIN_SUFFIX.length) : typed;
+        if (bare && !bare.includes("@")) {
+          const resolved = await account.resolveLoginName(bare).catch(() => null);
           if (resolved) login = resolved;
         }
         if (!isValidNanfuEmail(login)) return noStoreJson({ ok: false, error: "请输入有效的邮箱或登录名" }, 400);
