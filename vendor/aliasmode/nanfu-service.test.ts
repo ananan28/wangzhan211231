@@ -160,6 +160,11 @@ function accountFixture() {
         password = body.password;
         return Response.json({ id: "a", email: "a@fixture.test" });
       }
+      // Login-name resolution is public and runs before a session exists.
+      if (url.pathname === "/rest/v1/rpc/nanfu_login_resolve") {
+        const body = await req.json() as any;
+        return Response.json(loginName !== null && body.p_name === loginName ? signedInEmail : null);
+      }
       const id = req.headers.get("authorization")?.replace("Bearer synthetic-access-", "");
       if (!id || id.startsWith("Bearer")) return Response.json({}, { status: 401 });
       if (url.pathname === "/rest/v1/rpc/nanfu_org_me") return Response.json(emptyOrg ? [] : [{
@@ -253,7 +258,7 @@ function accountFixture() {
 test("real HTTP routes use the configured Nanfu runtime and never expose signup sessions", async () => {
   const f = accountFixture();
   try {
-    const signup = await f.call("signup", { email: "registered@fixture.test", password: "synthetic-password" });
+    const signup = await f.call("signup", { email: "registered@fixture.test", password: "Fixture123" });
     expect(signup.body).toEqual({ ok: true, email: "registered@fixture.test", verificationRequired: false });
     expect(f.token()).toBeNull();
     expect((await f.call("environments")).status).toBe(401);
@@ -294,10 +299,20 @@ test("the profile page reads and changes the sign-in name, and a sub-account can
     expect((await f.call("set-login-name", { name: "a" })).status).toBe(400);
     expect((await f.call("set-login-name", { name: "taken" })).status).toBe(409);
     expect((await f.call("set-login-name", { name: "taken" })).body.error).toContain("已被其他账号使用");
+    const chinese = await f.call("set-login-name", { name: "张三" });
+    expect(chinese.status).toBe(200);
+    expect(chinese.body.name).toBe("张三");
+    expect((await f.call("login-name")).body.name).toBe("张三");
+    await f.call("signout", {});
+    const aliasSignIn = await f.call("signin", { email: "张三", password: "synthetic-password" });
+    expect(aliasSignIn.status).toBe(200);
+    expect(aliasSignIn.body.state).toMatchObject({ authenticated: true, userId: "a", email: "a@fixture.test" });
+    expect((await f.call("login-name")).body.name).toBe("张三");
     expect((await f.call("clear-login-name", {})).body.name).toBeNull();
     await f.call("signout", {});
-    // An administrator-assigned account keeps the name it was given.
-    await f.call("signin", { email: "zhangsan@nanfu.local", password: "synthetic-password" });
+    // An unassigned alias falls back to the administrator-created address.
+    const managedSignIn = await f.call("signin", { email: "zhangsan@nanfu.local", password: "synthetic-password" });
+    expect(managedSignIn.status).toBe(200);
     const managed = await f.call("login-name");
     expect(managed.body.managed).toBe(true);
     expect((await f.call("set-login-name", { name: "another" })).status).toBe(403);
@@ -305,23 +320,48 @@ test("the profile page reads and changes the sign-in name, and a sub-account can
   } finally { f.close(); }
 });
 
+test("a login resolver service failure is retryable and never falls back to token auth", async () => {
+  const f = accountFixture();
+  try {
+    f.offline(true);
+    const failed = await f.call("signin", { email: "zhangsan@nanfu.local", password: "synthetic-password" });
+    expect(failed.status).toBe(503);
+    expect(failed.body).toMatchObject({ ok: false, retryable: true, state: { authenticated: false } });
+    expect(failed.body.error).toBe("南孚账号服务暂时不可用，凭据已保留，请重试");
+    expect(f.requests.filter(url => url.pathname === "/rest/v1/rpc/nanfu_login_resolve")).toHaveLength(1);
+    expect(f.requests.some(url => url.pathname === "/auth/v1/token")).toBe(false);
+    expect(f.token()).toBeNull();
+  } finally { f.close(); }
+});
+
 test("the signed-in account changes its own password before anything else can", async () => {
   const f = accountFixture();
   try {
-    expect((await f.call("change-password", { currentPassword: "synthetic-password", nextPassword: "another-password" })).status).toBe(401);
+    expect((await f.call("change-password", { currentPassword: "synthetic-password", nextPassword: "Another123" })).status).toBe(401);
     await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" });
     expect((await f.call("change-password", {})).status).toBe(400);
-    expect((await f.call("change-password", { currentPassword: "wrong-password", nextPassword: "another-password" })).status).toBe(400);
+    const beforeWrongCurrent = f.requests.length;
+    const wrongCurrent = await f.call("change-password", { currentPassword: "wrong-password", nextPassword: "Another123" });
+    expect(wrongCurrent.status).toBe(400);
+    expect(wrongCurrent.body.error).toBe("当前密码不正确，请重新输入");
+    const proofRequests = f.requests.slice(beforeWrongCurrent);
+    expect(proofRequests.filter(url => url.pathname === "/auth/v1/token" && url.searchParams.get("grant_type") === "password")).toHaveLength(1);
+    expect(proofRequests.some(url => url.pathname === "/auth/v1/user")).toBe(false);
     expect((await f.call("change-password", { currentPassword: "synthetic-password", nextPassword: "short" })).status).toBe(400);
     expect((await f.call("change-password", { currentPassword: "synthetic-password", nextPassword: "synthetic-password" })).status).toBe(400);
-    const changed = await f.call("change-password", { currentPassword: "synthetic-password", nextPassword: "another-password" });
+    const changed = await f.call("change-password", { currentPassword: "synthetic-password", nextPassword: "Another123" });
     expect(changed.body.ok).toBe(true);
     expect(changed.body.state.userId).toBe("a");
+    const beforeReuse = f.requests.length;
+    const reused = await f.call("change-password", { currentPassword: "Another123", nextPassword: "Another123" });
+    expect(reused.status).toBe(400);
+    expect(reused.body.error).toBe("新密码不能与当前密码相同");
+    expect(f.requests).toHaveLength(beforeReuse);
     // The session survives the change: the runtime rotated its own tokens.
     expect((await f.call("state")).body.state.authenticated).toBe(true);
     await f.call("signout", {});
     expect((await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" })).status).toBe(401);
-    expect((await f.call("signin", { email: "a@fixture.test", password: "another-password" })).body.state.userId).toBe("a");
+    expect((await f.call("signin", { email: "a@fixture.test", password: "Another123" })).body.state.userId).toBe("a");
   } finally { f.close(); }
 });
 
@@ -384,7 +424,7 @@ test("HTTP registration explains email verification and refuses an unverified lo
   const f = accountFixture();
   try {
     f.verifyEmail();
-    expect((await f.call("signup", { email: "registered@fixture.test", password: "synthetic-password" })).body)
+    expect((await f.call("signup", { email: "registered@fixture.test", password: "Fixture123" })).body)
       .toEqual({ ok: true, email: "registered@fixture.test", verificationRequired: true });
     const login = await f.call("signin", { email: "registered@fixture.test", password: "synthetic-password" });
     expect(login.status).toBe(401);
@@ -397,7 +437,7 @@ test("HTTP registration explains email verification and refuses an unverified lo
 test("disabled organizations and non-JSON mutations fail closed", async () => {
   const f = accountFixture();
   try {
-    expect((await f.call("signin", { email: "invalid", password: "x" })).status).toBe(400);
+    expect((await f.call("signin", { email: "invalid@@fixture.test", password: "x" })).status).toBe(400);
     expect((await f.call("signin", {}, { "Content-Type": "text/plain" })).status).toBe(415);
     expect(f.requests).toHaveLength(0);
     await f.call("signin", { email: "a@fixture.test", password: "synthetic-password" });

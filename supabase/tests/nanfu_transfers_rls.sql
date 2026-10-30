@@ -1239,9 +1239,11 @@ begin
     end if;
   end loop;
   foreach failed in array array['中文姓名', '.abc', 'zhang/../san', repeat('𠮷', 63)] loop
-    if public.nanfu_login_set_name(failed) is distinct from failed
-       or public.nanfu_login_resolve(failed) is distinct from 'self@example.com' then
+    if public.nanfu_login_set_name(failed) is distinct from failed then
       raise exception 'valid Unicode or punctuation name % was refused', failed;
+    end if;
+    if public.nanfu_login_resolve(failed) is distinct from 'self@example.com' then
+      raise exception 'valid Unicode or punctuation name % did not resolve', failed;
     end if;
   end loop;
 

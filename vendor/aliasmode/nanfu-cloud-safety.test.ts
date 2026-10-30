@@ -406,11 +406,19 @@ for (const action of OUTBOUND) {
     });
   });
 
-  test(`${action}: malformed imported cookies fail schema validation`, async () => {
+  test(`${action}: malformed imported cookies cannot replace valid stored cookies`, async () => {
     await withFixture(async (f) => {
+      const cookies = syntheticSession().cookies;
       f.store.saveSessionBundle(f.profile.id, "");
-      f.store.upsertProfile({ ...f.profile, cookies: [{ name: "sid", value: "synthetic" }] as Profile["cookies"] });
-      await expectBlocked(f, action, 422, /Cookie 格式无效/);
+      f.store.upsertProfile({ ...f.profile, cookies });
+      const stored = f.store.getProfile(f.profile.id);
+      expect(() => f.store.upsertProfile({
+        ...f.profile, cookies: [{ name: "sid", value: "synthetic" }] as Profile["cookies"],
+      })).toThrow("domain must be a string");
+      expect(f.store.getProfile(f.profile.id)).toEqual(stored);
+      const response = await f.request(action);
+      expect(response.status).toBe(200);
+      expect(f.opened(action).transfer.session).toEqual({ cookies, origins: [], tabs: [] });
     });
   });
 

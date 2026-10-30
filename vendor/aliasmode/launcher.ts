@@ -1849,7 +1849,7 @@ export class Launcher {
           } else if (startupUrls.length && (opts.autoNavigate ?? true)) {
             // The browser is already on screen, so a startup URL it already shows is
             // the tab the user left open rather than a second copy of it.
-            const alreadyOpen = await this.restoredPageUrls(existing.debugPort, profileId, 0);
+            const alreadyOpen = await this.restoredPageUrls(existing.debugPort, 0);
             const missing = this.startupUrlsToOpen(startupUrls, alreadyOpen);
             if (missing.length > 0) await this.navigate(currentWs, missing);
           }
@@ -1991,15 +1991,6 @@ export class Launcher {
     const restoreLastSession = nativeSessionAvailable;
 
     if (profile.proxy) await this.persistWebRtcPolicyPreference(profileId);
-
-    // Identity bookmark (#2): `<name> · #<serial>` on a visible bookmark bar, pointing at the card.
-    if (SESSION_LAUNCH) {
-      await writeIdentityBookmark(
-        userDataDir,
-        `${profile.name || "profile"} · #${profileDisplayNo(profile.customNo, this.store.getSerial(profileId)) ?? "?"}`,
-        profileCardUrl(profileId),
-      );
-    }
 
     const port = allocatePort({
       ...this.portRange,
@@ -2262,7 +2253,7 @@ export class Launcher {
         const restoredUserPage = nativeSessionRestored || (restoreLastSession && startupTargets === null);
         // A restored tab that already shows a startup URL must not get a twin beside it.
         const missingStartup = startupUrls.length > 0
-          ? this.startupUrlsToOpen(startupUrls, await this.restoredPageUrls(port, profileId))
+          ? this.startupUrlsToOpen(startupUrls, await this.restoredPageUrls(port))
           : [];
         const urlsToOpen = startupUrls.length > 0
           ? missingStartup
@@ -2887,32 +2878,20 @@ export class Launcher {
     } while (true);
   }
 
-  /**
-   * Pages the browser already shows. A restored session lands here within a few
-   * hundred milliseconds; a profile that only has the card or a blank tab counts
-   * as "nothing restored" so startup URLs open without waiting for the deadline.
-   */
-  private async restoredPageUrls(port: number, profileId: string, waitMs = 1_200): Promise<string[]> {
+  // Blank tabs can precede native session restore, so keep probing until the deadline.
+  private async restoredPageUrls(port: number, waitMs = 1_200): Promise<string[]> {
     const deadline = Date.now() + waitMs;
-    const cardUrl = profileCardUrl(profileId);
     for (;;) {
       try {
         const response = await this.fetchFn(`http://127.0.0.1:${port}/json/list`);
         if (response.ok) {
           const raw = await response.json();
           if (Array.isArray(raw)) {
-            const pages = raw.filter((target) => target?.type === "page" && typeof target.url === "string");
-            const userUrls = pages
+            const userUrls = raw
+              .filter((target) => target?.type === "page" && typeof target.url === "string")
               .map((target) => canonicalUserPageUrl(target.url))
               .filter((url): url is string => !!url);
             if (userUrls.length > 0) return userUrls;
-            const onlyNeutral = pages.every((target) =>
-              target.url === cardUrl
-              || target.url === UNGOOGLED_FIRST_RUN_URL
-              || target.url === "about:blank"
-              || target.url.startsWith("chrome://newtab")
-              || target.url.startsWith("chrome://new-tab-page"));
-            if (onlyNeutral) return [];
           }
         }
       } catch {}
@@ -5431,36 +5410,6 @@ async function openProfileCardTab(ws: string, url: string): Promise<void> {
     url,
     connectTimeoutMs: 10_000,
   });
-}
-
-/**
- * Put an identity bookmark (`<name> · #<serial>` → the card) on the bookmark bar and make
- * the bar visible. Best-effort and self-contained: writes a fresh Bookmarks file (automation
- * profiles carry no user bookmarks) and safely merges the show-bar pref into a VALID
- * Preferences (a corrupt one is left for repairCorruptPrefs). Never throws into a launch.
- */
-async function writeIdentityBookmark(userDataDir: string, name: string, url: string): Promise<void> {
-  try {
-    const dir = join(userDataDir, "Default");
-    mkdirSync(dir, { recursive: true });
-    const bookmarks = {
-      roots: {
-        bookmark_bar: { children: [{ name, type: "url", url }], name: "Bookmarks bar", type: "folder" },
-        other: { children: [], name: "Other bookmarks", type: "folder" },
-        synced: { children: [], name: "Mobile bookmarks", type: "folder" },
-      },
-      version: 1,
-    };
-    writeFileSync(join(dir, "Bookmarks"), JSON.stringify(bookmarks));
-    const prefsPath = join(dir, "Preferences");
-    let prefs: any = {};
-    if (existsSync(prefsPath)) {
-      try { prefs = JSON.parse(readFileSync(prefsPath, "utf8")); } catch { return; } // corrupt → leave for repair
-    }
-    if (typeof prefs !== "object" || prefs === null) return;
-    prefs.bookmark_bar = { ...(prefs.bookmark_bar ?? {}), show_on_all_tabs: true };
-    await writeFileAtomic(prefsPath, JSON.stringify(prefs));
-  } catch { /* best-effort: identity extras must never fail a launch */ }
 }
 
 /** Copy the cookie key (Local State) and Default/Network/Cookies* into a dated folder in the profile. */

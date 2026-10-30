@@ -52,6 +52,10 @@ for (const pending of [true, false]) {
       const extension = join(dir, "Default", "Local Extension Settings", "synthetic-extension");
       mkdirSync(extension, { recursive: true });
       writeFileSync(join(extension, "fixture.log"), "synthetic extension state");
+      const bookmarks = JSON.stringify({ roots: { bookmark_bar: { children: [
+        { name: "合成书签", type: "url", url: "https://example.test/bookmark" },
+      ], name: "Bookmarks bar", type: "folder" } }, version: 1 });
+      writeFileSync(join(dir, "Default", "Bookmarks"), bookmarks);
       writeFileSync(join(dir, "Local State"), "synthetic key metadata");
       writeFileSync(join(dir, "SingletonLock"), "stale fixture lock");
       const response = await handleUiRequest(cloneRequest({ ids: [source.id, source.id] }), launcher, store, null);
@@ -65,13 +69,16 @@ for (const pending of [true, false]) {
       expect(clone.name).toBe(`${source.name} 副本`);
       expect(clone.chromiumRuntime).toBe(source.chromiumRuntime);
       expect(clone).toMatchObject({ cookies: source.cookies, proxy: source.proxy, extensions: source.extensions,
-        tags: source.tags, locale: source.locale, timezone: source.timezone, timezoneManual: source.timezoneManual });
+        tags: source.tags, locale: source.locale, timezone: source.timezone });
+      expect(clone.timezoneManual).toBe(source.timezoneManual);
       expect(store.getSessionBundle(clone.id)).toBe(bundle);
       expect(store.getPendingSessionBundle(clone.id)).toBe(pending ? bundle : null);
       const clonedDir = launcher.userDataDir(clone.id);
       expect(readFileSync(join(clonedDir, "Default", "Local Extension Settings", "synthetic-extension", "fixture.log"), "utf8"))
         .toBe("synthetic extension state");
       expect(readFileSync(join(clonedDir, "Local State"), "utf8")).toBe("synthetic key metadata");
+      expect(readFileSync(join(clonedDir, "Default", "Bookmarks"), "utf8")).toBe(bookmarks);
+      expect(readFileSync(join(dir, "Default", "Bookmarks"), "utf8")).toBe(bookmarks);
       expect(existsSync(join(clonedDir, "SingletonLock"))).toBe(false);
       expect(readFileSync(join(dir, "SingletonLock"), "utf8")).toBe("stale fixture lock");
     });
@@ -191,6 +198,31 @@ test("clone validates input and respects the Nanfu sign-in gate", async () => {
     expect((await handleUiRequest(crossOrigin, launcher, store, null))!.status).toBe(403);
     expect(store.listProfiles()).toHaveLength(1);
   });
+});
+
+test("startup waits past a blank tab for native restore before deduplicating URLs", async () => {
+  let probes = 0;
+  await withCloneFixture(async ({ launcher }) => {
+    const open = await (launcher as any).restoredPageUrls(12345, 500);
+    expect(probes).toBe(2);
+    expect(open).toEqual(["https://example.test/account"]);
+    expect((launcher as any).startupUrlsToOpen([
+      "https://example.test/", "https://example.test/account#section", "https://example.test/new",
+      "https://example.test/new", "https://other.example.test/",
+    ], open)).toEqual(["https://example.test/new", "https://other.example.test/"]);
+  }, { fetch: async () => ({ ok: true, json: async () => [{ type: "page",
+    url: ++probes === 1 ? "about:blank" : "https://example.test/account",
+  }] }) });
+});
+
+test("startup with no restore wait probes once and still opens a fresh profile's URL", async () => {
+  let probes = 0;
+  await withCloneFixture(async ({ launcher }) => {
+    const open = await (launcher as any).restoredPageUrls(12345, 0);
+    expect(probes).toBe(1);
+    expect(open).toEqual([]);
+    expect((launcher as any).startupUrlsToOpen(["https://example.test/"], open)).toEqual(["https://example.test/"]);
+  }, { fetch: async () => { probes++; return { ok: true, json: async () => [{ type: "page", url: "about:blank" }] }; } });
 });
 
 test("language, timezone, CPU and seed can be chosen at creation and edited afterwards", async () => {
