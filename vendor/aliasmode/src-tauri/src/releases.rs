@@ -205,8 +205,9 @@ async fn discover_update(
     } else {
         builder
     };
+    let manifest_url = Url::parse(&update_manifest_url()).map_err(|error| error.to_string())?;
     let updater = builder
-        .endpoints(vec![update_manifest_url()])
+        .endpoints(vec![manifest_url])
         .map_err(|error| error.to_string())?
         .build()
         .map_err(|error| error.to_string())?;
