@@ -606,6 +606,27 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   await closeProfile(first);
   await closeProfile(second);
   await stage("installed-environment-storage-and-identity-restored");
+
+  // Cloning keeps the environment's own data (cookies, storage, extension
+  // state) but must produce a new window name and a new fingerprint.
+  const rosterBefore = (await api("/ui/api/profiles")).profiles.length;
+  const cloneResponse = page.waitForResponse(response => response.url().endsWith("/profiles/clone") && response.request().method() === "POST", { timeout: 120000 });
+  await page.getByRole("button", { name: "All profiles", exact: false }).click();
+  await page.getByRole("button", { name: `克隆 ${first.name}`, exact: true }).click();
+  const cloneJson = await (await cloneResponse).json();
+  assert.equal(cloneJson.ok, true, JSON.stringify(cloneJson));
+  assert.equal(cloneJson.created.length, 1, JSON.stringify(cloneJson));
+  assert.equal((await api("/ui/api/profiles")).profiles.length, rosterBefore + 1);
+  const clone = (await api(`/ui/api/profiles/${cloneJson.created[0].id}`)).profile;
+  assert.equal(clone.name, `${first.name} 副本`);
+  assert.deepEqual(clone.extensions, first.extensions);
+  assert.notEqual(clone.fingerprintSeed, first.fingerprintSeed);
+  const cloneProbe = await openProfile(clone, clone.extensions.length > 0);
+  assert.deepEqual(await isolationState(cloneProbe), { ...stateA, cached: null });
+  assert.notEqual((await identityState(cloneProbe)).canvas, identityA.canvas);
+  await closeProfile(clone);
+  await stage("installed-clone-keeps-data-and-rotates-fingerprint");
+
   assert.deepEqual(report.pageErrors, []);
   report.ok = true;
 } catch (error) {
