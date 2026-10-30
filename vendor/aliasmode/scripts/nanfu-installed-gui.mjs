@@ -9,6 +9,7 @@ import { chromium } from "playwright-core";
 
 const reportDir = process.env.NANFU_GUI_REPORT_DIR;
 if (!reportDir) throw new Error("NANFU_GUI_REPORT_DIR is required");
+assert.equal(process.env.GITHUB_ACTIONS, "true", "Installed acceptance may restart only its GitHub Actions fixture");
 await mkdir(reportDir, { recursive: true });
 const root = await mkdtemp(join(tmpdir(), "nanfu-extension-fixture-"));
 const extensionName = "Nanfu synthetic offline MV3";
@@ -21,6 +22,56 @@ let page;
 const openProfiles = new Map();
 let profileId;
 let origin;
+const fixtureUserId = "11111111-1111-4111-8111-111111111111";
+const fixtureOrgId = "22222222-2222-4222-8222-222222222222";
+const fixtureEmail = "gui-fixture@nanfu.local";
+const fixturePassword = "Fixture123";
+const fixtureAccess = "synthetic-installed-access-token";
+const fixtureRefresh = "synthetic-installed-refresh-token";
+const fixtureUser = { id: fixtureUserId, email: fixtureEmail, email_confirmed_at: "2026-10-30T00:00:00Z" };
+
+async function restartAgainstFixture() {
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$pidFile = Join-Path $env:NANFU_GUI_REPORT_DIR 'tauri.pid'
+$appPid = [int](Get-Content -LiteralPath $pidFile)
+$appPath = Join-Path $env:NANFU_INSTALL_ROOT 'aliasmode.exe'
+$app = Get-Process -Id $appPid -ErrorAction Stop
+if ([IO.Path]::GetFullPath($app.Path) -ne [IO.Path]::GetFullPath($appPath)) { throw 'Refusing to stop an unrelated process' }
+& taskkill.exe /PID $appPid /T /F | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Could not stop the initial acceptance process tree' }
+if (-not $app.WaitForExit(15000)) { throw 'Initial acceptance desktop did not exit' }
+$restarted = Start-Process -FilePath $appPath -PassThru -RedirectStandardOutput (Join-Path $env:NANFU_GUI_REPORT_DIR 'fixture-tauri-stdout.log') -RedirectStandardError (Join-Path $env:NANFU_GUI_REPORT_DIR 'fixture-tauri-stderr.log')
+$restarted.Id | Set-Content -LiteralPath $pidFile
+`;
+  await promisify(execFile)("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64"),
+  ], { timeout: 45000, windowsHide: true, env: {
+    ...process.env, NANFU_SUPABASE_URL: origin, NANFU_SUPABASE_KEY: "sb_publishable_synthetic_installed_fixture_12345",
+  } });
+}
+
+async function connectDesktop(label) {
+  const browser = await waitFor(async () => {
+    try { return await chromium.connectOverCDP(process.env.NANFU_INSTALLED_CDP ?? "http://127.0.0.1:9223", { timeout: 3000 }); }
+    catch { return null; }
+  }, label);
+  const shell = await waitFor(() => browser.contexts().flatMap(context => context.pages()).find(item => /^http:\/\/127\.0\.0\.1:\d+\//.test(item.url())), `${label} page`);
+  shell.setDefaultTimeout(60000);
+  shell.on("pageerror", error => report.pageErrors.push(error.message));
+  shell.on("console", message => { if (message.type() === "error") report.consoleErrors.push(message.text()); });
+  shell.on("dialog", dialog => dialog.accept());
+  return { browser, page: shell };
+}
+
+/** Walk the mandatory sign-in gate with the synthetic account this run serves. */
+async function signInThroughGate() {
+  await page.locator("#nanfu-gate-title").waitFor();
+  await page.getByLabel("登录名或邮箱").fill("合成验收账号");
+  await page.getByLabel("密码").fill(fixturePassword);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.locator(".sidenav").waitFor();
+}
 
 async function waitFor(check, label, timeout = 120000) {
   const deadline = Date.now() + timeout;
@@ -291,10 +342,45 @@ async function identityState(target) {
   return identity;
 }
 
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
+  const url = new URL(request.url, "http://127.0.0.1");
+  const json = (value, status = 200) => {
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(JSON.stringify(value));
+  };
+  if (url.pathname.startsWith("/auth/v1/") || url.pathname.startsWith("/rest/v1/")) {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+    if (url.pathname === "/rest/v1/rpc/nanfu_login_resolve") {
+      json(body.p_name === "合成验收账号" ? fixtureEmail : null);
+      return;
+    }
+    if (url.pathname === "/auth/v1/token") {
+      const valid = url.searchParams.get("grant_type") === "refresh_token"
+        ? body.refresh_token === fixtureRefresh
+        : body.email === fixtureEmail && body.password === fixturePassword;
+      if (!valid) { json({ message: "Invalid synthetic credentials" }, 400); return; }
+      json({ access_token: fixtureAccess, refresh_token: fixtureRefresh, expires_in: 3600, user: fixtureUser });
+      return;
+    }
+    if (request.headers.authorization !== `Bearer ${fixtureAccess}`) { json({}, 401); return; }
+    if (url.pathname === "/auth/v1/user") { json(fixtureUser); return; }
+    if (url.pathname === "/auth/v1/logout") { response.writeHead(204).end(); return; }
+    if (url.pathname === "/rest/v1/rpc/nanfu_org_me") {
+      json([{ org_id: fixtureOrgId, identity: "owner", role_name: "所有者", permissions: [], env_quota: 100, used: 0, status: "active", locked: false }]);
+      return;
+    }
+    if (url.pathname === "/rest/v1/rpc/nanfu_org_self_join") { json(fixtureOrgId); return; }
+    if (url.pathname === "/rest/v1/nanfu_orgs") { json([{ id: fixtureOrgId, name: "合成验收组织" }]); return; }
+    if (url.pathname === "/rest/v1/rpc/nanfu_login_name_me") { json("合成验收账号"); return; }
+    if (url.pathname === "/rest/v1/nanfu_environments" && request.method === "GET") { json([]); return; }
+    (report.unexpectedFixtureRequests ??= []).push(`${request.method} ${url.pathname}`);
+    json({}, 404);
+    return;
+  }
   if (request.url === "/headers") {
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ ua: request.headers["user-agent"] }));
+    json({ ua: request.headers["user-agent"] });
     return;
   }
   response.writeHead(200, { "content-type": "text/html" });
@@ -359,18 +445,21 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   const invalid = join(root, "invalid.zip");
   await writeFile(invalid, "synthetic invalid archive");
 
-  manager = await waitFor(async () => {
-    try { return await chromium.connectOverCDP(process.env.NANFU_INSTALLED_CDP ?? "http://127.0.0.1:9223", { timeout: 3000 }); }
-    catch { return null; }
-  }, "installed WebView2 CDP");
-  page = await waitFor(() => manager.contexts().flatMap(context => context.pages()).find(item => /^http:\/\/127\.0\.0\.1:\d+\//.test(item.url())), "installed manager page");
-  page.setDefaultTimeout(60000);
-  page.on("pageerror", error => report.pageErrors.push(error.message));
-  page.on("console", message => { if (message.type() === "error") report.consoleErrors.push(message.text()); });
-  page.on("dialog", dialog => dialog.accept());
+  ({ browser: manager, page } = await connectDesktop("installed WebView2 CDP"));
   assert.equal(await page.evaluate(() => typeof window.__TAURI_INTERNALS__?.invoke), "function", "Must test the installed Tauri window");
   report.nativeWindowLifecycle = await verifyNativeWindowLifecycle();
   await stage("installed-minimize-close-and-restore");
+
+  // The shipped build points at the real account service, so the desktop app
+  // starts on the mandatory sign-in gate with no session. Relaunch it against
+  // this run's synthetic account service, then sign in like a user would.
+  await restartAgainstFixture();
+  manager?.close().catch(() => {});
+  ({ browser: manager, page } = await connectDesktop("restarted installed desktop"));
+  await signInThroughGate();
+  await stage("installed-signin-with-synthetic-account");
+  assert.equal(report.unexpectedFixtureRequests, undefined, "Unexpected account-service calls during sign-in");
+
   await page.evaluate(() => localStorage.setItem("aliasmode.shell.language", "en-US"));
   await page.reload();
   await page.locator(".sidenav").waitFor();
