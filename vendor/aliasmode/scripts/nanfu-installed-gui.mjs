@@ -375,6 +375,12 @@ const server = createServer(async (request, response) => {
     if (url.pathname === "/rest/v1/nanfu_orgs") { json([{ id: fixtureOrgId, name: "合成验收组织" }]); return; }
     if (url.pathname === "/rest/v1/rpc/nanfu_login_name_me") { json("合成验收账号"); return; }
     if (url.pathname === "/rest/v1/nanfu_environments" && request.method === "GET") { json([]); return; }
+    // Signing in also enrolls this machine's cloud-transfer key.
+    if (url.pathname === "/rest/v1/nanfu_transfer_keys" && request.method === "POST") {
+      report.transferKeyRegistrations = (report.transferKeyRegistrations ?? 0) + 1;
+      response.writeHead(201, { "content-type": "application/json" }).end("");
+      return;
+    }
     (report.unexpectedFixtureRequests ??= []).push(`${request.method} ${url.pathname}`);
     json({}, 404);
     return;
@@ -459,6 +465,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   await signInThroughGate();
   await stage("installed-signin-with-synthetic-account");
   assert.equal(report.unexpectedFixtureRequests, undefined, "Unexpected account-service calls during sign-in");
+  assert.ok(report.transferKeyRegistrations >= 1, "Signing in must enroll the machine's transfer key");
 
   await page.evaluate(() => localStorage.setItem("aliasmode.shell.language", "en-US"));
   await page.reload();
