@@ -238,7 +238,7 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
             <label className="fld"><span>邀请码</span><input maxLength={128} autoComplete="off" value={signInInvite} onChange={event => setSignInInvite(event.target.value)} disabled={busy} placeholder="填写管理员给的邀请码，登录时直接加入该组织" /></label>
           </details>
           <button className="btn primary" type="submit" disabled={busy}>登录南孚账号</button>
-          <p className="nanfu-hint">账号由组织管理员创建：用管理员给的登录名（拼音或缩写）直接登录，不需要邮箱。没有账号或忘记密码，请联系管理员。</p>
+          <p className="nanfu-hint">账号由组织管理员创建：用管理员给的登录名（拼音或缩写）直接登录，不需要邮箱。忘记密码请联系管理员；还没有账号？<a href="https://ananan28.github.io/nanfu-site/" target="_blank" rel="noreferrer">去官网注册</a>。</p>
         </form>}
       </div></section>
       {account.authenticated && <section className="settings-card" data-testid="nanfu-login-name-card"><header><h3>登录用户名</h3></header><div className="card-body">

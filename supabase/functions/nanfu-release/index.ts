@@ -1,9 +1,8 @@
 // Nanfu release channel.
 //
-// Download: POST {"action":"download","platform":"win-x64"} with a signed-in
-// user's access token. The function verifies the token, requires an active
-// organization membership, and returns the installer URL on the public
-// download domain.
+// Download: POST {"action":"download","platform":"win-x64"} returns the latest
+// installer URL on the public download domain. Downloads are open to everyone;
+// only the build workflow can register a new release.
 //
 // Register: POST {"action":"register",...} with the x-nanfu-upload-token
 // header. The Windows build workflow uploads the installer to object storage
@@ -114,13 +113,6 @@ async function handleDownload(
   const url = supabaseUrl();
   if (!url || !serviceKey) return unavailable(origin);
 
-  const auth = req.headers.get("authorization") ?? "";
-  const bearer = /^Bearer\s+(.+)$/i.exec(auth);
-  if (!bearer) {
-    return json({ ok: false, error: "请先登录后再下载。" }, 401, origin);
-  }
-  const token = bearer[1].trim();
-
   let body: { action?: string; platform?: string };
   try {
     body = await req.json();
@@ -133,53 +125,6 @@ async function handleDownload(
   const platform = body.platform;
   if (!platform || !PLATFORMS.includes(platform as Platform)) {
     return json({ ok: false, error: "不支持的平台。" }, 400, origin);
-  }
-
-  // Prefer the publishable key for the auth endpoint, but the service key also
-  // satisfies it when a deployment only sets the latter.
-  const publicKey = env("SUPABASE_ANON_KEY") ||
-    env("SUPABASE_PUBLISHABLE_KEY") || serviceKey;
-
-  const userRes = await fetch(`${url}/auth/v1/user`, {
-    headers: { Authorization: `Bearer ${token}`, apikey: publicKey },
-  });
-  if (!userRes.ok) {
-    return json(
-      { ok: false, error: "登录状态已失效，请重新登录。" },
-      401,
-      origin,
-    );
-  }
-
-  const userHeaders = {
-    Authorization: `Bearer ${token}`,
-    apikey: publicKey,
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
-  const meRes = await fetch(`${url}/rest/v1/rpc/nanfu_org_me`, {
-    method: "POST",
-    headers: userHeaders,
-    body: "{}",
-  });
-  let membership: { status?: string; locked?: boolean } | null = null;
-  if (meRes.ok) {
-    try {
-      const parsed = await meRes.json();
-      membership = Array.isArray(parsed) ? parsed[0] : parsed;
-    } catch {
-      membership = null;
-    }
-  }
-  if (
-    !meRes.ok || !membership || membership.status !== "active" ||
-    membership.locked !== false
-  ) {
-    return json(
-      { ok: false, error: "未加入有效组织，或账号已锁定/停用。" },
-      403,
-      origin,
-    );
   }
 
   const query = new URLSearchParams({
