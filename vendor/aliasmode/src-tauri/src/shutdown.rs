@@ -1,18 +1,13 @@
+use crate::credentials::CredentialOrigin;
 use crate::sidecar::SidecarSupervisor;
 use reqwest::{redirect::Policy, Client};
 use serde::Deserialize;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tauri::{AppHandle, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Manager, WebviewWindow, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-#[derive(Default)]
-struct CloseState {
-    in_progress: AtomicBool,
-}
+static QUIT_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Deserialize)]
 struct Roster {
@@ -137,7 +132,6 @@ fn ask_to_close(
     app: AppHandle,
     window: WebviewWindow,
     sidecar: SidecarSupervisor,
-    state: Arc<CloseState>,
     active: Result<usize, String>,
 ) {
     let message = match active {
@@ -147,44 +141,46 @@ fn ask_to_close(
     };
     app.dialog()
         .message(message)
-        .title("关闭南孚浏览器？")
+        .title("退出南孚浏览器？")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::YesNo)
         .show(move |confirmed| {
             if confirmed {
                 finish_after_cleanup(app, window, sidecar, CleanupAction::Exit);
             } else {
-                state.in_progress.store(false, Ordering::Release);
+                QUIT_IN_PROGRESS.store(false, Ordering::Release);
             }
         });
 }
 
-pub fn install_close_handler(
-    app: AppHandle,
-    window: WebviewWindow,
-    sidecar: SidecarSupervisor,
-    origin: String,
-) {
-    let state = Arc::new(CloseState::default());
-    window.clone().on_window_event(move |event| {
+pub fn request_quit(app: AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        app.exit(0);
+        return;
+    };
+    if QUIT_IN_PROGRESS.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let origin = app.state::<CredentialOrigin>().0.clone();
+    let sidecar = app.state::<SidecarSupervisor>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let active = active_browser_count(&origin).await;
+        if matches!(active, Ok(0)) {
+            finish_after_cleanup(app, window, sidecar, CleanupAction::Exit);
+        } else {
+            ask_to_close(app, window, sidecar, active);
+        }
+    });
+}
+
+pub fn install_close_handler(window: WebviewWindow) {
+    let window_to_hide = window.clone();
+    window.on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
+            // The close button parks the app in the tray so a stray click cannot take
+            // down running profiles; quitting is an explicit choice in the tray menu.
             api.prevent_close();
-            if state.in_progress.swap(true, Ordering::AcqRel) {
-                return;
-            }
-            let app = app.clone();
-            let window = window.clone();
-            let sidecar = sidecar.clone();
-            let state = state.clone();
-            let origin = origin.clone();
-            tauri::async_runtime::spawn(async move {
-                let active = active_browser_count(&origin).await;
-                if matches!(active, Ok(0)) {
-                    finish_after_cleanup(app, window, sidecar, CleanupAction::Exit);
-                } else {
-                    ask_to_close(app, window, sidecar, state, active);
-                }
-            });
+            let _ = window_to_hide.hide();
         }
     });
 }

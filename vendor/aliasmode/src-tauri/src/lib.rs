@@ -4,6 +4,7 @@ mod releases;
 mod runtime_descriptor;
 mod shutdown;
 mod sidecar;
+mod tray;
 mod update_attempt;
 
 use credentials::{credential_delete, credential_get, credential_set, CredentialOrigin};
@@ -615,7 +616,8 @@ pub fn run() {
                 Err(error) => return Err(error.into()),
             };
 
-            shutdown::install_close_handler(app.handle().clone(), window.clone(), sidecar, origin);
+            shutdown::install_close_handler(window.clone());
+            tray::install(app.handle())?;
             if app.state::<RevealRequested>().0.load(Ordering::Acquire) {
                 let _ = window.show();
                 let _ = window.set_focus();
