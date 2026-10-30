@@ -308,7 +308,7 @@ test.skipIf(!enabled)("staff account forms validate and remain usable in real Ch
       window.__renderNanfu();
     `);
     const build = await Bun.build({
-      entrypoints: [entry], target: "browser", write: false,
+      entrypoints: [entry], target: "browser",
       naming: "[name].[ext]", publicPath: "/", loader: { ".woff2": "file" },
     });
     if (!build.success) throw new Error(build.logs.map(String).join("\n"));
