@@ -2193,7 +2193,7 @@ export class Launcher {
 
       // Identity card (#3): open the AdsPower-style landing page in its OWN tab (leaves the
       // automation's tab 0 untouched). Native session restore may already contain it.
-      if (SESSION_LAUNCH && startupTargets && !startupTargets.profileCardPresent) {
+      if (PROFILE_CARD_TAB && SESSION_LAUNCH && startupTargets && !startupTargets.profileCardPresent) {
         try {
           await openProfileCardTab(ws, profileCardUrl(profileId));
         } catch (err) {
@@ -5343,6 +5343,12 @@ function sessionLaunchSpawn(
 
 /** True when browsers should be launched onto the interactive desktop (service + opt-in). */
 const SESSION_LAUNCH = shouldLaunchViaWindowsSession();
+
+/**
+ * 上游的身份卡片落地页每次开窗都会多开一个本地标签页；南孚客户端不要这种多余页面，
+ * 默认不再打开，确实需要时用 NANFU_PROFILE_CARD_TAB=1 显式打开。
+ */
+const PROFILE_CARD_TAB = ["1", "true", "yes", "on"].includes((process.env.NANFU_PROFILE_CARD_TAB ?? "").trim().toLowerCase());
 
 /** aliasmode's own HTTP port, so the profile card can be served/opened over loopback. */
 const ALIASMODE_PORT = process.env.ALIASMODE_PORT ? Number(process.env.ALIASMODE_PORT) : 50400;
