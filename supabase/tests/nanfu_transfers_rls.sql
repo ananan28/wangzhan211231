@@ -65,6 +65,10 @@ create table if not exists storage.buckets (
 \i supabase/migrations/20261029_nanfu_releases.sql
 \i supabase/migrations/20261029_nanfu_signup_attempts.sql
 \i supabase/migrations/20261029_nanfu_signup_attempts.sql
+\i supabase/migrations/20261030_nanfu_chinese_logins.sql
+\i supabase/migrations/20261030_nanfu_chinese_logins.sql
+\ir ../migrations/20261030_nanfu_transfer_retry.sql
+\ir ../migrations/20261030_nanfu_transfer_retry.sql
 
 do $$
 declare signature text; target regprocedure;
@@ -76,7 +80,10 @@ begin
     'public.nanfu_env_visible(uuid,uuid,uuid,uuid)', 'public.nanfu_env_writable(uuid,uuid,uuid)',
     'public.nanfu_org_check_quota(uuid,uuid,integer)', 'public.nanfu_environments_touch()',
     'public.nanfu_transfers_guard()', 'public.nanfu_environments_quota()',
-    'public.nanfu_org_self_join()'
+    'public.nanfu_org_self_join()',
+    'public.nanfu_org_create_account(text,text,text,integer,uuid,uuid,uuid[],text)',
+    'public.nanfu_org_reset_password(uuid,text)', 'public.nanfu_login_set_name(text)',
+    'public.nanfu_login_clear_name()'
   ] loop
     target := to_regprocedure(signature);
     if target is null or has_function_privilege('anon', target, 'EXECUTE')
@@ -192,17 +199,13 @@ select set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222
 select set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222","email":"recipient@example.com","role":"authenticated"}', true);
 set local role authenticated;
 do $$
-declare accepted record; blocked boolean := false;
+declare accepted record; retried record;
 begin
   select * into accepted from public.nanfu_accept_transfer('aaaaaaaa-0000-0000-0000-000000000001');
   if accepted.payload <> '{"v":1,"ct":"Y2lwaGVy"}' then raise exception 'accept returned the wrong payload'; end if;
   if accepted.environment_id <> 'env-1' then raise exception 'accept returned the wrong environment'; end if;
-  begin
-    perform public.nanfu_accept_transfer('aaaaaaaa-0000-0000-0000-000000000001');
-  exception when raise_exception then
-    blocked := true;
-  end;
-  if not blocked then raise exception 'a transfer was accepted twice'; end if;
+  select * into retried from public.nanfu_accept_transfer('aaaaaaaa-0000-0000-0000-000000000001');
+  if to_jsonb(retried) is distinct from to_jsonb(accepted) then raise exception 'retry changed the accepted receipt'; end if;
   if exists (select 1 from public.nanfu_transfers) then raise exception 'accepted transfer still visible to recipient'; end if;
 end $$;
 commit;
@@ -1219,8 +1222,10 @@ begin
     raise exception 'an unused name resolved to an address';
   end if;
 
-  -- Short, dotted at the start, spaced or empty names are all refused.
-  foreach failed in array array['a', '.abc', 'zhang san', '', 'zhang/../san'] loop
+  -- Reject short, overlong, whitespace, control characters and addresses.
+  foreach failed in array array['a', repeat('𠮷', 64), 'zhang san', '', '张@三',
+    E'张\t三', E'张三\n', U&'张\0001三', U&'张\007F三', U&'张\0085三', U&'张\009F三', U&'张\00A0三',
+    U&'张\1680三', U&'张\2007三', U&'张\2028三', U&'张\2029三', U&'张\202F三', U&'张\205F三', U&'张\3000三', U&'张\FEFF三'] loop
     begin
       perform public.nanfu_login_set_name(failed);
       raise exception 'invalid name % was accepted', quote_literal(failed);
@@ -1229,6 +1234,15 @@ begin
         raise exception 'invalid name % failed for the wrong reason: %', quote_literal(failed), sqlerrm;
       end if;
     end;
+    if public.nanfu_login_resolve(failed) is not null then
+      raise exception 'invalid name % resolved', quote_literal(failed);
+    end if;
+  end loop;
+  foreach failed in array array['中文姓名', '.abc', 'zhang/../san', repeat('𠮷', 63)] loop
+    if public.nanfu_login_set_name(failed) is distinct from failed
+       or public.nanfu_login_resolve(failed) is distinct from 'self@example.com' then
+      raise exception 'valid Unicode or punctuation name % was refused', failed;
+    end if;
   end loop;
 
   -- An administrator already handed out zhangsan to a sub-account, so the name
@@ -1319,6 +1333,211 @@ begin
   end;
 end $$;
 commit;
+
+-- Direct account creation uses only synthetic auth fixtures and rolls back completely.
+begin;
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
+alter table auth.users
+  add column if not exists instance_id uuid,
+  add column if not exists aud text,
+  add column if not exists role text,
+  add column if not exists encrypted_password text,
+  add column if not exists email_confirmed_at timestamptz,
+  add column if not exists raw_app_meta_data jsonb,
+  add column if not exists raw_user_meta_data jsonb,
+  add column if not exists created_at timestamptz,
+  add column if not exists updated_at timestamptz,
+  add column if not exists confirmation_token text,
+  add column if not exists recovery_token text,
+  add column if not exists email_change_token_new text,
+  add column if not exists email_change text;
+create table if not exists auth.identities (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id),
+  identity_data jsonb,
+  provider text,
+  provider_id text,
+  last_sign_in_at timestamptz,
+  created_at timestamptz,
+  updated_at timestamptz,
+  unique (provider_id, provider)
+);
+select set_config('nanfu.test.users_before', (select count(*)::text from auth.users), true);
+select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
+select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","email":"owner@example.com","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+declare created record; account record; candidate text; password text;
+begin
+  select * into created from public.nanfu_org_create_account('张三', 'Ab1234', p_parent => '66666666-6666-6666-6666-666666666666');
+  if created.email is distinct from created.user_id::text || '@nanfu.local'
+     or public.nanfu_login_resolve('张三') is distinct from created.email then
+    raise exception 'Chinese login did not resolve to its internal ASCII address';
+  end if;
+  if (select m.display_name from public.nanfu_org_members m where m.user_id = created.user_id) is distinct from '张三' then
+    raise exception 'Chinese account displayed its UUID instead of the assigned name';
+  end if;
+  perform set_config('nanfu.test.created_user', created.user_id::text, true);
+  perform set_config('nanfu.test.created_email', created.email, true);
+
+  foreach candidate in array array['ascii.sub', 'a+b', '.leading', 'bad..dots', 'trailing.', 'a:b', repeat('𠮷', 63)] loop
+    select * into account from public.nanfu_org_create_account(candidate, 'Ab1234567890');
+    if public.nanfu_login_resolve(candidate) is distinct from account.email then
+      raise exception 'bare login % has no mapping', candidate;
+    end if;
+    if candidate in ('ascii.sub', 'a+b') then
+      if account.email is distinct from candidate || '@nanfu.local' then
+        raise exception 'valid ASCII local part changed its legacy address';
+      end if;
+    elsif account.email is distinct from account.user_id::text || '@nanfu.local' then
+      raise exception 'non-ASCII or invalid local part was used as an email';
+    end if;
+    if (select m.display_name from public.nanfu_org_members m where m.user_id = account.user_id) is distinct from left(candidate, 60) then
+      raise exception 'fallback display name was not bounded to the existing column constraint';
+    end if;
+  end loop;
+  select * into account from public.nanfu_org_create_account('别名员工', 'Ab12!~', p_name => '指定姓名');
+  if (select m.display_name from public.nanfu_org_members m where m.user_id = account.user_id) is distinct from '指定姓名' then
+    raise exception 'explicit display name was overwritten';
+  end if;
+  select * into account from public.nanfu_org_create_account('new-email@fixture.test', 'Ab12!~');
+  if account.email is distinct from 'new-email@fixture.test' then
+    raise exception 'full email creation changed its address';
+  end if;
+
+  foreach candidate in array array['张三', 'ascii.sub', 'lisi'] loop
+    begin
+      perform public.nanfu_org_create_account(candidate, 'Ab1234');
+      raise exception 'duplicate bare name was accepted';
+    exception when others then
+      if sqlerrm not like 'NANFU_LOGIN_TAKEN:%' then raise; end if;
+    end;
+  end loop;
+  begin
+    perform public.nanfu_org_create_account('zhangsan', 'Ab1234');
+    raise exception 'legacy address without a mapping was shadowed';
+  exception when others then
+    if sqlerrm not like 'NANFU_EMAIL_TAKEN:%' then raise; end if;
+  end;
+  foreach candidate in array array[null, '', '张', '𠮷', repeat('𠮷', 64), '张 三', '张@三',
+    E'张\t三', U&'张\0001三', U&'张\007F三', U&'张\0085三', U&'张\00A0三', U&'张\3000三', U&'张\FEFF三'] loop
+    begin
+      perform public.nanfu_org_create_account(candidate, 'Ab1234');
+      raise exception 'invalid bare name was accepted';
+    exception when others then
+      if sqlerrm not like 'NANFU_EMAIL_INVALID:%' then raise; end if;
+    end;
+  end loop;
+  foreach password in array array[null, '', 'Ab123', 'Ab12345678901', 'abcdef', '123456', '!!!!!!',
+    'Ab 123', ' Ab123', 'Ab123 ', E'Ab123\t', E'Ab123\n', E'Ab1234\n', E'Ab123\r',
+    U&'Ab123\0001', U&'Ab123\007F', U&'Ab123\0085', U&'Ab123\00A0', U&'Ab123\3000', U&'Ab123\FEFF', 'Ab123中', '密码1234', 'Ａb1234'] loop
+    begin
+      perform public.nanfu_org_create_account('密码测试', password);
+      raise exception 'invalid create password was accepted';
+    exception when others then
+      if sqlerrm not like 'NANFU_PASSWORD_INVALID:%' then raise; end if;
+    end;
+    begin
+      perform public.nanfu_org_reset_password(created.user_id, password);
+      raise exception 'invalid reset password was accepted';
+    exception when others then
+      if sqlerrm not like 'NANFU_PASSWORD_INVALID:%' then raise; end if;
+    end;
+  end loop;
+  foreach password in array array['Ab12!~', 'Ab1234', 'Ab1234567890'] loop
+    perform public.nanfu_org_reset_password(created.user_id, password);
+  end loop;
+
+  perform set_config('request.jwt.claim.sub', created.user_id::text, true);
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', created.user_id, 'email', created.email, 'role', 'authenticated')::text, true);
+  begin
+    perform public.nanfu_login_set_name('自己改名');
+    raise exception 'UUID-address sub-account renamed itself';
+  exception when others then
+    if sqlerrm not like 'NANFU_LOGIN_MANAGED:%' then raise; end if;
+  end;
+  begin
+    perform public.nanfu_login_clear_name();
+    raise exception 'UUID-address sub-account cleared its login';
+  exception when others then
+    if sqlerrm not like 'NANFU_LOGIN_MANAGED:%' then raise; end if;
+  end;
+  if public.nanfu_login_name_me() is distinct from '张三' then
+    raise exception 'managed login changed after refused mutations';
+  end if;
+
+  perform set_config('request.jwt.claim.sub', '99999999-9999-9999-9999-999999999992', true);
+  perform set_config('request.jwt.claims', '{"sub":"99999999-9999-9999-9999-999999999992","email":"other@example.com","role":"authenticated"}', true);
+  foreach candidate in array array['张三', 'ascii.sub'] loop
+    begin
+      perform public.nanfu_login_set_name(candidate);
+      raise exception 'chosen name shadowed a newly created bare account';
+    exception when others then
+      if sqlerrm not like 'NANFU_LOGIN_TAKEN:%' then raise; end if;
+    end;
+  end loop;
+
+  perform set_config('request.jwt.claim.sub', '99999999-9999-9999-9999-999999999999', true);
+  perform set_config('request.jwt.claims', '{"sub":"99999999-9999-9999-9999-999999999999","email":"default-owner@example.com","role":"authenticated"}', true);
+  begin
+    perform public.nanfu_org_reset_password(created.user_id, 'Other123');
+    raise exception 'another organization reset the account password';
+  exception when insufficient_privilege then
+    if sqlerrm not like 'NANFU_FORBIDDEN: this account is not in your organization%' then raise; end if;
+  end;
+end $$;
+reset role;
+do $$
+declare target uuid := current_setting('nanfu.test.created_user')::uuid; hashed text; candidate text; signature text; proc regprocedure;
+begin
+  select encrypted_password into hashed from auth.users where id = target;
+  if hashed is null or hashed = 'Ab1234567890' or extensions.crypt('Ab1234567890', hashed) is distinct from hashed then
+    raise exception 'valid reset was not hashed or cross-organization reset changed it';
+  end if;
+  if not exists (select 1 from auth.identities i join auth.users u on u.id = i.user_id
+    where i.user_id = target and i.identity_data->>'email' = u.email
+      and (i.identity_data->>'email_verified')::boolean and u.email_confirmed_at is not null) then
+    raise exception 'created auth identity is not confirmed or has the wrong email';
+  end if;
+  if (select count(*) from auth.users) <> current_setting('nanfu.test.users_before')::bigint + 10 then
+    raise exception 'failed account creation left an auth user behind';
+  end if;
+  foreach candidate in array array['张', repeat('𠮷', 64), '张 三', '张@三', U&'张\0001三', U&'张\007F三', U&'张\0085三',
+    U&'张\00A0三', U&'张\1680三', U&'张\2007三', U&'张\2028三', U&'张\2029三', U&'张\202F三', U&'张\205F三', U&'张\3000三', U&'张\FEFF三'] loop
+    begin
+      insert into public.nanfu_login_names (user_id, name) values ('99999999-9999-9999-9999-999999999992', candidate);
+      raise exception 'login table accepted an invalid name';
+    exception when check_violation then null;
+    end;
+  end loop;
+  begin
+    insert into public.nanfu_login_names (user_id, name) values ('99999999-9999-9999-9999-999999999992', '张三');
+    raise exception 'unique index accepted a second owner for the same login';
+  exception when unique_violation then null;
+  end;
+  foreach signature in array array['public.nanfu_org_create_account(text,text,text,integer,uuid,uuid,uuid[],text)',
+    'public.nanfu_org_reset_password(uuid,text)', 'public.nanfu_login_set_name(text)', 'public.nanfu_login_resolve(text)'] loop
+    proc := to_regprocedure(signature);
+    if not exists (select 1 from pg_proc p where p.oid = proc and p.prosecdef and p.proconfig @> array['search_path=public, pg_temp']) then
+      raise exception 'security definer or search path changed for %', signature;
+    end if;
+  end loop;
+  proc := 'public.nanfu_login_resolve(text)'::regprocedure;
+  if not has_function_privilege('anon', proc, 'EXECUTE') or not has_function_privilege('authenticated', proc, 'EXECUTE')
+     or exists (select 1 from pg_proc p, lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+       where p.oid = proc and a.grantee = 0 and a.privilege_type = 'EXECUTE') then
+    raise exception 'resolver grants changed';
+  end if;
+end $$;
+set local role anon;
+do $$
+begin
+  if public.nanfu_login_resolve('张三') is distinct from current_setting('nanfu.test.created_email') then
+    raise exception 'anon could not resolve a Chinese login';
+  end if;
+end $$;
+rollback;
 
 -- ---------------------------------------------------------------------------
 -- 12. Personal cloud slots: the same account's devices, nobody else's.
@@ -1440,6 +1659,8 @@ begin
   if not blocked then raise exception 'anon read device keys'; end if;
 end $$;
 commit;
+
+\ir nanfu_transfer_retry.sql
 
 select 'nanfu RLS proof passed' as result;
 

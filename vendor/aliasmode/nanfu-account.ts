@@ -69,6 +69,11 @@ export function isValidNanfuEmail(value: string): boolean {
 
 export const NANFU_LOGIN_SUFFIX = "@nanfu.local";
 
+export function isValidNanfuLoginName(value: string): boolean {
+  const length = Array.from(value).length;
+  return length >= 2 && length <= 63 && !/[\s@\u0000-\u001f\u007f-\u009f]/u.test(value);
+}
+
 /**
  * Sub-accounts sign in with a bare name while GoTrue needs an address, so a
  * name without "@" is expanded to <name>@nanfu.local. Sign-up bypasses this.
@@ -82,12 +87,9 @@ export function normalizeNanfuLogin(value: string): string {
 export const NANFU_MIN_PASSWORD_LENGTH = 6;
 export const NANFU_MAX_PASSWORD_LENGTH = 12;
 
-/** 6-12 characters mixing letters and digits; symbols are allowed but optional. */
+/** 6-12 printable ASCII characters, mixing letters and digits without whitespace. */
 export function isValidNanfuPassword(value: string): boolean {
-  return value.length >= NANFU_MIN_PASSWORD_LENGTH
-    && value.length <= NANFU_MAX_PASSWORD_LENGTH
-    && /[A-Za-z]/.test(value)
-    && /[0-9]/.test(value);
+  return nanfuPasswordProblem(value) === null;
 }
 
 /** The reason a password is rejected, or null when it passes. */
@@ -95,6 +97,7 @@ export function nanfuPasswordProblem(value: string): string | null {
   if (value.length < NANFU_MIN_PASSWORD_LENGTH || value.length > NANFU_MAX_PASSWORD_LENGTH) {
     return `密码需为 ${NANFU_MIN_PASSWORD_LENGTH}-${NANFU_MAX_PASSWORD_LENGTH} 位`;
   }
+  if (/[^\x21-\x7e]/.test(value)) return "密码仅支持非空白的 ASCII 可打印字符，不能包含空格或中文";
   if (!/[A-Za-z]/.test(value) || !/[0-9]/.test(value)) return "密码需同时包含英文字母和数字";
   return null;
 }
@@ -124,6 +127,8 @@ export class NanfuAuthClient {
   }
 
   async signUp(email: string, password: string): Promise<NanfuSignUpResult> {
+    const problem = nanfuPasswordProblem(password);
+    if (problem) throw new Error(problem);
     const query = this.options.emailRedirectTo
       ? `?redirect_to=${encodeURIComponent(this.options.emailRedirectTo)}`
       : "";
@@ -178,6 +183,8 @@ export class NanfuAuthClient {
   }
 
   async updatePassword(accessToken: string, password: string): Promise<void> {
+    const problem = nanfuPasswordProblem(password);
+    if (problem) throw new Error(problem);
     await this.call("/user", {
       method: "PUT",
       headers: { authorization: `Bearer ${accessToken}` },

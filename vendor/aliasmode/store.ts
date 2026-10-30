@@ -154,6 +154,16 @@ export class ProfileStore {
         created_at INTEGER NOT NULL
       );
     `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS nanfu_transfer_receipts (
+        user_id TEXT NOT NULL,
+        transfer_id TEXT NOT NULL,
+        sealed_payload TEXT NOT NULL,
+        summary_json TEXT NOT NULL,
+        result_json TEXT,
+        PRIMARY KEY (user_id, transfer_id)
+      );
+    `);
     // Uploaded browser extensions (files live on disk; this is the registry).
     // load_dir is the directory handed to --load-extension (has manifest.json).
     this.db.exec(`
@@ -464,6 +474,35 @@ export class ProfileStore {
         session_json = (SELECT session_json FROM profiles WHERE id = ?),
         session_restore_pending = (SELECT session_restore_pending FROM profiles WHERE id = ?)
         WHERE id = ?`).run(sourceId, sourceId, profile.id);
+    })();
+  }
+
+  getNanfuTransferReceipt(userId: string, transferId: string): { sealedPayload: string; resultJson: string | null } | null {
+    return this.db.query<{ sealedPayload: string; resultJson: string | null }, [string, string]>(
+      `SELECT sealed_payload AS sealedPayload, result_json AS resultJson
+       FROM nanfu_transfer_receipts WHERE user_id = ? AND transfer_id = ?`,
+    ).get(userId, transferId);
+  }
+
+  listPendingNanfuTransfers(userId: string): string[] {
+    return this.db.query<{ summaryJson: string }, [string]>(
+      `SELECT summary_json AS summaryJson FROM nanfu_transfer_receipts WHERE user_id = ? AND result_json IS NULL`,
+    ).all(userId).map((row) => row.summaryJson);
+  }
+
+  stageNanfuTransfer(userId: string, transferId: string, sealedPayload: string, summaryJson: string): void {
+    this.db.query(`INSERT OR IGNORE INTO nanfu_transfer_receipts (user_id, transfer_id, sealed_payload, summary_json)
+      VALUES (?, ?, ?, ?)`).run(userId, transferId, sealedPayload, summaryJson);
+  }
+
+  completeNanfuTransfer(userId: string, transferId: string, profile: Profile, sessions: ReadonlyMap<string, string>, resultJson: string): void {
+    this.transaction(() => {
+      const receipt = this.getNanfuTransferReceipt(userId, transferId);
+      if (!receipt || receipt.resultJson) throw new Error("转移接收状态已变更，请重试");
+      if (this.getProfile(profile.id) || this.isTrashed(profile.id)) throw new Error("目标环境已存在，请重试");
+      this.upsertProfiles([profile], sessions);
+      this.db.query(`UPDATE nanfu_transfer_receipts SET sealed_payload = '', result_json = ?
+        WHERE user_id = ? AND transfer_id = ?`).run(resultJson, userId, transferId);
     })();
   }
 

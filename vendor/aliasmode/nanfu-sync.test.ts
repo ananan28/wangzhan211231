@@ -694,6 +694,43 @@ test("adding an account validates the login, guards the admin tier and submits o
   ]);
 });
 
+test("Chinese account names and password boundaries reach only the intended RPC", async () => {
+  const calls: Array<{ action: string; input: unknown }> = [];
+  const client = {
+    createAccount: async (input: { email: string; password: string }) => {
+      calls.push({ action: "create-account", input });
+      return { userId: "u-1", email: input.email, identity: "member" };
+    },
+    resetMemberPassword: async (userId: string, password: string) => {
+      calls.push({ action: "reset-password", input: { userId, password } });
+    },
+  } as unknown as NanfuSyncClient;
+  const userId = "00000000-0000-4000-8000-000000000002";
+  for (const password of ["Ab1234", "Ab1234567890", "Ab12!~"]) {
+    expect(await mutateNanfuOrganization(client, "create-account",
+      { email: " 张三 ", password, identity: "member", quota: 0 }))
+      .toEqual({ userId: "u-1", email: "张三", identity: "member" });
+    expect(calls.at(-1)?.input).toMatchObject({ email: "张三", password });
+    expect(await mutateNanfuOrganization(client, "reset-password", { userId, password })).toEqual({});
+    expect(calls.at(-1)).toEqual({ action: "reset-password", input: { userId, password } });
+  }
+  expect(await mutateNanfuOrganization(client, "create-account",
+    { email: "𠮷".repeat(63), password: "Ab1234", identity: "member", quota: 0 }))
+    .toMatchObject({ email: "𠮷".repeat(63) });
+  const successfulCalls = calls.length;
+  for (const email of ["张", "𠮷", "𠮷".repeat(64), "张 三", "张\u0001三", "张\u0085三", "张\u00a0三", "张\u3000三", "张\ufeff三"]) {
+    await expect(mutateNanfuOrganization(client, "create-account",
+      { email, password: "Ab1234", identity: "member", quota: 0 })).rejects.toThrow(/登录名/);
+  }
+  for (const password of [null, 123456, "Ab123", "Ab12345678901", "abcdef", "123456", "Ab 123",
+    "Ab123\t", "Ab1234\n", "Ab123\u0000", "Ab123\u007f", "Ab123\u0085", "Ab123\u00a0", "Ab123中", "密码1234"]) {
+    await expect(mutateNanfuOrganization(client, "create-account",
+      { email: "张三", password, identity: "member", quota: 0 })).rejects.toThrow(/密码/);
+    await expect(mutateNanfuOrganization(client, "reset-password", { userId, password })).rejects.toThrow(/密码/);
+  }
+  expect(calls).toHaveLength(successfulCalls);
+});
+
 test("employee settings change authorized groups and reset the password", async () => {
   const calls: string[] = [];
   const client = {

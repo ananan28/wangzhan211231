@@ -1,4 +1,5 @@
 import { NanfuSyncClient, NanfuSyncError, type NanfuMember } from "./nanfu-sync.ts";
+import { isValidNanfuLoginName, nanfuPasswordProblem } from "./nanfu-account.ts";
 
 export const NANFU_ORGANIZATION_ACTIONS = [
   "create-organization", "create-role", "set-member", "set-quota", "create-group", "grant-group",
@@ -187,16 +188,17 @@ export async function mutateNanfuOrganization(
         quota, hours: integer("hours", 1, 8760) }, signal), uses: 1 };
     }
     case "create-account": {
-      // A bare name is a login (stored as <name>@nanfu.local); anything with
-      // "@" must be a complete address.
+      // Bare names use the shared login rules; addresses must be complete.
       const login = text("email", 320).toLowerCase();
       if (login.includes("@")) {
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(login)) throw new NanfuInputError("邮箱格式不正确，请输入完整邮箱");
-      } else if (!/^[a-z0-9][a-z0-9._-]{1,62}$/.test(login)) {
-        throw new NanfuInputError("登录名只能使用 2 至 63 位字母、数字、点、下划线和横线");
+      } else if (!isValidNanfuLoginName(login)) {
+        throw new NanfuInputError("登录名需为 2 至 63 个字符，支持中文，不能包含空白、@ 或控制字符");
       }
       const password = body.password;
-      if (typeof password !== "string" || password.length < 6 || password.length > 72) throw new NanfuInputError("密码须为 6 至 72 个字符");
+      if (typeof password !== "string") throw new NanfuInputError("请输入密码");
+      const problem = nanfuPasswordProblem(password);
+      if (problem) throw new NanfuInputError(problem);
       const identity = choice("identity", ["admin", "member"])!;
       const quota = integer("quota");
       const roleId = uuid("roleId", true);
@@ -245,7 +247,9 @@ export async function mutateNanfuOrganization(
     case "reset-password": {
       const userId = uuid("userId")!;
       const password = body.password;
-      if (typeof password !== "string" || password.length < 6 || password.length > 72) throw new NanfuInputError("密码须为 6 至 72 个字符");
+      if (typeof password !== "string") throw new NanfuInputError("请输入密码");
+      const problem = nanfuPasswordProblem(password);
+      if (problem) throw new NanfuInputError(problem);
       await client.resetMemberPassword(userId, password, signal);
       return {};
     }
@@ -267,10 +271,10 @@ export function nanfuOrganizationError(error: NanfuSyncError): { status: number;
     NANFU_FORBIDDEN: "当前账号无权执行此操作，请联系组织所有者或管理员。",
     ORG_ALREADY_MEMBER: "当前账号已属于组织，不能重复创建或加入组织。",
     NANFU_EMAIL_TAKEN: "这个登录名或邮箱已经注册过南孚账号，请换一个，或让本人直接登录。",
-    NANFU_EMAIL_INVALID: "登录名或邮箱格式不正确：登录名用 2 至 63 位字母、数字、点、下划线和横线，邮箱要带 @。",
-    NANFU_PASSWORD_INVALID: "密码须为 6 至 72 个字符。",
+    NANFU_EMAIL_INVALID: "登录名需为 2 至 63 个字符，支持中文，不能包含空白、@ 或控制字符；邮箱须填写完整。",
+    NANFU_PASSWORD_INVALID: "密码需为 6 至 12 位非空白 ASCII 可打印字符，必须包含英文字母和数字，符号可选。",
     NANFU_LOGIN_MANAGED: "子账号的登录名由管理员分配，不能自己修改。",
-    NANFU_LOGIN_INVALID: "用户名只能使用 2 至 63 位字母、数字、点、下划线和横线。",
+    NANFU_LOGIN_INVALID: "用户名需为 2 至 63 个字符，支持中文，不能包含空白、@ 或控制字符。",
     NANFU_LOGIN_TAKEN: "这个用户名已被其他账号使用，请换一个。",
     NANFU_PARENT_INVALID: "所选上级账号无效或不在本组织内。",
     NANFU_ROLE_INVALID: "所选角色不属于当前组织，请刷新后重试。",

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import "./nanfu-cloud-safety.test.ts";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -113,6 +114,16 @@ const rawSession = {
     },
   ],
   tabs: ["https://mail.example.com/inbox"],
+};
+
+const capturedSession = {
+  ...rawSession,
+  origins: rawSession.origins.map(({ indexedDB, ...origin }) => ({
+    ...origin,
+    ...(origin.origin === "https://web.telegram.org" ? { indexedDB: indexedDB.filter((db) => db.name === "tweb-common").map((db) => ({
+      ...db, stores: db.stores.map((store) => ({ ...store, autoIncrement: false, indexes: [] })),
+    })) } : {}),
+  })),
 };
 
 function packageWith(policy: "auth-only" | "all"): NanfuTransferPackage {
@@ -638,7 +649,7 @@ test("same account, two machines: upload seals the login state and the other mac
   try {
     const profile = testProfile();
     storeA.upsertProfile(profile);
-    storeA.saveSessionBundle(profile.id, JSON.stringify(rawSession));
+    storeA.saveSessionBundle(profile.id, JSON.stringify(capturedSession));
     // Machine B has opened the transfer page before, so its key is on file.
     const identityB = loadOrCreateTransferIdentity(rootB);
     await service.publishDeviceKey(USER_ID, identityB.deviceId, identityB.publicKey);
@@ -687,7 +698,7 @@ test("a device registered after the upload is told the package has no box for it
   try {
     const profile = testProfile();
     storeA.upsertProfile(profile);
-    storeA.saveSessionBundle(profile.id, JSON.stringify(rawSession));
+    storeA.saveSessionBundle(profile.id, JSON.stringify(capturedSession));
 
     const upload = await transferRequest(storeA, rootA, service, "package-upload", { environmentId: profile.id });
     const uploaded = await upload.json() as any;
@@ -716,7 +727,7 @@ test("another account cannot download the sealed slot even with the package id",
   try {
     const profile = testProfile();
     storeA.upsertProfile(profile);
-    storeA.saveSessionBundle(profile.id, JSON.stringify(rawSession));
+    storeA.saveSessionBundle(profile.id, JSON.stringify(capturedSession));
     const upload = await transferRequest(storeA, rootA, service, "package-upload", { environmentId: profile.id });
     const uploaded = await upload.json() as any;
 

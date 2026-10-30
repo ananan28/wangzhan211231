@@ -48,6 +48,7 @@ import {
 } from "./nanfu-env-package.ts";
 import type { NanfuRuntime } from "./nanfu-service.ts";
 import type { StatePaths } from "./paths.ts";
+import { parseCapturedSessionBundle, type CapturedSessionBundle } from "./session.ts";
 import type { ProfileStore } from "./store.ts";
 import type { Profile, ProxyType } from "./types.ts";
 
@@ -62,7 +63,7 @@ export interface NanfuTransferRouteContext {
 }
 
 class NanfuTransferHttpError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, message: string, readonly retryable = false) {
     super(message);
     this.name = "NanfuTransferHttpError";
   }
@@ -76,7 +77,9 @@ function reply(body: unknown, status = 200): Response {
 }
 
 function failure(error: unknown): Response {
-  if (error instanceof NanfuTransferHttpError) return reply({ ok: false, error: error.message }, error.status);
+  if (error instanceof NanfuTransferHttpError) {
+    return reply({ ok: false, error: error.message, ...(error.retryable ? { retryable: true } : {}) }, error.status);
+  }
   if (error instanceof NanfuEnvPackageError) {
     const status = error.code === "limit" ? 413 : error.code === "signature" ? 422 : 400;
     return reply({ ok: false, error: error.message, code: error.code }, status);
@@ -228,7 +231,9 @@ async function extensionArchives(
   const archives: Array<{ name: string; files: NanfuEnvFile[] }> = [];
   for (const extensionId of profile.extensions ?? []) {
     const extension = store.getExtension(extensionId);
-    if (!extension) continue;
+    if (!extension) {
+      throw new NanfuTransferHttpError(404, `环境引用的扩展“${extensionId}”不在本机，无法带走该环境。`);
+    }
     let files: NanfuEnvFile[];
     try {
       files = await collectNanfuEnvFiles(extension.loadDir);
@@ -384,6 +389,71 @@ function sessionBundleOf(session: {
   });
 }
 
+/** Validate before the payload builder's tolerant normalization can discard malformed state. */
+async function cloudSessionSnapshot(context: NanfuTransferRouteContext, profile: Profile): Promise<{
+  session: CapturedSessionBundle;
+  assertCurrent: () => void;
+}> {
+  const launch = context.store.getLaunch(profile.id);
+  // Copy the generation, not a mutable launch object. PID recovery is not a new generation.
+  const generation = launch ? { debugPort: launch.debugPort, startedAt: launch.startedAt, ws: launch.ws } : null;
+  const assertCurrent = () => {
+    const current = context.store.getLaunch(profile.id);
+    if (generation
+      ? !current || current.debugPort !== generation.debugPort || current.startedAt !== generation.startedAt || current.ws !== generation.ws
+      : !!current) {
+      throw new NanfuTransferHttpError(409, "浏览器运行状态已变化，未发送环境。请等待窗口稳定后重试。", true);
+    }
+  };
+  if (generation) {
+    try {
+      if (!context.launcher || await context.launcher.captureLocalSession(profile.id) !== true) {
+        throw new Error("capture unavailable");
+      }
+    } catch {
+      throw new NanfuTransferHttpError(409, "无法获取正在运行的浏览器的最新会话，未发送旧快照。请稍后重试。", true);
+    }
+  }
+  assertCurrent();
+  const bundle = context.store.getSessionBundle(profile.id);
+  let session: CapturedSessionBundle;
+  if (bundle !== null && bundle !== "") {
+    try {
+      const raw = JSON.parse(bundle);
+      // Cloud sessions require string tabs; do not silently drop null/invalid entries.
+      if (raw?.tabs !== undefined && (!Array.isArray(raw.tabs) || raw.tabs.some((tab: unknown) => typeof tab !== "string"))) {
+        throw new Error("invalid session tabs");
+      }
+      // Closed legacy cookie-only bundles are valid; never fill in missing cookies,
+      // or repair a malformed nonempty bundle using the profile's older cookies.
+      if (!generation && raw && typeof raw === "object" && !Array.isArray(raw) && raw.origins === undefined) {
+        raw.origins = [];
+      }
+      session = parseCapturedSessionBundle(JSON.stringify(raw));
+    } catch {
+      throw new NanfuTransferHttpError(422, "本机会话快照已损坏或格式不受支持，未发送环境。请打开窗口重新保存会话后重试。", true);
+    }
+  } else {
+    if (generation) {
+      throw new NanfuTransferHttpError(409, "最新会话快照未保存，未发送环境。请稍后重试。", true);
+    }
+    try {
+      // Imported cookies are the only fallback when no saved snapshot exists.
+      session = parseCapturedSessionBundle(JSON.stringify({ cookies: profile.cookies ?? [], origins: [], tabs: [] }));
+    } catch {
+      throw new NanfuTransferHttpError(422, "本机没有有效会话快照，且导入的 Cookie 格式无效。请打开窗口保存会话后重试。", true);
+    }
+  }
+  assertCurrent();
+  return { session, assertCurrent };
+}
+
+function noLoginStateWarning(payload: ReturnType<typeof buildCloudTransferPayload>): { warning?: string } {
+  return hasLoginState(payload) ? {} : {
+    warning: "未检测到可转移的网页登录态；此包不包含网站登录凭据，导入后可能需要重新登录。",
+  };
+}
+
 export async function handleNanfuTransferRequest(
   req: Request,
   context: NanfuTransferRouteContext,
@@ -431,13 +501,18 @@ export async function handleNanfuTransferRequest(
         client.sentCloudTransfers(userId, signal).catch(() => null),
         client.cloudPackages(userId, signal).catch(() => null),
       ]);
+      const incomingPackages = new Map((packageInbox ?? []).map((row) => [row.id, row]));
+      for (const summary of context.store.listPendingNanfuTransfers(userId)) {
+        const row = JSON.parse(summary);
+        if (!incomingPackages.has(row.id)) incomingPackages.set(row.id, { ...row, environmentName: `${row.environmentName}（待完成接收）` });
+      }
       return reply({
         ok: true, userId, organization, members, visibleEnvironments: visible,
         inbox: rows.filter((row) => row.toUserId === userId),
         sent: rows.filter((row) => row.fromUserId === userId),
         packages: {
           keyPublished,
-          inbox: packageInbox ?? [],
+          inbox: [...incomingPackages.values()],
           sent: packageSent ?? [],
           ...(packageInbox && packageSent ? {} : { error: "云端转移列表暂时读取失败，请刷新重试。" }),
         },
@@ -461,8 +536,8 @@ export async function handleNanfuTransferRequest(
       const organization = await requireOrganization(client, signal);
       // The organization list is empty until environments are registered with
       // it, so a local profile must not be refused just because no row exists
-      // yet. A row that does exist still has to belong to the sender.
-      const visible = await client.visibleEnvironments(organization.orgId, signal).catch(() => []);
+      // yet. A failed lookup is not an empty list and must never authorize a send.
+      const visible = await client.visibleEnvironments(organization.orgId, signal);
       const registered = visibleMap(visible).get(environmentId);
       if (registered && registered.ownerUserId !== userId) {
         throw new NanfuTransferHttpError(403, "只能云端转移你自己拥有的环境。");
@@ -475,17 +550,12 @@ export async function handleNanfuTransferRequest(
       }
       // A live browser is snapshotted first so the package carries the session as
       // it is right now; a closed one already has its last saved bundle.
-      if (context.launcher) await context.launcher.captureLocalSession(environmentId).catch(() => false);
-      let session: unknown = {};
-      const bundle = context.store.getSessionBundle(environmentId);
-      if (bundle) {
-        try { session = JSON.parse(bundle); } catch { session = {}; }
-      }
+      const snapshot = await cloudSessionSnapshot(context, profile);
       const names = new Map<string, string>();
       for (const extension of context.store.listExtensions()) names.set(extension.id, extension.name);
       const payload = buildCloudTransferPayload({
         environment: exportNanfuEnvironment(profile, names, new Date().toISOString()),
-        session,
+        session: snapshot.session,
         extensionNames: (profile.extensions ?? [])
           .map((extensionId) => names.get(extensionId))
           .filter((name): name is string => !!name),
@@ -499,6 +569,7 @@ export async function handleNanfuTransferRequest(
       }
       const id = randomUUID();
       const sealed = sealTransferPayload(recipientKey, plaintext, id);
+      snapshot.assertCurrent();
       await client.sendCloudTransfer({
         id, senderId: userId, senderEmail: account.state().email ?? "",
         recipientEmail: member.email, environmentId,
@@ -512,6 +583,7 @@ export async function handleNanfuTransferRequest(
         origins: transfer.session.origins.length,
         extensions: payload.package.extensionArchives.length,
         recipientEmail: member.email,
+        ...noLoginStateWarning(payload),
       });
     }
 
@@ -520,31 +592,32 @@ export async function handleNanfuTransferRequest(
       const id = typeof body.id === "string" ? body.id.trim() : "";
       if (!isNanfuUuid(id)) throw new NanfuTransferHttpError(400, "转移编号无效。");
       const paths = requireStateRoot(context);
+      const receipt = context.store.getNanfuTransferReceipt(userId, id);
+      if (receipt?.resultJson) return reply(JSON.parse(receipt.resultJson));
       const identity = loadOrCreateTransferIdentity(paths.root);
-      const { payload: sealed } = await client.cloudTransferPayload(id, signal);
-      // Decrypt and validate before accepting: an accepted row is no longer
-      // readable by the recipient, so a broken package must fail first.
+      const incoming = receipt ? null : await client.cloudTransferPayload(id, signal);
+      const sealed = receipt?.sealedPayload ?? incoming!.payload;
       const text = openTransferPayload(identity, sealed, id);
       const payload = parseCloudTransferPayload(text);
       requireChromium(payload.package.environment.engine, "云端导入");
+      const assertAccount = () => {
+        if (!account.state().authenticated || account.state().userId !== userId) {
+          throw new NanfuTransferHttpError(409, "账号已变化，请重新登录接收账号后重试。", true);
+        }
+      };
+      assertAccount();
+      // Keep ciphertext before acknowledgement so a crash cannot consume the only readable package.
+      if (incoming) context.store.stageNanfuTransfer(userId, id, sealed, JSON.stringify(incoming.row));
       const accepted = await client.acceptCloudTransfer(id, signal);
+      assertAccount();
       const plan = importPlan(context.store, payload.package);
       const { extensionIds, installed } = await installArchives(context.store, paths, payload.package.extensionArchives);
       const transfer = payload.transfer;
       const sessions = new Map<string, string>();
-      if (transfer.session.cookies.length || transfer.session.origins.length) {
+      if (transfer.session.cookies.length || transfer.session.origins.length || transfer.session.tabs.length) {
         sessions.set(plan.id, sessionBundleOf(transfer.session));
       }
-      try {
-        context.store.upsertProfiles(
-          [importedProfile(payload.package.environment, plan.id, plan.name, extensionIds)],
-          sessions,
-        );
-      } catch (error) {
-        await removeArchives(context.store, installed);
-        throw error;
-      }
-      return reply({
+      const result = {
         ok: true,
         profileId: plan.id,
         name: plan.name,
@@ -556,7 +629,16 @@ export async function handleNanfuTransferRequest(
         origins: transfer.session.origins.length,
         extensions: payload.package.extensionArchives.length,
         senderEmail: accepted.senderEmail,
-      });
+      };
+      try {
+        assertAccount();
+        context.store.completeNanfuTransfer(userId, id,
+          importedProfile(payload.package.environment, plan.id, plan.name, extensionIds), sessions, JSON.stringify(result));
+      } catch (error) {
+        await removeArchives(context.store, installed);
+        throw error;
+      }
+      return reply(result);
     }
 
     if (req.method === "POST" && action === "package-revoke") {
@@ -582,17 +664,12 @@ export async function handleNanfuTransferRequest(
       if (!devices.some((device) => device.deviceId === identity.deviceId)) {
         devices.push({ deviceId: identity.deviceId, publicKey: identity.publicKey, label: "", lastSeenAt: "" });
       }
-      if (context.launcher) await context.launcher.captureLocalSession(environmentId).catch(() => false);
-      let session: unknown = {};
-      const bundle = context.store.getSessionBundle(environmentId);
-      if (bundle) {
-        try { session = JSON.parse(bundle); } catch { session = {}; }
-      }
+      const snapshot = await cloudSessionSnapshot(context, profile);
       const names = new Map<string, string>();
       for (const extension of context.store.listExtensions()) names.set(extension.id, extension.name);
       const payload = buildCloudTransferPayload({
         environment: exportNanfuEnvironment(profile, names, new Date().toISOString()),
-        session,
+        session: snapshot.session,
         extensionNames: (profile.extensions ?? [])
           .map((extensionId) => names.get(extensionId))
           .filter((name): name is string => !!name),
@@ -606,6 +683,7 @@ export async function handleNanfuTransferRequest(
       }
       const id = randomUUID();
       const sealed = sealTransferPayloadForDevices(devices, plaintext, id);
+      snapshot.assertCurrent();
       await client.upsertCloudPackage({
         id, userId, environmentId,
         environmentName: payload.package.environment.name,
@@ -624,6 +702,7 @@ export async function handleNanfuTransferRequest(
         deviceId: identity.deviceId,
         deviceCount: devices.length,
         sizeBytes: plaintext.length,
+        ...noLoginStateWarning(payload),
       });
     }
 
@@ -641,7 +720,7 @@ export async function handleNanfuTransferRequest(
       const { extensionIds, installed } = await installArchives(context.store, paths, payload.package.extensionArchives);
       const transfer = payload.transfer;
       const sessions = new Map<string, string>();
-      if (transfer.session.cookies.length || transfer.session.origins.length) {
+      if (transfer.session.cookies.length || transfer.session.origins.length || transfer.session.tabs.length) {
         sessions.set(plan.id, sessionBundleOf(transfer.session));
       }
       try {

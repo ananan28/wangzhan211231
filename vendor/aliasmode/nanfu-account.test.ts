@@ -6,6 +6,9 @@ import {
   NanfuEmailUnverifiedError,
   NanfuAccountChangedError,
   normalizeNanfuLogin,
+  isValidNanfuLoginName,
+  isValidNanfuPassword,
+  nanfuPasswordProblem,
   type NanfuCredentialStore,
 } from "./nanfu-account.ts";
 import { DesktopCredentialBridge, DESKTOP_PROTOCOL } from "./desktop-runtime.ts";
@@ -194,14 +197,14 @@ test("changing the password proves the current password before updating", async 
     { nowMs: () => 1_000 },
   );
   await runtime.signIn("user@example.com", "old-secret");
-  await runtime.changePassword("old-secret", "new-secret");
+  await runtime.changePassword("old-secret", "new-secret1");
   expect(calls.map((call) => call.url)).toEqual([
     "https://nanfu.test/auth/v1/token?grant_type=password",
     "https://nanfu.test/auth/v1/token?grant_type=password",
     "https://nanfu.test/auth/v1/user",
   ]);
   expect(calls[1]?.body).toEqual({ email: "user@example.com", password: "old-secret" });
-  expect(calls[2]?.body).toEqual({ password: "new-secret" });
+  expect(calls[2]?.body).toEqual({ password: "new-secret1" });
   expect(calls[2]?.authorization).toBe("Bearer access-2");
 });
 
@@ -228,7 +231,7 @@ test("changing the password stops when the current password is rejected", async 
     { nowMs: () => 1_000 },
   );
   await runtime.signIn("user@example.com", "old-secret");
-  await expect(runtime.changePassword("wrong-secret", "new-secret")).rejects.toBeInstanceOf(NanfuAuthError);
+  await expect(runtime.changePassword("wrong-secret", "new-secret1")).rejects.toBeInstanceOf(NanfuAuthError);
   expect(calls.some((path) => path.endsWith("/user"))).toBe(false);
   expect(runtime.state().authenticated).toBe(true);
 });
@@ -420,4 +423,76 @@ test("an unknown or unset sign-in name resolves to null", async () => {
 test("normalizeNanfuLogin only expands names that carry no address", () => {
   expect(normalizeNanfuLogin("  ZhangSan ")).toBe("zhangsan@nanfu.local");
   expect(normalizeNanfuLogin("someone@example.com")).toBe("someone@example.com");
+});
+
+const invalidPasswords = [
+  "", "Ab123", "Ab12345678901", "abcdef", "123456", "!!!!!!",
+  "Ab 123", " Ab123", "Ab123 ", "Ab123\t", "Ab123\n", "Ab1234\n", "Ab123\r",
+  "Ab123\u0000", "Ab123\u007f", "Ab123\u0085", "Ab123\u00a0", "Ab123\u3000",
+  "Ab123\ufeff", "Ab123中", "密码1234", "Ａb1234",
+];
+
+for (const password of ["Ab1234", "Ab1234567890", "Ab12!~", "a1!#$%&'()*+"]) {
+  test(`password helpers accept printable ASCII: ${JSON.stringify(password)}`, () => {
+    expect(isValidNanfuPassword(password)).toBe(true);
+    expect(nanfuPasswordProblem(password)).toBeNull();
+  });
+}
+
+for (const password of invalidPasswords) {
+  test(`password helpers and new credentials reject ${JSON.stringify(password)}`, async () => {
+    expect(isValidNanfuPassword(password)).toBe(false);
+    expect(nanfuPasswordProblem(password)).toMatch(/密码/);
+    let calls = 0;
+    const auth = client(async () => { calls++; return Response.json(SESSION()); });
+    await expect(auth.signUp("user@example.com", password)).rejects.toThrow(/密码/);
+    await expect(auth.updatePassword("access-1", password)).rejects.toThrow(/密码/);
+    const runtime = new NanfuAccountRuntime(auth, { nowMs: () => 1_000 });
+    await runtime.signIn("user@example.com", "legacy-password-longer-than-12");
+    await expect(runtime.changePassword("legacy-password-longer-than-12", password)).rejects.toThrow(/密码/);
+    expect(calls).toBe(1);
+  });
+}
+
+for (const password of ["short", "legacy-password-longer-than-12", "旧密码 with spaces"]) {
+  test(`existing passwords are passed through for login and current-password proof: ${JSON.stringify(password)}`, async () => {
+    const sent: string[] = [];
+    const runtime = new NanfuAccountRuntime(client(async (_url, init) => {
+      sent.push(JSON.parse(String(init?.body)).password);
+      return Response.json(SESSION());
+    }), { nowMs: () => 1_000 });
+    await runtime.signIn("user@example.com", password);
+    await runtime.changePassword(password, "Ab1234");
+    expect(sent).toEqual([password, password, "Ab1234"]);
+  });
+}
+
+for (const name of ["张三", "中文名01", "𠮷野", "𠮷".repeat(63), "a".repeat(63), ".abc", "zhang/../san", "a+b"]) {
+  test(`login names count Unicode code points: ${JSON.stringify(name)}`, () => {
+    expect(isValidNanfuLoginName(name)).toBe(true);
+  });
+}
+
+for (const name of ["", "张", "𠮷", "a".repeat(64), "𠮷".repeat(64), "张 三", "张@三",
+  "张\t三", "张三\n", "张\u0000三", "张\u007f三", "张\u0085三", "张\u009f三",
+  "张\u00a0三", "张\u1680三", "张\u2007三", "张\u2028三", "张\u2029三", "张\u202f三", "张\u205f三", "张\u3000三", "张\ufeff三"]) {
+  test(`login names reject whitespace, controls, addresses and invalid lengths: ${JSON.stringify(name)}`, () => {
+    expect(isValidNanfuLoginName(name)).toBe(false);
+  });
+}
+
+test("a Chinese login resolves to its ASCII address before signing in", async () => {
+  const email = "00000000-0000-4000-8000-000000000001@nanfu.local";
+  const auth = client(async (url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (url.includes("nanfu_login_resolve")) {
+      expect(body).toEqual({ p_name: "张三" });
+      return Response.json(email);
+    }
+    expect(body).toEqual({ email, password: "legacy-password-longer-than-12" });
+    return Response.json({ ...SESSION(), user: { ...SESSION().user, email } });
+  });
+  const resolved = await auth.resolveLoginName("张三");
+  expect(resolved).toBe(email);
+  expect((await auth.signIn(resolved!, "legacy-password-longer-than-12")).user.email).toBe(email);
 });

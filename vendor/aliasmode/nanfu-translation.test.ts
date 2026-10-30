@@ -43,8 +43,21 @@ test("DeepL receives its own language codes", () => {
   expect(deepLTarget("fr-FR")).toBe("FR");
 });
 
+test("the default translation uses Google without a stored key or custom endpoint", () => {
+  const request = buildEngineRequest(settings({ baseUrl: "https://unused.example.test", model: "unused" }), ["hello"], "synthetic-unused-key");
+  const url = new URL(request.url);
+  expect(url.origin).toBe("https://translate.googleapis.com");
+  expect(url.pathname).toBe("/translate_a/single");
+  expect(url.searchParams.get("q")).toBe("hello");
+  expect(url.searchParams.get("tl")).toBe("zh-CN");
+  expect(request.method).toBe("GET");
+  expect(request.headers.Authorization).toBeUndefined();
+  expect(JSON.stringify(request)).not.toContain("synthetic-unused-key");
+  expect(JSON.stringify(request)).not.toContain("unused.example.test");
+});
+
 test("each engine request carries only the configured endpoint, texts and key", () => {
-  const openai = buildEngineRequest(settings({ baseUrl: "https://api.example.com/v1", model: "m1" }), ["hello"], "sk-test");
+  const openai = buildEngineRequest(settings({ engine: "openai", baseUrl: "https://api.example.com/v1", model: "m1" }), ["hello"], "sk-test");
   expect(openai.url).toBe("https://api.example.com/v1/chat/completions");
   expect(openai.headers.Authorization).toBe("Bearer sk-test");
   expect(JSON.parse(openai.body)).toMatchObject({ model: "m1", temperature: 0 });

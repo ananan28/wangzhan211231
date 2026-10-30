@@ -18,7 +18,7 @@ import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from
 import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import type { NanfuRuntime } from "./nanfu-service.ts";
-import { NANFU_LOGIN_SUFFIX, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuPassword, nanfuPasswordProblem, normalizeNanfuLogin } from "./nanfu-account.ts";
+import { NANFU_LOGIN_SUFFIX, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuLoginName, isValidNanfuPassword, nanfuPasswordProblem, normalizeNanfuLogin } from "./nanfu-account.ts";
 import { NanfuSyncError, isNanfuUuid } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
 import { NANFU_TRANSFER_ROUTE_PREFIX, handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
@@ -732,8 +732,8 @@ export async function handleUiRequest(
         const body = await req.json().catch(() => null) as { name?: unknown } | null;
         const name = typeof body?.name === "string" ? body.name.trim().toLowerCase() : "";
         if (!name) return noStoreJson({ ok: false, error: "请输入要使用的用户名" }, 400);
-        if (!/^[a-z0-9][a-z0-9._-]{1,62}$/.test(name)) {
-          return noStoreJson({ ok: false, error: "用户名只能使用 2 至 63 位字母、数字、点、下划线和横线" }, 400);
+        if (!isValidNanfuLoginName(name)) {
+          return noStoreJson({ ok: false, error: "用户名需为 2 至 63 个字符，支持中文，不能包含空白、@ 或控制字符" }, 400);
         }
         const saved = await client.setLoginName(name, req.signal);
         account.assertCurrent(revision);
@@ -743,13 +743,12 @@ export async function handleUiRequest(
       // is re-checked by a fresh sign-in, so a stolen token alone cannot lock the
       // owner out of the account.
       if (req.method === "POST" && action === "change-password") {
-        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孳账号" }, 401);
+        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
         const body = await req.json().catch(() => null) as { currentPassword?: unknown; nextPassword?: unknown } | null;
         const currentPassword = typeof body?.currentPassword === "string" ? body.currentPassword : "";
         const nextPassword = typeof body?.nextPassword === "string" ? body.nextPassword : "";
         if (!currentPassword) return noStoreJson({ ok: false, error: "请输入当前密码" }, 400);
         if (!isValidNanfuPassword(nextPassword)) return noStoreJson({ ok: false, error: nanfuPasswordProblem(nextPassword) ?? "密码不符合要求" }, 400);
-        if (nextPassword.length > 72) return noStoreJson({ ok: false, error: "新密码最多 72 位" }, 400);
         if (currentPassword === nextPassword) return noStoreJson({ ok: false, error: "新密码不能与当前密码相同" }, 400);
         const revision = account.revision();
         try {
@@ -797,7 +796,7 @@ export async function handleUiRequest(
         // exists, so a miss falls back to the administrator-created address.
         const bare = typed.endsWith(NANFU_LOGIN_SUFFIX) ? typed.slice(0, -NANFU_LOGIN_SUFFIX.length) : typed;
         if (bare && !bare.includes("@")) {
-          const resolved = await account.resolveLoginName(bare).catch(() => null);
+          const resolved = await account.resolveLoginName(bare);
           if (resolved) login = resolved;
         }
         if (!isValidNanfuEmail(login)) return noStoreJson({ ok: false, error: "请输入有效的邮箱或登录名" }, 400);

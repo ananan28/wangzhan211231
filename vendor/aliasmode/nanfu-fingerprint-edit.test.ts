@@ -22,7 +22,7 @@ async function withCloneFixture(run: (fixture: {
     profile.cookies = [{ name: "synthetic", value: "fixture-only", domain: "example.test", path: "/" }];
     profile.extensions = ["synthetic-extension"];
     profile.tags = ["测试"];
-    profile.timezoneManual = false;
+    delete profile.timezoneManual;
     store.upsertProfile(profile);
     const launcher = new Launcher({ store, dataRoot: root, findProfileDirHolderPids: async () => [], ...overrides });
     await run({ store, root, launcher, source: store.getProfile(profile.id)! });

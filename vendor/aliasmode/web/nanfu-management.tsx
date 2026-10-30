@@ -27,6 +27,9 @@ const groupOrder: NanfuAccountGroup[] = ["owner", "admin", "member", "sub"];
 
 const dataOf = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); return new FormData(event.currentTarget); };
 const text = (data: FormData, key: string) => String(data.get(key) ?? "").trim();
+const passwordProblem = (value: string) => value.length >= 6 && value.length <= 12
+  && !/[^\x21-\x7e]/.test(value) && /[A-Za-z]/.test(value) && /[0-9]/.test(value)
+  ? "" : "密码需为 6 至 12 位非空白 ASCII 可打印字符，必须包含英文字母和数字，符号可选。";
 const memberLabel = (member: NanfuMember) => member.displayName || nanfuLoginName(member.email) || member.userId;
 const memberGroupNames = (overview: NanfuOrgOverview, userId: string) => overview.grants
   .filter(grant => grant.userId === userId)
@@ -89,15 +92,23 @@ function AddAccount({ members, overview, owner, admin, currentUserId, busy, onMu
 }) {
   const scoped = !admin;
   const [kind, setKind] = useState<"member" | "sub" | "admin">(scoped ? "sub" : "member");
+  const [inputError, setInputError] = useState("");
   const self = members.find(member => member.userId === currentUserId);
   const [parent, setParent] = useState(self && self.identity !== "owner" ? currentUserId : "");
   const parents = members.filter(member => member.identity !== "owner" && member.status === "active" && !member.locked
     && (!scoped || member.userId === currentUserId));
   return <form className="nanfu-form nanfu-add-account" aria-label="添加账号" onSubmit={event => {
     const data = dataOf(event);
+    const email = text(data, "email").toLowerCase();
+    const password = String(data.get("password") ?? "");
+    const validLogin = email.includes("@") ? /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
+      : Array.from(email).length >= 2 && Array.from(email).length <= 63 && !/[\s@\u0000-\u001f\u007f-\u009f]/u.test(email);
+    const problem = !validLogin ? "登录名需为 2 至 63 个字符，支持中文，不能包含空白、@ 或控制字符；邮箱须填写完整。" : passwordProblem(password);
+    setInputError(problem);
+    if (problem || busy) return;
     void onMutate("create-account", {
-      email: text(data, "email"),
-      password: String(data.get("password") ?? ""),
+      email,
+      password,
       identity: kind === "admin" ? "admin" : "member",
       quota: Math.max(0, Math.trunc(Number(text(data, "quota") || "0")) || 0),
       managerUserId: kind === "sub" ? parent || undefined : undefined,
@@ -106,9 +117,9 @@ function AddAccount({ members, overview, owner, admin, currentUserId, busy, onMu
       name: text(data, "name") || undefined,
     });
   }}>
-    <label className="fld"><span>登录名</span><input name="email" type="text" autoComplete="off" maxLength={320} required placeholder="姓名拼音或缩写，如 zhangsan、zs01" /></label>
+    <label className="fld"><span>登录名</span><input name="email" type="text" autoComplete="off" maxLength={320} required placeholder="支持中文姓名，如 张三、zhangsan、zs01" /></label>
     <label className="fld"><span>姓名</span><input name="name" type="text" maxLength={60} autoComplete="off" placeholder="选填，例如 张三" disabled={busy} /></label>
-    <label className="fld"><span>密码</span><input name="password" type="password" autoComplete="new-password" minLength={6} maxLength={72} required placeholder="至少 6 位，直接告诉对方" /></label>
+    <label className="fld"><span>密码</span><input name="password" type="password" autoComplete="new-password" minLength={6} maxLength={12} required placeholder="6–12 位英文和数字，符号可选，不含空格" /></label>
     <label className="fld"><span>账号类型</span><select value={kind} onChange={event => setKind(event.target.value as "member" | "sub" | "admin")} disabled={busy}>
       {!scoped && <option value="member">成员</option>}
       <option value="sub">子账号（挂在某个账号名下）</option>
@@ -127,7 +138,8 @@ function AddAccount({ members, overview, owner, admin, currentUserId, busy, onMu
     <label className="fld"><span>窗口配额（0 不限）</span><input name="quota" type="number" min="0" step="1" defaultValue={0} disabled={busy} /></label>
     {!!overview.groups.length && <GroupPicker key={overview.groups.length} groups={overview.groups} granted={[]} legend="授权分组" disabled={busy} />}
     <button className="btn primary" type="submit" disabled={busy || (kind === "sub" && !parent)}>添加账号</button>
-    <p className="nanfu-hint">登录名用姓名拼音或缩写即可（字母、数字、点、下划线、横线，2 至 63 位），不需要邮箱；添加后对方用这个登录名和密码登录，账号已激活。授权分组决定对方在云端能看到哪些窗口，不勾选只能看到自己的窗口。{scoped && "你只能把子账号挂在自己名下。"}</p>
+    {inputError && <p className="modal-err" role="alert">{inputError}</p>}
+    <p className="nanfu-hint">登录名支持中文姓名（2 至 63 个字符，不能包含空白、@ 或控制字符），不需要邮箱；添加后对方用这个登录名和密码登录，账号已激活。授权分组决定对方在云端能看到哪些窗口，不勾选只能看到自己的窗口。{scoped && "你只能把子账号挂在自己名下。"}</p>
   </form>;
 }
 
@@ -136,6 +148,7 @@ function MemberRow({ member, overview, owner, currentUserId, busy, onMutate }: {
   currentUserId: string; busy: boolean; onMutate: NanfuMutationHandler;
 }) {
   const self = member.userId === currentUserId;
+  const [resetError, setResetError] = useState("");
   const parent = overview.members.find(item => item.userId === member.managerUserId);
   const group = nanfuAccountGroup(member);
   const quotaFull = member.quota > 0 && member.used >= member.quota;
@@ -206,12 +219,15 @@ function MemberRow({ member, overview, owner, currentUserId, busy, onMutate }: {
       <form className="nanfu-form nanfu-row-form" aria-label={`重置密码 ${memberLabel(member)}`} onSubmit={event => {
         const data = dataOf(event);
         const password = String(data.get("password") ?? "");
-        if (password.length < 6) return;
+        const problem = passwordProblem(password);
+        setResetError(problem);
+        if (problem || busy) return;
         event.currentTarget.reset();
         void onMutate("reset-password", { userId: member.userId, password });
       }}>
-        <label className="fld"><span>新密码</span><input name="password" type="password" autoComplete="new-password" minLength={6} maxLength={72} required placeholder="至少 6 位，改完告诉对方" disabled={busy} /></label>
+        <label className="fld"><span>新密码</span><input name="password" type="password" autoComplete="new-password" minLength={6} maxLength={12} required placeholder="6–12 位英文和数字，符号可选，不含空格" disabled={busy} /></label>
         <button className="btn" type="submit" disabled={busy}>重置密码</button>
+        {resetError && <p className="modal-err" role="alert">{resetError}</p>}
       </form>
       <h5>窗口配额</h5>
       <form className="nanfu-form nanfu-row-form" aria-label={`配额 ${memberLabel(member)}`} onSubmit={event => {
