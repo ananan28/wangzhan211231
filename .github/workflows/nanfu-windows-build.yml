@@ -65,7 +65,7 @@ jobs:
       - name: Build development installer
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.NANFU_UPDATER_PRIVATE_KEY }}
-        run: bunx tauri build --config src-tauri/nanfu.conf.json --bundles nsis --no-sign
+        run: bunx tauri build --config src-tauri/nanfu.conf.json --bundles nsis
       - name: Verify branded installation starts
         shell: pwsh
         run: |
