@@ -378,7 +378,6 @@ for (const method of ["POST", "CONNECT"] as const) {
     let client: net.Socket | undefined;
     let relayClient: net.Socket | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let stopWatching = () => {};
     try {
       up = await fakeSocksUpstream(false, {
         onConnect: reached,
@@ -417,20 +416,21 @@ for (const method of ["POST", "CONNECT"] as const) {
       const release = await Promise.race([handshake, failed]);
       expect(relayClient).toBeDefined();
       const accepted = relayClient!;
-      // A readable listener changes stream mode, so assert before attaching it.
-      expect(accepted.isPaused()).toBe(true);
-      const buffered = new Promise<void>((resolve) => {
-        const onReadable = () => {
-          // A write callback proves only local flushing, not arrival at the relay.
-          if (accepted.bytesRead < firstWrite.length + remaining.length) return;
-          stopWatching();
-          resolve();
-        };
-        stopWatching = () => accepted.removeListener("readable", onReadable);
-        accepted.on("readable", onReadable);
+      // The relay keeps reading while the handshake is gated (a paused socket
+      // would not notice the browser going away) and holds the bytes itself.
+      // bytesRead proves they arrived; `received` proves none were forwarded.
+      const reachedBytes = (target: number) => new Promise<boolean>((resolve) => {
+        const id = setInterval(() => {
+          if (accepted.bytesRead < target) return;
+          clearInterval(id);
+          clearTimeout(guard);
+          resolve(true);
+        }, 5);
+        const guard = setTimeout(() => { clearInterval(id); resolve(false); }, 1500);
       });
+      expect(await reachedBytes(firstWrite.length)).toBe(true);
       sock.write(remaining);
-      await Promise.race([buffered, failed]);
+      expect(await reachedBytes(firstWrite.length + remaining.length)).toBe(true);
       expect(received.length).toBe(0);
       release();
 
@@ -441,7 +441,6 @@ for (const method of ["POST", "CONNECT"] as const) {
         : Buffer.concat([Buffer.from("HTTP/1.1 200 Connection established\r\n\r\n"), reply]));
     } finally {
       clearTimeout(timer);
-      stopWatching();
       client?.destroy();
       relayClient?.destroy();
       relay?.close();

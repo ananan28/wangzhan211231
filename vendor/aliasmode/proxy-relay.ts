@@ -41,8 +41,11 @@ export interface RelayOptions {
 }
 
 const MAX_HEAD = 64 * 1024; // cap a request/response head so a never-terminating head can't grow unbounded
+const MAX_HELD = 4 * 1024 * 1024; // cap bytes read past the head while the upstream handshake is still running
 
 type TrackSocket = (socket: net.Socket) => net.Socket;
+/** Write the request bytes held during the handshake, then join the streams. */
+type FlushHeld = (upSock: net.Socket) => void;
 
 /** Start a loopback relay that forwards to `up`, injecting its credentials. Resolves once listening. */
 export function startProxyRelay(up: UpstreamProxy, opts: RelayOptions = {}): Promise<ProxyRelay> {
@@ -91,6 +94,28 @@ function handleClient(
 ): void {
   client.on("error", () => client.destroy());
   let buf = Buffer.alloc(0);
+  // The client stays in flowing mode while the upstream handshake runs: a
+  // paused socket stops reading, so a browser that goes away is never noticed
+  // and its upstream socket outlives it. Hold the extra bytes here instead.
+  const held: Buffer[] = [];
+  let heldBytes = 0;
+  const hold = (chunk: Buffer) => {
+    heldBytes += chunk.length;
+    if (heldBytes > MAX_HELD) {
+      log("proxy relay: request body exceeded the handshake buffer, closing");
+      client.destroy();
+      return;
+    }
+    held.push(chunk);
+  };
+  const flush: FlushHeld = (upSock) => {
+    client.removeListener("data", hold);
+    for (const chunk of held) upSock.write(chunk);
+    held.length = 0;
+    heldBytes = 0;
+    upSock.pipe(client);
+    client.pipe(upSock);
+  };
   const onData = (chunk: Buffer) => {
     buf = Buffer.concat([buf, chunk]);
     const headEnd = buf.indexOf("\r\n\r\n");
@@ -98,14 +123,14 @@ function handleClient(
       if (buf.length > MAX_HEAD) client.destroy();
       return;
     }
-    client.pause(); // Buffer later bytes until the upstream is ready; pipe() resumes reading.
     client.removeListener("data", onData);
-    client.read(0); // Keep EOF detection active without consuming buffered request bytes.
+    client.on("data", hold);
     const head = buf.subarray(0, headEnd + 4).toString("latin1");
     const rest = buf.subarray(headEnd + 4); // bytes already past the head (a plain-HTTP body, usually empty)
+    if (rest.length) hold(rest);
     const firstLine = head.split("\r\n")[0] ?? "";
-    if (/^CONNECT\s/i.test(firstLine)) connectTunnel(client, up, auth, firstLine, rest, log, track);
-    else plainHttp(client, up, auth, head, rest, log, track);
+    if (/^CONNECT\s/i.test(firstLine)) connectTunnel(client, up, auth, firstLine, flush, log, track);
+    else plainHttp(client, up, auth, head, flush, log, track);
   };
   client.on("data", onData);
 }
@@ -116,13 +141,13 @@ function connectTunnel(
   up: UpstreamProxy,
   auth: string | null,
   firstLine: string,
-  rest: Buffer,
+  flush: FlushHeld,
   log: (m: string) => void,
   track: TrackSocket,
 ): void {
   const target = firstLine.split(/\s+/)[1] ?? ""; // "host:port"
   if (up.type === "socks5") {
-    void connectSocksTunnel(client, up, target, rest, log, track);
+    void connectSocksTunnel(client, up, target, flush, log, track);
     return;
   }
   const upSock = track(net.connect({ host: up.host, port: up.port }));
@@ -161,9 +186,7 @@ function connectTunnel(
     client.write("HTTP/1.1 200 Connection established\r\n\r\n");
     const extra = rbuf.subarray(end + 4); // any tunnel bytes that arrived with the response
     if (extra.length) client.write(extra);
-    if (rest.length) upSock.write(rest);
-    upSock.pipe(client);
-    client.pipe(upSock);
+    flush(upSock);
   };
   upSock.on("data", onUpData);
   upSock.on("close", () => client.destroy());
@@ -198,7 +221,7 @@ async function connectSocksTunnel(
   client: net.Socket,
   up: UpstreamProxy,
   target: string,
-  rest: Buffer,
+  flush: FlushHeld,
   log: (m: string) => void,
   track: TrackSocket,
 ): Promise<void> {
@@ -224,9 +247,7 @@ async function connectSocksTunnel(
     });
     upSock.on("close", () => client.destroy());
     client.write("HTTP/1.1 200 Connection established\r\n\r\n");
-    if (rest.length) upSock.write(rest);
-    upSock.pipe(client);
-    client.pipe(upSock);
+    flush(upSock);
   } catch (error) {
     log(`SOCKS5 CONNECT failed for ${target}: ${error instanceof Error ? error.message : error}`);
     upSock?.destroy();
@@ -241,12 +262,12 @@ function plainHttp(
   up: UpstreamProxy,
   auth: string | null,
   head: string,
-  rest: Buffer,
+  flush: FlushHeld,
   log: (m: string) => void,
   track: TrackSocket,
 ): void {
   if (up.type === "socks5") {
-    void plainHttpViaSocks(client, up, head, rest, log, track);
+    void plainHttpViaSocks(client, up, head, flush, log, track);
     return;
   }
   const lines = head.split("\r\n");
@@ -270,9 +291,7 @@ function plainHttp(
   client.once("close", () => upSock.destroy());
   upSock.on("connect", () => {
     upSock.write(rebuilt);
-    if (rest.length) upSock.write(rest);
-    upSock.pipe(client);
-    client.pipe(upSock);
+    flush(upSock);
   });
   upSock.on("close", () => client.destroy());
 }
@@ -281,7 +300,7 @@ async function plainHttpViaSocks(
   client: net.Socket,
   up: UpstreamProxy,
   head: string,
-  rest: Buffer,
+  flush: FlushHeld,
   log: (m: string) => void,
   track: TrackSocket,
 ): Promise<void> {
@@ -330,9 +349,7 @@ async function plainHttpViaSocks(
     });
     upSock.on("close", () => client.destroy());
     upSock.write(rebuilt);
-    if (rest.length) upSock.write(rest);
-    upSock.pipe(client);
-    client.pipe(upSock);
+    flush(upSock);
   } catch (error) {
     log(`SOCKS5 HTTP request failed: ${error instanceof Error ? error.message : error}`);
     upSock?.destroy();
