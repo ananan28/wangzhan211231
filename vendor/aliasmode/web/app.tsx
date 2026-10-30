@@ -2306,7 +2306,8 @@ function App() {
   useEffect(() => {
     if (!appMode || restartRequired || desktopUpdateCheckStarted.current) return;
     desktopUpdateCheckStarted.current = true;
-    // 南孚版不从上游 AliasMode 仓库检查更新。
+    // 南孚版从自己的下载域检查更新；失败静默，用户可在「设置 → 高级 → 更新」手动检查。
+    void checkDesktopUpdate(false);
   }, [appMode?.mode, restartRequired]);
 
   useEffect(() => {
@@ -4947,6 +4948,11 @@ function App() {
             <header><Icon name="import" className="sm" /><h2>{t("Updates")}</h2></header>
             <div className="card-body">
             <div className="settings-row"><span>{t("Installed version")}</span><strong className="mono">{appVersion || desktopUpdate?.currentVersion || "—"}</strong></div>
+            <div className="settings-row">
+              <button className="btn" type="button" disabled={desktopUpdateChecking || desktopUpdateInstalling} onClick={() => void checkDesktopUpdate(true)}>
+                {desktopUpdateChecking ? t("Checking…") : t("Check for updates")}
+              </button>
+            </div>
             {desktopUpdateResultSummary && (
               <div
                 className={`update-last-result ${desktopUpdateResultSummary.tone}`}
