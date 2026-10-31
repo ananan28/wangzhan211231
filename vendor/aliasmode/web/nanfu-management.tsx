@@ -29,7 +29,7 @@ const dataOf = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); 
 const text = (data: FormData, key: string) => String(data.get(key) ?? "").trim();
 const passwordProblem = (value: string) => value.length >= 6 && value.length <= 12
   && !/[^\x21-\x7e]/.test(value) && /[A-Za-z]/.test(value) && /[0-9]/.test(value)
-  ? "" : "密码需为 6 至 12 位非空白 ASCII 可打印字符，必须包含英文字母和数字，符号可选。";
+  ? "" : "密码需为 6 至 12 位非空白可打印字符，必须包含英文字母和数字，符号可选。";
 const memberLabel = (member: NanfuMember) => member.displayName || nanfuLoginName(member.email) || member.userId;
 const memberGroupNames = (overview: NanfuOrgOverview, userId: string) => overview.grants
   .filter(grant => grant.userId === userId)
@@ -91,55 +91,77 @@ function AddAccount({ members, overview, owner, admin, currentUserId, busy, onMu
   currentUserId: string; busy: boolean; onMutate: NanfuMutationHandler;
 }) {
   const scoped = !admin;
-  const [kind, setKind] = useState<"member" | "sub" | "admin">(scoped ? "sub" : "member");
+  // 服务端只保存 owner/admin/member 三种身份：这里的“经理”是不挂上级的普通
+  // 成员，“成员”则是挂在某位经理名下的子账号（沿用原来的 kind 取值）。
+  const [kind, setKind] = useState<"member" | "sub" | "admin">("sub");
   const [inputError, setInputError] = useState("");
   const self = members.find(member => member.userId === currentUserId);
-  const [parent, setParent] = useState(self && self.identity !== "owner" ? currentUserId : "");
+  const initialParent = self && self.identity !== "owner" ? currentUserId : "";
+  const [parent, setParent] = useState(initialParent);
   const parents = members.filter(member => member.identity !== "owner" && member.status === "active" && !member.locked
     && (!scoped || member.userId === currentUserId));
-  return <form className="nanfu-form nanfu-add-account" aria-label="添加账号" onSubmit={event => {
-    const data = dataOf(event);
-    const email = text(data, "email").toLowerCase();
-    const password = String(data.get("password") ?? "");
-    const validLogin = email.includes("@") ? /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
-      : Array.from(email).length >= 2 && Array.from(email).length <= 63 && !/[\s@^@-^_\u007f-^_]/u.test(email);
-    const problem = !validLogin ? "登录名需为 2 至 63 个字符，支持中文，不能包含空白、@ 或控制字符；邮箱须填写完整。" : passwordProblem(password);
-    setInputError(problem);
-    if (problem || busy) return;
-    void onMutate("create-account", {
-      email,
-      password,
-      identity: kind === "admin" ? "admin" : "member",
-      quota: Math.min(100, Math.max(0, Math.trunc(Number(text(data, "quota") || "0")) || 0)),
-      managerUserId: kind === "sub" ? parent || undefined : undefined,
-      roleId: text(data, "roleId") || undefined,
-      groupIds: data.getAll("groupIds").map(String).filter(Boolean),
-      name: text(data, "name") || undefined,
-    });
-  }}>
-    <label className="fld"><span>登录名</span><input name="email" type="text" autoComplete="off" maxLength={320} required placeholder="支持中文姓名，如 张三、zhangsan、zs01" /></label>
-    <label className="fld"><span>姓名</span><input name="name" type="text" maxLength={60} autoComplete="off" placeholder="选填，例如 张三" disabled={busy} /></label>
-    <label className="fld"><span>密码</span><input name="password" type="password" autoComplete="new-password" minLength={6} maxLength={12} required placeholder="6–12 位英文和数字，符号可选，不含空格" /></label>
-    <label className="fld"><span>账号类型</span><select value={kind} onChange={event => setKind(event.target.value as "member" | "sub" | "admin")} disabled={busy}>
-      {!scoped && <option value="member">成员</option>}
-      <option value="sub">子账号（挂在某个账号名下）</option>
-      {owner && <option value="admin">管理员</option>}
+  const fullRow = { gridColumn: "1 / -1" } as const;
+  return <form className="nanfu-form nanfu-add-account" aria-label="添加账号"
+    style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", alignItems: "start", gap: 12 }}
+    onSubmit={event => {
+      const data = dataOf(event);
+      const email = text(data, "email").toLowerCase();
+      const password = String(data.get("password") ?? "");
+      const validLogin = email.includes("@") ? /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
+        : Array.from(email).length >= 2 && Array.from(email).length <= 63 && !/[\s@\u0000-\u001f\u007f-\u009f]/u.test(email);
+      const problem = !validLogin ? "登录名需为 2 至 63 个字符，支持中文，不能包含空白、@ 或控制字符；邮箱须填写完整。" : passwordProblem(password);
+      setInputError(problem);
+      if (problem || busy) return;
+      void onMutate("create-account", {
+        email,
+        password,
+        identity: kind === "admin" ? "admin" : "member",
+        quota: Math.min(100, Math.max(0, Math.trunc(Number(text(data, "quota") || "0")) || 0)),
+        managerUserId: kind === "sub" ? parent || undefined : undefined,
+        roleId: text(data, "roleId") || undefined,
+        groupIds: data.getAll("groupIds").map(String).filter(Boolean),
+        name: text(data, "name") || undefined,
+      });
+    }}>
+    <label className="fld"><span>角色 *</span><select name="roleId" defaultValue="" required={overview.roles.length > 0} disabled={busy}>
+      <option value="">{overview.roles.length ? "请选择角色" : "默认权限"}</option>
+      {overview.roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
     </select></label>
-    {kind === "sub" && <label className="fld"><span>所属账号</span><select value={parent} onChange={event => setParent(event.target.value)} required disabled={busy || scoped}>
-      <option value="">请选择所属账号</option>
+    <label className="fld"><span>姓名 *</span><input name="name" type="text" maxLength={60} autoComplete="off" required placeholder="请输入姓名" disabled={busy} /></label>
+    <label className="fld"><span>用户名 *</span><input name="email" type="text" autoComplete="off" maxLength={320} required placeholder="请输入登录用户名" disabled={busy} /></label>
+    <label className="fld"><span>登录密码 *</span><input name="password" type="password" autoComplete="new-password" minLength={6} maxLength={12} required placeholder="6-12 位，须含英文字母和数字，不含空格" disabled={busy} /></label>
+    <fieldset className="nanfu-controls" style={{ ...fullRow, margin: 0 }}>
+      <legend style={{ padding: 0, color: "var(--muted)", fontSize: 11.5, fontWeight: 550 }}>身份</legend>
+      <div className="nanfu-permissions" style={{ marginTop: 6, alignItems: "flex-start" }}>
+        {owner && <label className="nanfu-check"><input type="radio" name="identity" value="admin" checked={kind === "admin"} onChange={() => setKind("admin")} disabled={busy} />管理员</label>}
+        {!scoped && <label className="nanfu-check"><input type="radio" name="identity" value="member" checked={kind === "member"} onChange={() => setKind("member")} disabled={busy} />经理</label>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label className="nanfu-check"><input type="radio" name="identity" value="sub" checked={kind === "sub"} onChange={() => setKind("sub")} disabled={busy} />成员</label>
+          <p className="nanfu-hint" style={{ flex: "0 0 auto", margin: 0, maxWidth: 260 }}>不具有管理权限，仅可以管理名下窗口数据</p>
+        </div>
+      </div>
+    </fieldset>
+    <label className="fld"><span>经理</span><select name="managerUserId" value={kind === "sub" ? parent : ""} onChange={event => setParent(event.target.value)} required={kind === "sub"} disabled={busy || scoped || kind !== "sub"}>
+      <option value="">{kind === "sub" ? "请选择经理" : "选择成员身份后可指定经理"}</option>
       {parents.map(member => <option key={member.userId} value={member.userId}>
         {memberLabel(member)} · {nanfuIdentityName(member.identity)}{member.userId === currentUserId ? "（我）" : ""}
       </option>)}
-    </select></label>}
-    <label className="fld"><span>角色</span><select name="roleId" disabled={busy}>
-      <option value="">默认权限</option>
-      {overview.roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
     </select></label>
     <label className="fld"><span>窗口配额（0 不限，最多 100）</span><input name="quota" type="number" min="0" max="100" step="1" defaultValue={0} disabled={busy} /></label>
-    {!!overview.groups.length && <GroupPicker key={overview.groups.length} groups={overview.groups} granted={[]} legend="授权分组" disabled={busy} />}
-    <button className="btn primary" type="submit" disabled={busy || (kind === "sub" && !parent)}>添加账号</button>
-    {inputError && <p className="modal-err" role="alert">{inputError}</p>}
-    <p className="nanfu-hint">登录名支持中文姓名（2 至 63 个字符，不能包含空白、@ 或控制字符），不需要邮箱；添加后对方用这个登录名和密码登录，账号已激活。授权分组决定对方在云端能看到哪些窗口，不勾选只能看到自己的窗口。{scoped && "你只能把子账号挂在自己名下。"}</p>
+    {!!overview.groups.length && <div style={fullRow}>
+      <GroupPicker key={overview.groups.length} groups={overview.groups} granted={[]} legend="授权分组（窗口）" disabled={busy} />
+    </div>}
+    {inputError && <p className="modal-err" role="alert" style={fullRow}>{inputError}</p>}
+    <p className="nanfu-hint" style={fullRow}>用户名可填中文姓名、登录名或完整邮箱；纯登录名为 2 至 63 个字符，不能包含空白或控制字符。添加后对方直接用用户名和密码登录，账号已激活。授权分组决定对方在云端能看到哪些窗口，不勾选只能看到自己的窗口。{scoped && "你只能把新账号挂在自己名下。"}</p>
+    <div style={{ ...fullRow, display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
+      <button className="btn" type="button" disabled={busy} onClick={event => {
+        event.currentTarget.form?.reset();
+        setKind("sub");
+        setParent(initialParent);
+        setInputError("");
+      }}>取消</button>
+      <button className="btn primary" type="submit" disabled={busy || (kind === "sub" && !parent)}>确定</button>
+    </div>
   </form>;
 }
 

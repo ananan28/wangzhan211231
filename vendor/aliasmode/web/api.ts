@@ -82,6 +82,34 @@ export function nanfuAuthAction(
   return nanfuJson(action, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal });
 }
 
+/** Google 授权地址由本地服务生成，带一次性 state 与 PKCE code_challenge。 */
+export interface NanfuGoogleOAuthStart {
+  url: string;
+  state: string;
+  redirectTo: string;
+  expiresAt: number;
+}
+
+/** 生成 Google OAuth 授权地址；真正的 code 交换在回调路由里完成。 */
+export function startNanfuGoogleOAuth(signal?: AbortSignal): Promise<NanfuGoogleOAuthStart> {
+  return nanfuJson("oauth-google/start", { signal });
+}
+
+/**
+ * 桌面端 Tauri 没有开放 shell 插件，外链会被窗口白名单拦下，
+ * 因此由本地服务调用系统默认浏览器打开已经生成的授权页。
+ */
+export function openNanfuGoogleOAuth(
+  state: string, signal?: AbortSignal,
+): Promise<{ opened: boolean; url: string }> {
+  return nanfuJson("oauth-google/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state }),
+    signal,
+  });
+}
+
 /** Changes the signed-in account's password after proving the current one. */
 export function changeNanfuPassword(
   currentPassword: string,

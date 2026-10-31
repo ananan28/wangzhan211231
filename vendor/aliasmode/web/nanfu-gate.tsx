@@ -1,5 +1,13 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { fetchNanfuState, nanfuAuthAction, nanfuSelfJoin, NanfuApiError, type NanfuAccountState } from "./api.ts";
+import {
+  fetchNanfuState,
+  nanfuAuthAction,
+  nanfuSelfJoin,
+  openNanfuGoogleOAuth,
+  startNanfuGoogleOAuth,
+  NanfuApiError,
+  type NanfuAccountState,
+} from "./api.ts";
 
 /**
  * Mandatory sign-in for the 南孚 build. The workspace stays local, while the
@@ -9,6 +17,7 @@ import { fetchNanfuState, nanfuAuthAction, nanfuSelfJoin, NanfuApiError, type Na
 export function NanfuGate({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<NanfuAccountState | null>(null);
   const [busy, setBusy] = useState(true);
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [invite, setInvite] = useState("");
@@ -44,6 +53,38 @@ export function NanfuGate({ children }: { children: ReactNode }) {
       if (timer) clearTimeout(timer);
     };
   }, [refresh]);
+
+  // Google 授权在系统浏览器里完成，客户端拿不到回调事件，只能轮询本机登录态；
+  // 回调换到会话后 fetchNanfuState 会变成已登录，随即放行工作区。
+  useEffect(() => {
+    if (!googleBusy) return;
+    let active = true;
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      void (async () => {
+        try {
+          const state = await refresh();
+          if (!active) return;
+          if (state.authenticated) {
+            setGoogleBusy(false);
+            setNotice(null);
+            return;
+          }
+        } catch {
+          // 授权期间账号服务偶发抖动不打断等待。
+        }
+        if (active && Date.now() - startedAt > 10 * 60_000) {
+          setGoogleBusy(false);
+          setNotice(null);
+          setError("未检测到 Google 授权结果，请重试。");
+        }
+      })();
+    }, 2000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [googleBusy, refresh]);
 
   const signIn = async () => {
     setBusy(true);
@@ -89,6 +130,32 @@ export function NanfuGate({ children }: { children: ReactNode }) {
       );
     } finally {
       setBusy(false);
+    }
+  };
+
+  const signInWithGoogle = async () => {
+    setError(null);
+    setNotice(null);
+    setGoogleBusy(true);
+    try {
+      const started = await startNanfuGoogleOAuth();
+      // 桌面端 Tauri 只允许白名单外链走系统浏览器，交给本机 sidecar 代开更稳；
+      // 普通浏览器调试时直接新开标签页即可。
+      const desktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+      if (desktop) {
+        const opened = await openNanfuGoogleOAuth(started.state);
+        if (!opened.opened) {
+          setGoogleBusy(false);
+          setError("系统浏览器未能打开，请检查默认浏览器设置后重试。");
+          return;
+        }
+      } else {
+        window.open(started.url, "_blank", "noopener,noreferrer");
+      }
+      setNotice("已打开 Google 授权页，完成授权后会自动登录。");
+    } catch (failure) {
+      setGoogleBusy(false);
+      setError(failure instanceof NanfuApiError ? failure.message : "无法启动 Google 登录，请重试。");
     }
   };
 
@@ -199,6 +266,51 @@ export function NanfuGate({ children }: { children: ReactNode }) {
                 {busy ? "登录中…" : "登录"}
               </button>
             </form>
+
+            <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#8d99ad", fontSize: 12.5 }}>
+                <span style={{ flex: 1, height: 1, background: "#edf0f6" }} />
+                <span>或</span>
+                <span style={{ flex: 1, height: 1, background: "#edf0f6" }} />
+              </div>
+              <button
+                type="button"
+                className="gate-submit"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 10,
+                  background: "#fff",
+                  color: "#25395f",
+                  border: "1px solid #d7deea",
+                  boxShadow: "none",
+                }}
+                disabled={busy || googleBusy}
+                onClick={() => void signInWithGoogle()}
+              >
+                <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+                  <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z" />
+                  <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.83.86-3.06.86-2.35 0-4.34-1.58-5.05-3.71H.96v2.33A9 9 0 0 0 9 18z" />
+                  <path fill="#FBBC05" d="M3.95 10.71a5.4 5.4 0 0 1 0-3.42V4.96H.96a9 9 0 0 0 0 8.08l2.99-2.33z" />
+                  <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.42 0 9 0A9 9 0 0 0 .96 4.96l2.99 2.33C4.66 5.16 6.65 3.58 9 3.58z" />
+                </svg>
+                {googleBusy ? "正在等待 Google 授权…" : "使用 Google 登录 / 注册"}
+              </button>
+              {googleBusy && (
+                <button
+                  type="button"
+                  className="gate-invite-toggle"
+                  style={{ justifySelf: "center" }}
+                  onClick={() => {
+                    setGoogleBusy(false);
+                    setNotice("已取消等待；如已在浏览器完成授权，请刷新页面。");
+                  }}
+                >
+                  取消等待
+                </button>
+              )}
+            </div>
 
             <footer className="gate-footer">
               <span>账号由组织管理员创建</span>

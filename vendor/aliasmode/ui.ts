@@ -9,6 +9,8 @@
  * cookie values, or proxy credentials. Same rule the `inspect` command follows.
  */
 
+import { createHash, randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
 import { BrowserLaunchError, platformHomeUrl, type Launcher } from "./launcher.ts";
 import type { ProfileStore } from "./store.ts";
 import type { AutomationHealthStatus } from "./remote-types.ts";
@@ -17,8 +19,8 @@ import type { AppConfigStore } from "./app-config.ts";
 import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from "./fingerprint-audit.ts";
 import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
-import type { NanfuRuntime } from "./nanfu-service.ts";
-import { NANFU_LOGIN_SUFFIX, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuLoginName, isValidNanfuPassword, nanfuPasswordProblem, normalizeNanfuLogin } from "./nanfu-account.ts";
+import { loadNanfuService, type NanfuRuntime } from "./nanfu-service.ts";
+import { NANFU_LOGIN_SUFFIX, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuLoginName, isValidNanfuPassword, nanfuPasswordProblem, normalizeNanfuLogin, type NanfuSession } from "./nanfu-account.ts";
 import { NanfuSyncError, isNanfuUuid } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
 import { NANFU_TRANSFER_ROUTE_PREFIX, handleNanfuTransferRequest } from "./nanfu-transfer-routes.ts";
@@ -369,6 +371,100 @@ function noStoreJson(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
+/**
+ * Google 登录的一次性 PKCE 现场：state 对应 code_verifier，只在内存里活十分钟。
+ * 授权码换取会话必须由本机完成，verifier 绝不下发给前端或浏览器。
+ */
+interface NanfuOAuthPending {
+  verifier: string;
+  redirectTo: string;
+  authorizeUrl: string;
+  createdAt: number;
+}
+
+const NANFU_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const NANFU_OAUTH_PENDING_LIMIT = 32;
+const NANFU_OAUTH_TOKEN_TIMEOUT_MS = 15_000;
+const nanfuOAuthPending = new Map<string, NanfuOAuthPending>();
+
+function nanfuOAuthBase64Url(value: Buffer): string {
+  return value.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function pruneNanfuOAuthPending(now: number): void {
+  for (const [state, pending] of nanfuOAuthPending) {
+    if (now - pending.createdAt > NANFU_OAUTH_STATE_TTL_MS) nanfuOAuthPending.delete(state);
+  }
+}
+
+/**
+ * 回调地址必须落在 Supabase 的 redirect 白名单里。桌面端 sidecar 每次启动
+ * 端口随机，白名单无法预置，所以默认用 tauri.localhost；开发态固定走 1420。
+ * 生产环境还需要 Tauri 深链（nanfu://）或固定回环监听把 code/state 转给
+ * /ui/api/nanfu/oauth-google/callback，可用 NANFU_OAUTH_REDIRECT_TO 覆盖。
+ */
+function nanfuOAuthRedirectTo(req: Request): string {
+  const configured = process.env.NANFU_OAUTH_REDIRECT_TO?.trim();
+  if (configured) {
+    try {
+      const parsed = new URL(configured);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "nanfu:") return configured;
+    } catch {
+      // 配置不是合法地址时回落到内置回调。
+    }
+  }
+  const url = new URL(req.url);
+  // 开发态前端固定跑在 1420；代理转发时 Host 可能变成 sidecar 端口，优先看 Origin。
+  const requestOrigin = req.headers.get("origin") ?? url.origin;
+  try {
+    const parsed = new URL(requestOrigin);
+    if (parsed.port === "1420") return `${parsed.origin}/ui/api/nanfu/oauth-google/callback`;
+  } catch {
+    // Origin 不合法时继续用桌面端默认回调。
+  }
+  return "http://tauri.localhost/ui/api/nanfu/oauth-google/callback";
+}
+
+function escapeHtmlText(value: string): string {
+  const entities: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  return value.replace(/[&<>"']/g, (char) => entities[char] ?? char);
+}
+
+/** 浏览器最终落到这个页面，给中文结果提示后由用户回到客户端。 */
+function nanfuOAuthPage(status: number, title: string, detail: string): Response {
+  const html = `<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtmlText(title)}</title></head>
+<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f4f7fb;color:#12275a;font-family:system-ui,-apple-system,'Microsoft YaHei',sans-serif;">
+<main style="width:min(440px,calc(100vw - 48px));padding:32px;border-radius:16px;background:#fff;box-shadow:0 18px 50px rgba(18,39,90,.12);text-align:center;">
+<h1 style="margin:0 0 12px;font-size:20px;">${escapeHtmlText(title)}</h1>
+<p style="margin:0;line-height:1.7;color:#5b6b88;font-size:14px;">${escapeHtmlText(detail)}</p>
+<p style="margin:20px 0 0;font-size:12.5px;color:#8d99ad;">可以关闭此页面，回到南孚浏览器继续操作。</p>
+</main>
+</body>
+</html>`;
+  return new Response(html, { status, headers: { "Cache-Control": "no-store", "Content-Type": "text/html; charset=utf-8" } });
+}
+
+/** 桌面端没有对前端开放 shell 插件，改由 sidecar 调系统默认浏览器。 */
+function openSystemBrowser(url: string): Promise<boolean> {
+  // Windows 用 rundll32 直接交给协议处理器，避免经过 cmd 时把 URL 里的 & 当成命令分隔符。
+  const command = process.platform === "win32" ? "rundll32.exe" : process.platform === "darwin" ? "open" : "xdg-open";
+  const args = process.platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(command, args, { detached: true, windowsHide: true, stdio: "ignore" });
+      child.once("error", () => resolve(false));
+      child.once("spawn", () => {
+        child.unref();
+        resolve(true);
+      });
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
 /** 「名字 副本」，重名时依次「名字 副本 2」「名字 副本 3」，保证克隆出的窗口名字不撞车。 */
 function cloneProfileName(source: string, taken: (name: string) => boolean): string {
   const base = `${source} 副本`;
@@ -635,6 +731,34 @@ export async function handleUiRequest(
   const { pathname } = new URL(req.url);
   if (!pathname.startsWith("/ui/api/")) return null;
 
+  // Local profiles never reach the nanfu_environments trigger that enforces
+  // env_quota, so mirror that limit here. The signed-in account's organization
+  // is the quota source; without it (signed out, offline) local windows stay
+  // usable.
+  async function enforceWindowQuota(
+    addCount: number,
+  ): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
+    const nanfu = options.nanfu;
+    if (!nanfu || addCount <= 0) return { ok: true };
+    try {
+      if (!nanfu.account.state().authenticated) return { ok: true };
+      const organization = await nanfu.client.orgMe();
+      if (!organization) return { ok: true };
+      const quota = organization.quota;
+      if (!Number.isFinite(quota) || quota <= 0) return { ok: true };
+      const used = store.listProfiles().length;
+      if (used + addCount <= quota) return { ok: true };
+      return {
+        ok: false,
+        status: 409,
+        error: `已到窗口上限（当前 ${used} / 上限 ${quota}），请先删除或联系管理员调整配额`,
+      };
+    } catch {
+      // The account service is unreachable: keep local windows usable.
+      return { ok: true };
+    }
+  }
+
   // Transfers and `.nanfu-env` packages keep their own prefix so the account
   // and organization handlers below stay untouched.
   if (pathname.startsWith(NANFU_TRANSFER_ROUTE_PREFIX)) {
@@ -665,7 +789,10 @@ export async function handleUiRequest(
     const nanfu = options.nanfu;
     if (!nanfu) return noStoreJson({ ok: false, error: "南孚账号服务未配置" }, 503);
     const origin = req.headers.get("origin");
-    if (origin && origin !== new URL(req.url).origin) return noStoreJson({ ok: false, error: "禁止跨站访问账号" }, 403);
+    // Google 回调是浏览器从 Supabase 直接跳过来的顶层导航，Origin 不是本机；
+    // 这条路由靠一次性 state 防伪，不能套用同源检查。
+    const googleCallback = pathname === "/ui/api/nanfu/oauth-google/callback";
+    if (!googleCallback && origin && origin !== new URL(req.url).origin) return noStoreJson({ ok: false, error: "禁止跨站访问账号" }, 403);
     if (req.method === "POST") {
       const rejected = rejectUntrustedJsonMutation(req);
       if (rejected) {
@@ -708,6 +835,172 @@ export async function handleUiRequest(
       void client.publishTransferKey(userId, loadOrCreateTransferIdentity(paths.root).publicKey).catch(() => {});
     };
     try {
+      // 第一步：生成带 PKCE 的 Google 授权地址。verifier 只留在本进程内，
+      // 浏览器拿到的只有 code_challenge 和一次性的 state。
+      if (action === "oauth-google/start" && req.method === "GET") {
+        if (account.state().authenticated) return noStoreJson({ ok: false, error: "请先退出当前南孚账号" }, 409);
+        let service: ReturnType<typeof loadNanfuService>;
+        try {
+          service = loadNanfuService({ file: options.paths ? join(options.paths.root, "nanfu-service.json") : undefined });
+        } catch {
+          return noStoreJson({ ok: false, error: "南孚账号服务配置无效，请检查 nanfu-service.json" }, 503);
+        }
+        const now = Date.now();
+        pruneNanfuOAuthPending(now);
+        if (nanfuOAuthPending.size >= NANFU_OAUTH_PENDING_LIMIT) {
+          const oldest = nanfuOAuthPending.keys().next().value;
+          if (typeof oldest === "string") nanfuOAuthPending.delete(oldest);
+        }
+        const verifier = nanfuOAuthBase64Url(randomBytes(32));
+        const state = nanfuOAuthBase64Url(randomBytes(32));
+        const challenge = nanfuOAuthBase64Url(createHash("sha256").update(verifier).digest());
+        const redirectTo = nanfuOAuthRedirectTo(req);
+        const authorize = new URL(`${service.url}/auth/v1/authorize`);
+        authorize.searchParams.set("provider", "google");
+        authorize.searchParams.set("redirect_to", redirectTo);
+        authorize.searchParams.set("code_challenge", challenge);
+        authorize.searchParams.set("code_challenge_method", "s256");
+        authorize.searchParams.set("state", state);
+        const pending: NanfuOAuthPending = { verifier, redirectTo, authorizeUrl: authorize.toString(), createdAt: now };
+        nanfuOAuthPending.set(state, pending);
+        return noStoreJson({
+          ok: true,
+          url: pending.authorizeUrl,
+          state,
+          redirectTo,
+          expiresAt: now + NANFU_OAUTH_STATE_TTL_MS,
+        });
+      }
+
+      // 第二步：桌面端由 sidecar 用系统默认浏览器打开授权页。
+      // 这里只接受上一步生成并仍在有效期内的 state，避免被当成任意 URL 跳板。
+      if (action === "oauth-google/open" && req.method === "POST") {
+        const body = await req.json().catch(() => null) as { state?: unknown } | null;
+        const state = typeof body?.state === "string" ? body.state : "";
+        const pending = state ? nanfuOAuthPending.get(state) : undefined;
+        if (!pending || Date.now() - pending.createdAt > NANFU_OAUTH_STATE_TTL_MS) {
+          if (state) nanfuOAuthPending.delete(state);
+          return noStoreJson({ ok: false, error: "Google 授权链接已失效，请重新发起" }, 410);
+        }
+        const opened = await openSystemBrowser(pending.authorizeUrl);
+        return noStoreJson({ ok: true, opened, url: pending.authorizeUrl });
+      }
+
+      // 第三步：浏览器带着 code/state 回到这里换会话。
+      // 注意：tauri.localhost 与 1420 都只是白名单占位，生产端还需要 Tauri 深链
+      // （nanfu://）或固定回环监听，把 code/state 转发到本路由才能真正闭环。
+      if (action === "oauth-google/callback" && (req.method === "GET" || req.method === "POST")) {
+        let code = "";
+        let state = "";
+        let denied = "";
+        if (req.method === "GET") {
+          const callbackUrl = new URL(req.url);
+          code = callbackUrl.searchParams.get("code") ?? "";
+          state = callbackUrl.searchParams.get("state") ?? "";
+          denied = callbackUrl.searchParams.get("error_description") ?? callbackUrl.searchParams.get("error") ?? "";
+        } else {
+          const body = await req.json().catch(() => null) as {
+            code?: unknown; state?: unknown; error?: unknown; error_description?: unknown;
+          } | null;
+          code = typeof body?.code === "string" ? body.code : "";
+          state = typeof body?.state === "string" ? body.state : "";
+          denied = typeof body?.error_description === "string"
+            ? body.error_description
+            : typeof body?.error === "string" ? body.error : "";
+        }
+        const pending = state ? nanfuOAuthPending.get(state) : undefined;
+        if (!pending) return nanfuOAuthPage(400, "Google 授权已失效", "请回到南孚浏览器，重新点击「使用 Google 登录 / 注册」。");
+        if (denied) {
+          nanfuOAuthPending.delete(state);
+          return nanfuOAuthPage(400, "Google 授权未完成", "授权被取消或未获批准，请回到南孚浏览器重新发起 Google 登录。");
+        }
+        if (!code) return nanfuOAuthPage(400, "Google 授权未完成", "没有收到授权码，请重新发起登录。");
+        if (Date.now() - pending.createdAt > NANFU_OAUTH_STATE_TTL_MS) {
+          nanfuOAuthPending.delete(state);
+          return nanfuOAuthPage(410, "Google 授权已过期", "请回到南孚浏览器重新发起 Google 登录。");
+        }
+        // 授权码只能兑换一次，先丢弃现场；失败时让用户重新发起。
+        nanfuOAuthPending.delete(state);
+        if (account.state().authenticated) {
+          return nanfuOAuthPage(409, "已有登录账号", "请先在应用中退出当前南孚账号，再重新发起 Google 登录。");
+        }
+        // 兑换期间若有人完成了别的登录，accept 会凭这个代次拒绝覆盖。
+        const revision = account.revision();
+        try {
+          let service: ReturnType<typeof loadNanfuService>;
+          try {
+            service = loadNanfuService({ file: options.paths ? join(options.paths.root, "nanfu-service.json") : undefined });
+          } catch {
+            return nanfuOAuthPage(503, "Google 登录暂时不可用", "南孚账号服务配置无效，请回到应用联系管理员。");
+          }
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), NANFU_OAUTH_TOKEN_TIMEOUT_MS);
+          let response: Response | null = null;
+          let body: any = null;
+          try {
+            response = await fetch(`${service.url}/auth/v1/token?grant_type=pkce`, {
+              method: "POST",
+              headers: { "content-type": "application/json", apikey: service.publishableKey },
+              body: JSON.stringify({ auth_code: code, code_verifier: pending.verifier }),
+              signal: controller.signal,
+            });
+            body = await response.json().catch(() => null);
+          } catch {
+            return nanfuOAuthPage(503, "Google 登录暂时不可用", "无法连接南孚账号服务，请稍后回到应用重试。");
+          } finally {
+            clearTimeout(timer);
+          }
+          const user = body?.user;
+          if (
+            !response || !response.ok
+            || typeof body?.access_token !== "string" || typeof body?.refresh_token !== "string"
+            || !user || typeof user.id !== "string" || typeof user.email_confirmed_at !== "string"
+          ) {
+            return nanfuOAuthPage(401, "Google 授权未完成", "账号服务未返回有效会话，请回到南孚浏览器重新发起 Google 登录。");
+          }
+          const expiresIn = Number(body.expires_in);
+          if (!Number.isFinite(expiresIn) || expiresIn <= 0) {
+            return nanfuOAuthPage(401, "Google 授权未完成", "账号服务未返回有效的会话有效期，请重试。");
+          }
+          const session: NanfuSession = {
+            accessToken: body.access_token,
+            refreshToken: body.refresh_token,
+            expiresIn,
+            expiresAt: Date.now() + expiresIn * 1000,
+            user: {
+              id: user.id,
+              ...(typeof user.email === "string" ? { email: user.email } : {}),
+              emailConfirmedAt: user.email_confirmed_at,
+            },
+          };
+          // 账号运行时目前只公开密码登录入口；accept 会校验会话代次，并把刷新令牌
+          // 写入原有凭据存储（Windows 上即 DPAPI），这里借它接管 OAuth 会话。
+          const host = account as unknown as { accept?: (value: NanfuSession, revision: number) => Promise<void> };
+          if (typeof host.accept !== "function") {
+            return nanfuOAuthPage(501, "当前版本暂不支持 Google 登录", "请升级南孚浏览器后重试。");
+          }
+          await host.accept(session, revision);
+          account.assertCurrent(revision);
+          const selfJoin = await joinOrganization();
+          // 会话已经生效，转移密钥发布失败只影响后续转移，不能把登录判成失败。
+          try {
+            publishTransferKey();
+          } catch {
+            // 忽略本机转移密钥写入失败。
+          }
+          return nanfuOAuthPage(
+            200,
+            "Google 登录成功",
+            selfJoin.ok ? "已登录南孚账号，请关闭此页面并回到南孚浏览器。" : "已登录南孚账号，但暂时未能自动加入组织，请回到应用稍后重试。",
+          );
+        } catch (error) {
+          if (error instanceof NanfuAccountChangedError) {
+            return nanfuOAuthPage(409, "账号状态已变化", "请回到南孚浏览器重新点击「使用 Google 登录 / 注册」。");
+          }
+          return nanfuOAuthPage(503, "Google 登录暂时不可用", "南孚账号服务暂时不可用，请稍后回到应用重试。");
+        }
+      }
+
       if (action === "state" && req.method === "GET") {
         return noStoreJson({ ok: true, state: account.state(), persistent });
       }
@@ -1642,6 +1935,13 @@ export async function handleUiRequest(
         const { id } = await remote.createProfile(input);
         return Response.json({ ok: true, id });
       }
+      // Local creation writes straight to this device's store, which never
+      // reaches the cloud trigger: enforce the same window quota first. Cloud
+      // mode is already covered by that trigger.
+      if (!options.cloudBrowser) {
+        const quota = await enforceWindowQuota(1);
+        if (!quota.ok) return noStoreJson({ ok: false, error: quota.error }, quota.status);
+      }
       const profile = buildNewProfile(input, (id) => !!store.getProfile(id));
       if (!options.cloudBrowser) store.applyGroupExtensionDefaults(profile, null, false);
       // Best-effort: match the browser clock to the proxy's exit location. A
@@ -1680,6 +1980,9 @@ export async function handleUiRequest(
       return noStoreJson({ ok: false, error: "每个环境的克隆数量须为 1 至 20" }, 400);
     }
     const ids = [...new Set(body.ids as string[])];
+    // Every copy becomes a new local window; check the whole batch up front.
+    const quota = await enforceWindowQuota(copies * ids.length);
+    if (!quota.ok) return noStoreJson({ ok: false, error: quota.error }, quota.status);
     const created: Array<{ id: string; name: string; sourceId: string }> = [];
     const skipped: Array<{ id: string; reason: "not-found" | "running" }> = [];
     const failed: Array<{ id: string; error: string }> = [];
