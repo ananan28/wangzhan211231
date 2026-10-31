@@ -102,7 +102,7 @@ function AddAccount({ members, overview, owner, admin, currentUserId, busy, onMu
     const email = text(data, "email").toLowerCase();
     const password = String(data.get("password") ?? "");
     const validLogin = email.includes("@") ? /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
-      : Array.from(email).length >= 2 && Array.from(email).length <= 63 && !/[\s@\u0000-\u001f\u007f-\u009f]/u.test(email);
+      : Array.from(email).length >= 2 && Array.from(email).length <= 63 && !/[\s@^@-^_\u007f-^_]/u.test(email);
     const problem = !validLogin ? "登录名需为 2 至 63 个字符，支持中文，不能包含空白、@ 或控制字符；邮箱须填写完整。" : passwordProblem(password);
     setInputError(problem);
     if (problem || busy) return;
@@ -110,7 +110,7 @@ function AddAccount({ members, overview, owner, admin, currentUserId, busy, onMu
       email,
       password,
       identity: kind === "admin" ? "admin" : "member",
-      quota: Math.max(0, Math.trunc(Number(text(data, "quota") || "0")) || 0),
+      quota: Math.min(100, Math.max(0, Math.trunc(Number(text(data, "quota") || "0")) || 0)),
       managerUserId: kind === "sub" ? parent || undefined : undefined,
       roleId: text(data, "roleId") || undefined,
       groupIds: data.getAll("groupIds").map(String).filter(Boolean),
@@ -135,7 +135,7 @@ function AddAccount({ members, overview, owner, admin, currentUserId, busy, onMu
       <option value="">默认权限</option>
       {overview.roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
     </select></label>
-    <label className="fld"><span>窗口配额（0 不限）</span><input name="quota" type="number" min="0" step="1" defaultValue={0} disabled={busy} /></label>
+    <label className="fld"><span>窗口配额（0 不限，最多 100）</span><input name="quota" type="number" min="0" max="100" step="1" defaultValue={0} disabled={busy} /></label>
     {!!overview.groups.length && <GroupPicker key={overview.groups.length} groups={overview.groups} granted={[]} legend="授权分组" disabled={busy} />}
     <button className="btn primary" type="submit" disabled={busy || (kind === "sub" && !parent)}>添加账号</button>
     {inputError && <p className="modal-err" role="alert">{inputError}</p>}
