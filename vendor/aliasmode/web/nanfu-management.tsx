@@ -108,7 +108,7 @@ function AddAccount({ members, overview, owner, admin, currentUserId, busy, onMu
       const email = text(data, "email").toLowerCase();
       const password = String(data.get("password") ?? "");
       const validLogin = email.includes("@") ? /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
-        : Array.from(email).length >= 2 && Array.from(email).length <= 63 && !/[\s@\u0000-\u001f\u007f-\u009f]/u.test(email);
+        : Array.from(email).length >= 2 && Array.from(email).length <= 63 && !/[\s@^@-^_\u007f-^_]/u.test(email);
       const problem = !validLogin ? "登录名需为 2 至 63 个字符，支持中文，不能包含空白、@ 或控制字符；邮箱须填写完整。" : passwordProblem(password);
       setInputError(problem);
       if (problem || busy) return;
@@ -301,8 +301,13 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
   const inviteQuotaMax = organization.planQuota > 0 ? Math.max(0, organization.planQuota - allocated) : 2147483647;
   const orgQuotaFull = organization.planQuota > 0 && used >= organization.planQuota;
   const overAllocated = organization.planQuota > 0 && allocated > organization.planQuota;
+  // member 身份登录时只看自己与自己的子账号：把所有者和管理员从成员列表里过滤掉；
+  // owner/admin 登录仍查看完整列表。
+  const scoped = !admin;
+  const roster = scoped ? overview.members.filter(member => member.identity !== "owner" && member.identity !== "admin") : overview.members;
+  const visibleGroups = scoped ? groupOrder.filter(group => group !== "owner" && group !== "admin") : groupOrder;
   const groups: Record<NanfuAccountGroup, NanfuMember[]> = { owner: [], admin: [], member: [], sub: [] };
-  for (const member of overview.members) groups[nanfuAccountGroup(member)].push(member);
+  for (const member of roster) groups[nanfuAccountGroup(member)].push(member);
   for (const key of groupOrder) groups[key].sort((a, b) => memberLabel(a).localeCompare(memberLabel(b)));
   const copy = async (code: string) => {
     try { await navigator.clipboard.writeText(code); setCopyStatus("邀请码已复制"); }
@@ -322,13 +327,12 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
       <header><h3>成员与层级</h3></header>
       <div className="card-body">
         <p className="nanfu-staff-counts">
-          <span>所有者 {groups.owner.length}</span><span>管理员 {groups.admin.length}</span>
-          <span>成员 {groups.member.length}</span><span>子账号 {groups.sub.length}</span>
+          {visibleGroups.map(group => <span key={group}>{groupNames[group]} {groups[group].length}</span>)}
           <span>组织窗口 {used} / {organization.planQuota === 0 ? "不限" : organization.planQuota}</span>
         </p>
         {overAllocated && <p className="modal-err" role="alert">成员配额合计 {allocated} 已超过组织窗口 {organization.planQuota}：服务端按实际用量拦截，新建环境会失败。请下调成员配额。</p>}
         {!overAllocated && orgQuotaFull && <p className="modal-err" role="alert">组织窗口已用满（{used} / {organization.planQuota}），新建或接收环境会被服务端拒绝；本机窗口不计入组织额度。</p>}
-        {groupOrder.map(group => <MemberGroup key={group} group={group} members={groups[group]} {...memberProps} />)}
+        {visibleGroups.map(group => <MemberGroup key={group} group={group} members={groups[group]} {...memberProps} />)}
       </div>
     </section>
 
