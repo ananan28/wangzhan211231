@@ -108,7 +108,7 @@ function AddAccount({ members, overview, owner, admin, currentUserId, busy, onMu
       const email = text(data, "email").toLowerCase();
       const password = String(data.get("password") ?? "");
       const validLogin = email.includes("@") ? /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
-        : Array.from(email).length >= 2 && Array.from(email).length <= 63 && !/[\s@^@-^_\u007f-^_]/u.test(email);
+        : Array.from(email).length >= 2 && Array.from(email).length <= 63 && !/[\s@\u0000-\u001f\u007f-\u009f]/u.test(email);
       const problem = !validLogin ? "登录名需为 2 至 63 个字符，支持中文，不能包含空白、@ 或控制字符；邮箱须填写完整。" : passwordProblem(password);
       setInputError(problem);
       if (problem || busy) return;
