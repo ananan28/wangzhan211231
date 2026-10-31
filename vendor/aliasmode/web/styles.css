@@ -1975,3 +1975,18 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 .nanfu-account-page .nanfu-hint { margin: 12px 0 0; font-size: 12.5px; line-height: 1.7; color: #7b8798; }
 .nanfu-account-page .nanfu-table-wrap { border: 1px solid #e6ebf3; border-radius: 12px; overflow: auto; }
 .nanfu-account-page .nanfu-table th { background: #f6f8fc; font-size: 12.5px; color: #5b6b88; }
+
+/* ── 首页仪表盘 ───────────────────────────────────────────── */
+.home-dashboard { display: flex; flex-direction: column; gap: 18px; max-width: 720px; }
+.home-hero { display: flex; align-items: center; gap: 14px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.home-hero .gate-logo { width: 46px; height: 46px; border-radius: 10px; background: #2457D6; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; flex: none; }
+.home-hero h2 { margin: 0 0 4px; font-size: 18px; }
+.home-hero p { margin: 0; color: var(--muted); }
+.home-stats { display: flex; gap: 14px; }
+.home-stat { flex: 1; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.home-stat-num { display: block; font-size: 26px; font-weight: 700; }
+.home-stat-label { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; word-break: break-all; }
+.home-help { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.home-help h3 { margin: 0 0 8px; font-size: 14px; }
+.home-help ol { margin: 0; padding-left: 20px; color: var(--muted); line-height: 1.9; }
+.home-actions { display: flex; gap: 10px; }

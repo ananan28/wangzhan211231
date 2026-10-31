@@ -179,15 +179,16 @@ const PAGE_SIZES = [25, 50, 100, 200];
 // 南孚版必须登录使用：本地模式不提供，也不接受遗留的本地配置。
 const ALLOW_LOCAL_MODE = false;
 
-const PAGE_TITLES: Record<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "nanfu" | "nanfu-staff" | "nanfu-transfer", string> = {
-  profiles: "Profiles",
-  scripts: "Scripts",
-  settings: "Settings",
-  extensions: "Extensions",
-  proxies: "Proxies",
-  trash: "Trash",
-  nanfu: "南孚账号与组织",
-  "nanfu-staff": "员工管理",
+const PAGE_TITLES: Record<"home" | "profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "nanfu" | "nanfu-staff" | "nanfu-transfer", string> = {
+  home: "首页",
+  profiles: "浏览器窗口",
+  scripts: "脚本",
+  settings: "设置",
+  extensions: "扩展",
+  proxies: "代理中心",
+  trash: "回收站",
+  nanfu: "个人管理",
+  "nanfu-staff": "账号管理",
   "nanfu-transfer": "环境转移",
 };
 
@@ -404,6 +405,7 @@ const ICONS = {
   sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>,
   moon: <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />,
   help: <><circle cx="12" cy="12" r="9" /><path d="M9.4 9.1a2.7 2.7 0 015.3.7c0 1.8-2.7 2.2-2.7 3.7" /><path d="M12 16.8v.3" /></>,
+  home: <><path d="M4 11l8-7 8 7" /><path d="M6 10v9h12v-9" /></>,
 } as const;
 
 type IconName = keyof typeof ICONS;
@@ -1366,7 +1368,7 @@ function App() {
   // "profiles" is the roster; "settings" replaces it in the same content area
   // rather than opening a dialog — Settings outgrew a modal. New profile and
   // Edit stay dialogs: short forms, and a page felt like too much ceremony.
-  const [view, setView] = useState<"profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "nanfu" | "nanfu-staff" | "nanfu-transfer">("profiles");
+  const [view, setView] = useState<"home" | "profiles" | "scripts" | "settings" | "extensions" | "proxies" | "trash" | "nanfu" | "nanfu-staff" | "nanfu-transfer">("home");
   const [scriptRunOpen, setScriptRunOpen] = useState(false);
   const [scriptRunProfiles, setScriptRunProfiles] = useState<UiProfile[]>([]);
   const [showCreate, setShowCreate] = useState(false);
@@ -3687,6 +3689,15 @@ function App() {
         <nav className="sidenav" aria-label={t("Sections")}>
           <button
             type="button"
+            className={`navitem${view === "home" ? " active" : ""}`}
+            data-tip="首页"
+            title="首页"
+            onClick={() => setView("home")}
+          >
+            <Icon name="home" /><span className="navlabel">首页</span>
+          </button>
+          <button
+            type="button"
             className={`navitem${view === "profiles" && group === "all" && !sharedOnly ? " active" : ""}`}
             data-tip={t("All profiles")}
             title={t("All profiles")}
@@ -3698,43 +3709,6 @@ function App() {
           {isCloudMode && sharedProfiles.length > 0 && <button type="button" className={`navitem${view === "profiles" && sharedOnly ? " active" : ""}`} title={t("Shared with me")} onClick={() => { setGroup("all"); setSharedOnly(true); setView("profiles"); }}>
             <Icon name="user" /><span className="navlabel">{t("Shared with me")}</span><span className="cnt">{sharedProfiles.length}</span>
           </button>}
-          {!appMode?.legacyRemote && <>
-            <button type="button" className={`navitem${view === "proxies" ? " active" : ""}`} data-tip={t("Proxies")} title={t("Proxies")} onClick={() => setView("proxies")}>
-              <Icon name="activity" /><span className="navlabel">{t("Proxies")}</span>
-            </button>
-            <button type="button" className={`navitem${view === "trash" ? " active" : ""}`} data-tip={t("Trash")} title={t("Trash")} onClick={() => setView("trash")}>
-              <Icon name="trash" /><span className="navlabel">{t("Trash")}</span>
-            </button>
-          </>}
-          <button
-            type="button"
-            className={`navitem${view === "scripts" ? " active" : ""}`}
-            data-tip={t("Scripts")}
-            title={t("Scripts")}
-            onClick={() => setView("scripts")}
-          >
-            <Icon name="file" /><span className="navlabel">{t("Scripts")}</span>
-          </button>
-          <button
-            type="button"
-            className={`navitem${view === "extensions" ? " active" : ""}`}
-            data-tip={t("Manage extensions")}
-            title={t("Manage extensions")}
-            onClick={() => { setExtErr(null); setView("extensions"); }}
-          >
-            <Icon name="puzzle" /><span className="navlabel">{t("Manage extensions")}</span>
-            {extensions.length > 0 && <span className="cnt">{extensions.length}</span>}
-          </button>
-          <button
-            type="button"
-            className="navitem"
-            title={t("View detailed logs")}
-            onClick={() => {
-              setLogErr(null);
-              setLogView(null);
-              fetchLogs().then(setLogView).catch((e) => setLogErr(e instanceof Error ? e.message : String(e)));
-            }}
-          ><Icon name="logs" /><span className="navlabel">{t("Logs")}</span></button>
         </nav>
 
         <div className="sidesection">
@@ -3816,31 +3790,61 @@ function App() {
           </>}
         </div>
 
-        <div className="sidefoot">
-          <button type="button" className={`navitem${view === "nanfu" ? " active" : ""}`} title="南孚账号与组织" onClick={() => setView("nanfu")}>
-            <Icon name="user" /><span className="navlabel">南孚账号与组织</span>
+        <nav className="sidenav" aria-label={t("Sections")}>
+          {!appMode?.legacyRemote && <>
+            <button type="button" className={`navitem${view === "proxies" ? " active" : ""}`} data-tip={t("Proxies")} title={t("Proxies")} onClick={() => setView("proxies")}>
+              <Icon name="activity" /><span className="navlabel">{t("Proxies")}</span>
+            </button>
+          </>}
+          <button
+            type="button"
+            className={`navitem${view === "scripts" ? " active" : ""}`}
+            data-tip={t("Scripts")}
+            title={t("Scripts")}
+            onClick={() => setView("scripts")}
+          >
+            <Icon name="file" /><span className="navlabel">{t("Scripts")}</span>
           </button>
-          <button type="button" className={`navitem${view === "nanfu-staff" ? " active" : ""}`} title="员工管理：添加员工与管理员" onClick={() => setView("nanfu-staff")}>
-            <Icon name="profiles" /><span className="navlabel">员工管理</span>
+          <button
+            type="button"
+            className={`navitem${view === "extensions" ? " active" : ""}`}
+            data-tip={t("Manage extensions")}
+            title={t("Manage extensions")}
+            onClick={() => { setExtErr(null); setView("extensions"); }}
+          >
+            <Icon name="puzzle" /><span className="navlabel">{t("Manage extensions")}</span>
+            {extensions.length > 0 && <span className="cnt">{extensions.length}</span>}
+          </button>
+          <button type="button" className={`navitem${view === "trash" ? " active" : ""}`} data-tip={t("Trash")} title={t("Trash")} onClick={() => setView("trash")}>
+            <Icon name="trash" /><span className="navlabel">{t("Trash")}</span>
+          </button>
+        </nav>
+
+        <div className="sidefoot">
+          <button type="button" className={`navitem${view === "nanfu" ? " active" : ""}`} title="个人管理" onClick={() => setView("nanfu")}>
+            <Icon name="user" /><span className="navlabel">个人管理</span>
+          </button>
+          <button type="button" className={`navitem${view === "nanfu-staff" ? " active" : ""}`} title="账号管理：添加员工与管理员" onClick={() => setView("nanfu-staff")}>
+            <Icon name="profiles" /><span className="navlabel">账号管理</span>
           </button>
           <button type="button" className={`navitem${view === "nanfu-transfer" ? " active" : ""}`} title="环境转移：把整个环境连同登录态搬到对方电脑" onClick={() => setView("nanfu-transfer")}>
             <Icon name="import" /><span className="navlabel">环境转移</span>
           </button>
-          <a
-            className="navitem"
-            href="https://ananan28.github.io/nanfu-site/"
-            target="_blank"
-            rel="noreferrer"
-            data-tip={t("Support")}
-            title={t("Support")}
-          >
-            <Icon name="help" /><span className="navlabel">{t("Support")}</span>
-          </a>
           <button type="button" className={`navitem${view === "settings" ? " active" : ""}`} data-tip={t("Settings")} title={t("Settings")} onClick={openAccountSettings}>
             <Icon name="settings" /><span className="navlabel">{t("Settings")}</span>
           </button>
           <div className="sidecredit">
             <p className="footer-mark" aria-hidden="true">南孚浏览器</p>
+            <a
+              className="navitem"
+              href="https://ananan28.github.io/nanfu-site/"
+              target="_blank"
+              rel="noreferrer"
+              data-tip={t("Support")}
+              title={t("Support")}
+            >
+              <Icon name="help" /><span className="navlabel">{t("Support")}</span>
+            </a>
           </div>
         </div>
         {modeErr && <div className="mode-error" role="alert">{modeErr}</div>}
@@ -3916,8 +3920,8 @@ function App() {
           >
             <span className="avatar"><Icon name="user" /></span>
             <span className="who">
-              <b>{isCloudMode ? cloudAuth?.user?.email ?? "Cloud account" : "Local workspace"}</b>
-              <span>{isCloudMode ? cloudAuth?.workspace?.role ?? "member" : "No account"}</span>
+              <b>{nanfuAccount?.authenticated ? (nanfuAccount.email ?? "南孚账号") : "未登录"}</b>
+              <span>{nanfuAccount?.authenticated ? "南孚账号" : "请登录"}</span>
             </span>
             <Icon name="chevronRight" className="sm" />
           </button>
@@ -4007,7 +4011,39 @@ function App() {
         <TrashPage key={`trash:${appMode?.mode}:${cloudAuth?.user?.id ?? ""}:${cloudAuth?.workspace?.id ?? ""}`}
           active={view === "trash"} onChanged={load} folderTree={folders} />
       </>}
-      {view === "profiles" ? (
+      {view === "home" ? (
+        <div className="workspace home-dashboard">
+          <div className="home-hero">
+            <div className="gate-logo" aria-hidden="true">南</div>
+            <div>
+              <h2>南孚浏览器</h2>
+              <p>多账号指纹隔离 · 环境云端同步 · 换机一键转移</p>
+            </div>
+          </div>
+          <div className="home-stats">
+            <div className="home-stat">
+              <span className="home-stat-num">{profiles.length}</span>
+              <span className="home-stat-label">窗口数量</span>
+            </div>
+            <div className="home-stat">
+              <span className="home-stat-num">{nanfuAccount?.authenticated ? "已登录" : "未登录"}</span>
+              <span className="home-stat-label">当前账号 {nanfuAccount?.email ?? ""}</span>
+            </div>
+          </div>
+          <div className="home-help">
+            <h3>使用说明</h3>
+            <ol>
+              <li>在「浏览器窗口」新建窗口，每个窗口独立指纹、独立代理。</li>
+              <li>窗口与环境保存在云端，换电脑用「环境转移」直接搬走。</li>
+              <li>管理员在「个人管理 → 账号管理」给成员分配窗口配额。</li>
+            </ol>
+          </div>
+          <div className="home-actions">
+            <button className="btn primary" type="button" onClick={() => selectFolder("all")}><Icon name="profiles" className="sm" />浏览器窗口</button>
+            <button className="btn" type="button" onClick={() => setView("nanfu-staff")}><Icon name="user" className="sm" />账号管理</button>
+          </div>
+        </div>
+      ) : view === "profiles" ? (
       <div className="workspace">
         {(breadcrumb || sharedOnly) && <nav className="folder-breadcrumb" aria-label={t("Folder path")}>
           <button className="btn ghost xs" onClick={() => selectFolder("all")}>{t("All profiles")}</button>
