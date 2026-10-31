@@ -3065,9 +3065,19 @@ export async function handleUiRequest(
       if (action[2] === "close") {
         const launch = store.getLaunch(id);
         await launcher.captureLocalSession(id);
-        return (await launcher.stop(id, launch ?? undefined))
-          ? Response.json({ ok: true })
-          : Response.json({ ok: false, error: "browser teardown unconfirmed" }, { status: 500 });
+        const stopped = await launcher.stop(id, launch ?? undefined);
+        if (!stopped) {
+          return Response.json({ ok: false, error: "browser teardown unconfirmed" }, { status: 500 });
+        }
+        // 云端为主：关闭即清可重建缓存（Cache、Code Cache、GPUCache、Service Worker 等），
+        // 登录态（Cookies、Local Storage、IndexedDB、Local Extension Settings）保留，换机可从云端拉回。
+        // 复用 launcher 的清理逻辑（内部有路径防越界与"未停止不删"校验）；清不掉忽略，不影响关闭成功。
+        try {
+          await launcher.clearCache(id);
+        } catch {
+          /* 清理失败不影响关闭成功 */
+        }
+        return Response.json({ ok: true });
       }
       const r = await launcher.clearCache(id);
       return Response.json({ ok: true, cleared: r.cleared, freedBytes: r.freedBytes });
