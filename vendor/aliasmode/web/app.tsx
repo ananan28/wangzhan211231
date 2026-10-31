@@ -1424,6 +1424,7 @@ function App() {
   const [selfCheckProfile, setSelfCheckProfile] = useState<{ id: string; name: string } | null>(null);
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "running">("all");
   const [profilePage, setProfilePage] = useState(0);
   const [pageSize, setPageSize] = useState(readPageSize);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "no", dir: 1 });
@@ -2497,6 +2498,7 @@ function App() {
   const filtered = useMemo(() => {
     const matched = profiles.filter((p) => {
       if (sharedOnly ? !sharedProfiles.includes(p) : group !== "all" && !selectedScope.has(p.group)) return false;
+      if (statusFilter === "running" && !p.running) return false;
       if (q) {
         const needle = q.toLowerCase();
         const no = numbering.get(p.id)?.value ?? "";
@@ -2519,12 +2521,12 @@ function App() {
       if (left > right) return sort.dir;
       return a.id.localeCompare(b.id);
     });
-  }, [profiles, group, sharedOnly, sharedProfiles, selectedScope, q, sort, numbering]);
+  }, [profiles, group, sharedOnly, sharedProfiles, selectedScope, q, sort, numbering, statusFilter]);
 
   const profilePageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const visibleProfilePage = Math.min(profilePage, profilePageCount - 1);
   const visibleProfiles = filtered.slice(visibleProfilePage * pageSize, (visibleProfilePage + 1) * pageSize);
-  useEffect(() => setProfilePage(0), [q, group, sharedOnly, pageSize]);
+  useEffect(() => setProfilePage(0), [q, group, sharedOnly, pageSize, statusFilter]);
 
   const editSerial = editId ? profiles.find((profile) => profile.id === editId)?.serial ?? null : null;
   const editRunning = editId ? profiles.find((profile) => profile.id === editId)?.running === true : false;
@@ -4110,6 +4112,15 @@ function App() {
             {q && <button type="button" className="clear" aria-label={t("Clear search")} onClick={() => setQ("")}><Icon name="close" className="sm" /></button>}
           </div>
           {runtimeDownloads.length > 0 && <RuntimeDownloadProgressView downloads={runtimeDownloads} />}
+          <span className="spacer" />
+          <button className="btn primary" type="button" disabled={!canEditCloud} onClick={openCreate}>
+            <Icon name="plus" className="sm" />创建窗口
+          </button>
+        </div>
+
+        <div className="tabs" role="tablist" aria-label="窗口筛选">
+          <button type="button" role="tab" aria-selected={statusFilter === "all"} className={`tab${statusFilter === "all" ? " active" : ""}`} onClick={() => setStatusFilter("all")}>全部</button>
+          <button type="button" role="tab" aria-selected={statusFilter === "running"} className={`tab${statusFilter === "running" ? " active" : ""}`} onClick={() => setStatusFilter("running")}>运行中</button>
         </div>
 
         {filtered.length > 0 && (
@@ -4488,6 +4499,10 @@ function App() {
             </select>
           </span>
         </footer>
+        <div className="quota-float" title={`窗口额度：不限（已用 ${profiles.length} 个）`}>
+          <span>窗口 {profiles.length} / 不限</span>
+          <span>打开总数 {runningCount}</span>
+        </div>
       </div>
       ) : view === "scripts" ? (
       <ScriptsPage onViewRun={() => setScriptRunOpen(true)} />
