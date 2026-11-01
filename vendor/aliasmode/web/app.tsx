@@ -5,6 +5,7 @@ import "./styles.css";
 import "./proxies.css";
 import { ProxiesPage } from "./proxies.tsx";
 import { TrashPage } from "./trash.tsx";
+import { NanfuWindowTransferDialog } from "./nanfu-management.tsx";
 import { parsePastedProxy } from "./proxy-input.ts";
 import { createProfilesInOrder, MAX_BATCH_CREATE } from "./batch-create.ts";
 import { groupTimezones, isValidIanaTimezone, resolveTimezoneSelection, systemTimezones } from "./timezone-options.ts";
@@ -1489,6 +1490,7 @@ function App() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const deleteInFlight = useRef(false);
   const cloneInFlight = useRef(false);
@@ -4245,6 +4247,9 @@ function App() {
           <button className="btn" type="button" onClick={() => setRenameOpen(true)}>
             <Icon name="edit" className="sm" />批量改名
           </button>
+          <button className="btn" type="button" onClick={() => setTransferOpen(true)}>
+            <Icon name="move" className="sm" />转移/回收
+          </button>
           {(!isCloudMode || selectedEditable) && <>
           <button
             className="btn"
@@ -4334,6 +4339,7 @@ function App() {
 
         {renameOpen && <RenameDialog count={selected.size} busy={renameBusy}
           onCancel={() => setRenameOpen(false)} onConfirm={(base, start) => void renameSelected(base, start)} />}
+        {transferOpen && <NanfuWindowTransferDialog onClose={() => setTransferOpen(false)} onChanged={() => void load()} />}
 
         <div
           className={`tablewrap${tableScrolled ? " scrolled" : ""}`}

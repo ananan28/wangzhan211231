@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { fetchNanfuLocalWindowCounts, fetchNanfuLocalWindows, fetchNanfuMemberEnvironments, nanfuLoginName, reassignNanfuWindow, type NanfuLocalWindow, type NanfuMember, type NanfuOrgOverview, type NanfuOrganization, type NanfuMutations, type NanfuVisibleEnvironment } from "./api.ts";
+import { fetchNanfuEnvironments, fetchNanfuLocalWindowCounts, fetchNanfuLocalWindows, fetchNanfuMemberEnvironments, fetchNanfuOverview, nanfuLoginName, reassignNanfuWindow, type NanfuLocalWindow, type NanfuMember, type NanfuOrgOverview, type NanfuOrganization, type NanfuMutations, type NanfuVisibleEnvironment } from "./api.ts";
 
 /** Resolves with the outcome so a dialog can stay open and show the server's reason. */
 export type NanfuMutationHandler = <K extends keyof NanfuMutations>(action: K, input: NanfuMutations[K]["input"]) => Promise<{ ok: boolean; error?: string }>;
@@ -587,4 +587,111 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
       </div>
     </details>
   </>;
+}
+
+/**
+ * 浏览器窗口页的「转移 / 回收」：一次弹窗里同时做两件事——把自己的窗口分配给
+ * 某个成员，或把那名成员名下的本机窗口收回来。账号隔离保持不变：双方只在
+ * 自己的浏览器窗口列表里看到各自名下的窗口。
+ */
+export function NanfuWindowTransferDialog({ onClose, onChanged }: { onClose: () => void; onChanged?: () => void }) {
+  const [currentUserId, setCurrentUserId] = useState("");
+  const [members, setMembers] = useState<NanfuMember[]>([]);
+  const [targetId, setTargetId] = useState("");
+  const [myWindows, setMyWindows] = useState<NanfuLocalWindow[]>([]);
+  const [theirWindows, setTheirWindows] = useState<NanfuLocalWindow[]>([]);
+  const [pickedMine, setPickedMine] = useState<Set<string>>(new Set());
+  const [pickedTheirs, setPickedTheirs] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadMine = async () => {
+    const result = await fetchNanfuLocalWindows().catch(() => ({ windows: [] as NanfuLocalWindow[] }));
+    setMyWindows(result.windows);
+  };
+  const loadTheirs = async (userId: string) => {
+    if (!userId) { setTheirWindows([]); return; }
+    const result = await fetchNanfuLocalWindows(userId).catch(() => ({ windows: [] as NanfuLocalWindow[] }));
+    setTheirWindows(result.windows);
+  };
+  useEffect(() => {
+    void (async () => {
+      try {
+        const state = await fetchNanfuEnvironments();
+        setCurrentUserId(state.userId);
+        await loadMine();
+        const organization = state.organization;
+        if (!organization || (organization.identity !== "owner" && organization.identity !== "admin")) {
+          setError("只有所有者或管理员可以转移或回收窗口");
+          return;
+        }
+        const overview = await fetchNanfuOverview();
+        setMembers(overview.result.members.filter(member => member.userId !== state.userId && member.identity !== "owner"));
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : "读取成员失败，请重试");
+      }
+    })();
+  }, []);
+  useEffect(() => { void loadTheirs(targetId); }, [targetId]);
+
+  const move = async (ids: string[], toUserId: string) => {
+    if (!ids.length || !toUserId) return;
+    setBusy(true);
+    setError("");
+    try {
+      for (const id of ids) await reassignNanfuWindow(id, toUserId);
+      setPickedMine(new Set());
+      setPickedTheirs(new Set());
+      await Promise.all([loadMine(), loadTheirs(targetId)]);
+      onChanged?.();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "窗口归属修改失败，请重试");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const target = members.find(member => member.userId === targetId);
+  return <Modal title="转移 / 回收窗口" subtitle="同一台电脑上直接改窗口归属，窗口数据不搬家" onClose={onClose}
+    footer={<button className="btn" type="button" onClick={onClose}>关闭</button>}>
+    {error && <p className="modal-err" role="alert">{error}</p>}
+    <label className="fld"><span>目标成员</span>
+      <select value={targetId} onChange={event => setTargetId(event.target.value)} disabled={busy}>
+        <option value="">请选择成员</option>
+        {members.map(member => <option key={member.userId} value={member.userId}>{memberLabel(member)} · {nanfuIdentityName(member.identity)}</option>)}
+      </select>
+    </label>
+    <div className="nanfu-window-cols">
+      <div className="nanfu-window-col">
+        <h5>我的窗口（{myWindows.length}）</h5>
+        {!myWindows.length ? <p className="nanfu-hint">本机没有我的窗口。</p> : <>
+          <div className="nanfu-pick-actions">
+            <button type="button" className="tlink" onClick={() => setPickedMine(new Set(myWindows.map(w => w.id)))}>全选</button>
+            <button type="button" className="tlink" onClick={() => setPickedMine(new Set())}>清空</button>
+          </div>
+          <ul className="nanfu-picklist">{myWindows.map(w => <li key={w.id}>
+            <label className="nanfu-check"><input type="checkbox" checked={pickedMine.has(w.id)} onChange={() => setPickedMine(prev => togglePick(prev, w.id))} disabled={busy} />
+              <span>{w.name || w.id}{w.group ? ` · ${w.group}` : ""}</span></label>
+          </li>)}</ul>
+        </>}
+        <button className="btn primary" type="button" disabled={busy || !pickedMine.size || !targetId} onClick={() => void move([...pickedMine], targetId)}>分配给他（{pickedMine.size}）</button>
+      </div>
+      <div className="nanfu-window-col">
+        <h5>{target ? `${memberLabel(target)} 的窗口` : "对方窗口"}（{theirWindows.length}）</h5>
+        {!targetId ? <p className="nanfu-hint">先选择成员，才能回收他名下的窗口。</p>
+          : !theirWindows.length ? <p className="nanfu-hint">他名下在本机没有窗口。</p>
+          : <>
+            <div className="nanfu-pick-actions">
+              <button type="button" className="tlink" onClick={() => setPickedTheirs(new Set(theirWindows.map(w => w.id)))}>全选</button>
+              <button type="button" className="tlink" onClick={() => setPickedTheirs(new Set())}>清空</button>
+            </div>
+            <ul className="nanfu-picklist">{theirWindows.map(w => <li key={w.id}>
+              <label className="nanfu-check"><input type="checkbox" checked={pickedTheirs.has(w.id)} onChange={() => setPickedTheirs(prev => togglePick(prev, w.id))} disabled={busy} />
+                <span>{w.name || w.id}{w.group ? ` · ${w.group}` : ""}</span></label>
+            </li>)}</ul>
+          </>}
+        <button className="btn" type="button" disabled={busy || !pickedTheirs.size || !currentUserId} onClick={() => void move([...pickedTheirs], currentUserId)}>收回给我（{pickedTheirs.size}）</button>
+      </div>
+    </div>
+    <p className="nanfu-hint">跨电脑转移请用转移页的「带登录态的转移」；这里只改本机归属。</p>
+  </Modal>;
 }
