@@ -269,6 +269,25 @@ fn located_executable(root: &Path, relative: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Remove `suffix`'s trailing components from `path` (std Path only has strip_prefix).
+#[cfg(target_os = "macos")]
+fn strip_path_suffix(path: &Path, suffix: &Path) -> Option<PathBuf> {
+    let path_components: Vec<_> = path.components().collect();
+    let suffix_components: Vec<_> = suffix.components().collect();
+    if suffix_components.is_empty() || suffix_components.len() > path_components.len() {
+        return None;
+    }
+    let start = path_components.len() - suffix_components.len();
+    if path_components[start..] != suffix_components[..] {
+        return None;
+    }
+    let mut result = PathBuf::new();
+    for component in &path_components[..start] {
+        result.push(component.as_os_str());
+    }
+    Some(result)
+}
+
 #[cfg(not(target_os = "macos"))]
 fn extract_chromium_kernel(
     _resource_dir: &Path,
@@ -293,21 +312,27 @@ fn extract_chromium_kernel(
     let root = data_dir.join("chromium");
     let destination = root.join(&chromium.version);
 
+    // The marker records the hash of the AD-HOC SIGNED executable; the manifest's
+    // hash describes the unsigned artifact, so it cannot be compared directly
+    // after the first launch signs the bundle.
+    let marker = destination.join(".nanfu-signed-sha256");
     if destination.is_dir() {
         if let Some(executable) = located_executable(&destination, &relative) {
-            if hash_file(&executable).is_ok_and(|sha256| sha256 == chromium.sha256) {
-                if let Ok(runtime_dir) = executable.strip_suffix(&relative) {
-                    let runtime_dir = runtime_dir.to_path_buf();
-                    return Ok(ChromiumRuntime {
-                        executable,
-                        runtime_dir,
-                        sha256: chromium.sha256.clone(),
-                    });
+            let recorded = fs::read_to_string(&marker).ok();
+            if let (Some(recorded), Ok(current)) = (recorded, hash_file(&executable)) {
+                if recorded.trim() == current.as_str() {
+                    if let Some(runtime_dir) = strip_path_suffix(&executable, &relative) {
+                        return Ok(ChromiumRuntime {
+                            executable,
+                            runtime_dir,
+                            sha256: current,
+                        });
+                    }
                 }
             }
         }
         eprintln!(
-            "AliasMode will extract the packaged Chromium kernel again: {} does not match its recorded SHA-256",
+            "AliasMode will extract the packaged Chromium kernel again: {} does not match its signed SHA-256 record",
             destination.display()
         );
     }
@@ -369,7 +394,7 @@ fn extract_chromium_kernel(
     let relative_executable = extracted.strip_prefix(&staging).map_err(|_| {
         "the extracted Chromium kernel has an unexpected layout".to_owned()
     })?;
-    let app_directory = relative_executable.strip_suffix(&relative).map_err(|_| {
+    let app_directory = strip_path_suffix(relative_executable, &relative).ok_or_else(|| {
         "the extracted Chromium kernel has an unexpected layout".to_owned()
     })?;
     // The kernel artifact ships unsigned, and Apple silicon refuses to execute an
@@ -412,6 +437,8 @@ fn extract_chromium_kernel(
     }
     fs::rename(&staging, &destination)
         .map_err(|error| format!("could not install the extracted Chromium kernel: {error}"))?;
+    // Remember the signed hash so later launches reuse this extraction untouched.
+    let _ = fs::write(&marker, &sha256);
     let runtime_dir = destination.join(app_directory);
     let executable = runtime_dir.join(&relative);
     if !executable.is_file() {
