@@ -360,10 +360,11 @@ function partialName(spec: PinnedRuntime): string {
  * The copy that the installer ships next to the app, so a fresh install opens a
  * profile without downloading anything. NANFU_CHROMIUM_RUNTIME_DIR points at it directly.
  *
- * Windows installs it under the application folder; a macOS app bundle carries it in
- * Contents/Resources/chromium/<chromium-version>/Chromium.app, which Tauri maps from
- * src-tauri/resources/chromium/. The packaged kernel records its own hash, so the
- * Nanfu macOS build verifies the copy it actually staged rather than an upstream pin.
+ * Windows installs it under the application folder. The Nanfu macOS app ships the kernel as
+ * an archive and extracts it into its data directory on first launch, because Tauri's resource
+ * copy resolves the framework's symlinks; NANFU_CHROMIUM_RUNTIME_DIR points at that copy. The
+ * packaged kernel records its own hash, so the Nanfu build verifies the copy it actually staged
+ * rather than an upstream pin.
  */
 async function bundledRuntime(spec: PinnedRuntime, hashFile: (path: string) => Promise<string>, platform: NodeJS.Platform): Promise<string | null> {
   if (spec.runtime !== "aliasmode") return null;

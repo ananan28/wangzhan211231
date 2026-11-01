@@ -434,10 +434,12 @@ pub fn run() {
                 runtime.executable = cli_compatible_windows_path(&runtime.executable);
                 Some(runtime)
             };
-            // The macOS app bundle carries its own Chromium kernel; hand it to the sidecar so a
-            // profile opens without downloading one.
+            // The macOS app bundle ships the Chromium kernel as an archive, because Tauri's
+            // resource copy resolves the framework's symlinks and flattens it. Extract it into the
+            // app data directory on first launch (symlinks survive there), then hand that copy to
+            // the sidecar. Windows is unchanged: the sidecar verifies its installed runtime.
             let chromium = if cfg!(target_os = "macos") {
-                Some(browser::verify_chromium_resource(&resource_dir).map_err(boxed)?)
+                Some(browser::prepare_chromium_runtime(&resource_dir, &data_dir).map_err(boxed)?)
             } else {
                 None
             };

@@ -1,7 +1,9 @@
 # Nanfu macOS app build.
 #
-# Consumes a kernel artifact from a successful "Nanfu macOS kernel" run, stages it as the app's
-# bundled Chromium (scripts/prepare-macos-bundle.ts), then builds the Tauri app and the .dmg.
+# Consumes a kernel artifact from a successful "Nanfu macOS kernel" run, stages the kernel archive
+# as the app's bundled Chromium (scripts/prepare-macos-bundle.ts), then builds the Tauri app and
+# the .dmg. The app extracts the archive into its data directory on first launch; Tauri's resource
+# copy resolves symlinks, which would flatten Chromium Framework if the app shipped it unpacked.
 # The Nanfu macOS app ships no Firefox: Chromium is the only engine, as on Windows.
 #
 # The kernel is not downloaded from a release. Dispatch the kernel workflow first, then pass its
@@ -89,7 +91,7 @@ jobs:
             --config '{"bundle":{"createUpdaterArtifacts":false}}' \
             --bundles app \
             --target "$TARGET_TRIPLE"
-      - name: Re-sign the copied bundles and create the disk image
+      - name: Re-sign the app and create the disk image
         shell: bash
         run: |
           set -euo pipefail
@@ -99,15 +101,9 @@ jobs:
             echo "::error::the build produced no .app"
             exit 1
           fi
-          # Tauri copies resources file by file, which invalidates the nested
-          # Chromium signature. Re-seal the kernel app, then the outer app, and
-          # only then make the dmg so it carries the valid bundle.
-          kernel_app="$(find "$app/Contents/Resources/chromium" -type d -name 'Chromium.app' -print -quit || true)"
-          if [ -n "$kernel_app" ]; then
-            xattr -cr "$kernel_app"
-            codesign --force --deep --sign - "$kernel_app"
-            codesign --verify --deep --strict "$kernel_app"
-          fi
+          # The kernel ships as a zip resource and the app extracts it on first launch, so the only
+          # bundle to seal is the outer app. Tauri's resource copy invalidates its signature, so
+          # re-seal it ad-hoc before the dmg is made.
           xattr -cr "$app"
           codesign --force --deep --sign - "$app"
           codesign --verify --deep --strict "$app"
@@ -116,7 +112,8 @@ jobs:
           rm -f "$dmg"
           hdiutil create -volname "南孚浏览器" -srcfolder "$app" -ov -format UDZO "$dmg"
           ls -lh "$dmg"
-      - name: Verify the bundle carries the kernel and the runtimes
+          du -sh "$app" "$dmg"
+      - name: Verify the bundle carries the kernel archive and the runtimes
         shell: bash
         run: |
           set -euo pipefail
@@ -127,12 +124,11 @@ jobs:
             echo "::error::the build produced no .app or no .dmg"
             exit 1
           fi
-          kernel="$(find "$app/Contents/Resources/chromium" -type f -name Chromium -path '*/Contents/MacOS/*' -print -quit)"
-          if [ -z "$kernel" ]; then
-            echo "::error::the bundled Chromium kernel is missing from $app"
-            exit 1
-          fi
+          kernel="$app/Contents/Resources/chromium/nanfu-kernel.zip"
+          manifest="$app/Contents/Resources/chromium/nanfu-kernel.json"
           for required in \
+            "$kernel" \
+            "$manifest" \
             "$app/Contents/Resources/playwright/node/node" \
             "$app/Contents/MacOS/aliasmode-sidecar" \
             "$app/Contents/MacOS/aliasmode-mcp"; do
@@ -141,14 +137,35 @@ jobs:
               exit 1
             fi
           done
+          # The kernel must ship as one archive: an unpacked Chromium.app here is the flattened
+          # bundle this build deliberately avoids.
+          unpacked="$(find "$app/Contents/Resources/chromium" -maxdepth 2 -type d -name 'Chromium.app' -print)"
+          if [ -n "$unpacked" ]; then
+            echo "::error::the kernel must ship as an archive, not an unpacked Chromium.app"
+            exit 1
+          fi
+          if ! entries="$(unzip -Z1 "$kernel")"; then
+            echo "::error::could not list the kernel archive: $kernel"
+            exit 1
+          fi
+          if ! grep -qE '(^|/)Chromium\.app/Contents/MacOS/Chromium$' <<< "$entries"; then
+            echo "::error::the kernel archive has no Chromium.app/Contents/MacOS/Chromium"
+            exit 1
+          fi
+          recorded="$(sed -n 's/.*"archiveSha256"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{64\}\)".*/\1/p' "$manifest")"
+          measured="$(shasum -a 256 "$kernel" | awk '{print $1}')"
+          if [ -z "$recorded" ] || [ "$recorded" != "$measured" ]; then
+            echo "::error::the kernel archive does not match the manifest SHA-256: $measured vs ${recorded:-<none>}"
+            exit 1
+          fi
           if [ -d "$app/Contents/Resources/firefox" ]; then
             echo "::error::the macOS bundle must not ship Firefox"
             exit 1
           fi
           echo "bundled kernel: $kernel"
-          lipo -archs "$kernel"
           lipo -archs "$app/Contents/MacOS/aliasmode-sidecar"
           codesign --verify --deep --strict "$app"
+          du -sh "$app" "$kernel" "$dmg"
           shasum -a 256 "$dmg"
           ditto -c -k --keepParent "$app" "$RUNNER_TEMP/nanfu-macos-${{ inputs.arch }}-app.zip"
       - name: Upload the macOS build
