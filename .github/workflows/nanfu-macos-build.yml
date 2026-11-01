@@ -184,3 +184,44 @@ jobs:
             ${{ runner.temp }}/nanfu-macos-${{ inputs.arch }}-app.zip
           if-no-files-found: error
           retention-days: 7
+      # GitHub artifact storage is far too slow to fetch from China (a 287 MB
+      # dmg measured ~20 KB/s). Publish the dmg to the same R2/CDN the Windows
+      # installer uses, so the download site can link it immediately.
+      - name: Publish the dmg to R2
+        if: success()
+        shell: bash
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${R2_ACCESS_KEY_ID:-}" ] || [ -z "${R2_SECRET_ACCESS_KEY:-}" ]; then
+            echo "::warning::R2 credentials are not configured; keeping the dmg as a build artifact only."
+            exit 0
+          fi
+          version="$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?$ ]]; then
+            echo "::error::tauri.conf.json carries an invalid version: $version"
+            exit 1
+          fi
+          case "${{ inputs.arch }}" in
+            arm64) platform="mac-arm"; suffix="arm64" ;;
+            x64) platform="mac-intel"; suffix="x64" ;;
+            *) platform="mac-universal"; suffix="universal" ;;
+          esac
+          dmg="$(find "src-tauri/target/$TARGET_TRIPLE/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -print -quit)"
+          if [ -z "$dmg" ] || [ ! -f "$dmg" ]; then
+            echo "::error::no dmg to publish"
+            exit 1
+          fi
+          key="nanfu/$version/$platform/Nanfu_${version}_${suffix}.dmg"
+          endpoint="https://0a8dc13181086e28114bb0c6b24eac54.r2.cloudflarestorage.com"
+          bucket="software-downloads"
+          du -sh "$dmg"
+          shasum -a 256 "$dmg"
+          curl -sS -f --retry 3 --retry-delay 5 \
+            --aws-sigv4 "aws:amz:auto:s3" \
+            -u "$R2_ACCESS_KEY_ID:$R2_SECRET_ACCESS_KEY" \
+            -T "$dmg" "$endpoint/$bucket/$key"
+          echo "Published https://dl.xzckfn.eu.cc/$key"
+
