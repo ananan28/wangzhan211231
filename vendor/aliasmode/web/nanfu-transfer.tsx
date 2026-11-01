@@ -396,6 +396,10 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
                 </select></label>
                 <label className="fld"><span>备注（可选，最多500字）</span><input maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} /></label>
                 <fieldset className="nanfu-env-picks"><legend>批量选择环境（{batchIds.length} 个）</legend>
+                  <div className="nanfu-pick-actions">
+                    <button type="button" className="tlink" onClick={() => setBatchIds(visible.map((item) => item.id))}>全选</button>
+                    <button type="button" className="tlink" onClick={() => setBatchIds([])}>清空</button>
+                  </div>
                   {visible.map((item) => <label key={item.id}>
                     <input type="checkbox" checked={batchIds.includes(item.id)} onChange={(event) => toggleBatch(item.id, event.target.checked)} />
                     {localNames.get(item.id) ? `${localNames.get(item.id)} · ` : ""}{item.id}{item.ownerUserId === userId ? "（本人）" : `（${item.ownerUserId}）`}

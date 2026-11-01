@@ -2059,3 +2059,6 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 .nanfu-picklist .nanfu-check { align-items: flex-start; }
 .nanfu-picklist .nanfu-check span { min-width: 0; overflow-wrap: anywhere; }
 .nanfu-win-counts { font-weight: 600; }
+.nanfu-pick-actions { display: flex; gap: 10px; margin: 2px 0 6px; }
+.nanfu-pick-actions .tlink { padding: 0; border: 0; background: none; cursor: pointer; color: var(--accent); font: inherit; font-size: 12.5px; }
+.nanfu-pick-actions .tlink:disabled { opacity: .5; cursor: default; }

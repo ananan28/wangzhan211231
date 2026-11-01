@@ -386,6 +386,10 @@ function MemberSettingsDialog({ member, overview, owner, currentUserId, busy, on
       <div className="nanfu-window-cols">
         <div className="nanfu-window-col">
           <h5>{memberLabel(member)} 名下（{memberWindows.length}）</h5>
+          {!!memberWindows.length && <div className="nanfu-pick-actions">
+            <button type="button" className="tlink" onClick={() => setPicked(new Set(memberWindows.map((w) => w.id)))}>全选</button>
+            <button type="button" className="tlink" onClick={() => setPicked(new Set())}>清空</button>
+          </div>}
           {!memberWindows.length ? <p className="nanfu-hint">他名下在本机没有窗口。</p>
             : <ul className="nanfu-picklist">{memberWindows.map(w => <li key={w.id}>
               <label className="nanfu-check"><input type="checkbox" checked={picked.has(w.id)} onChange={() => setPicked(prev => togglePick(prev, w.id))} disabled={windowsBusy} />
@@ -395,6 +399,10 @@ function MemberSettingsDialog({ member, overview, owner, currentUserId, busy, on
         </div>
         <div className="nanfu-window-col">
           <h5>我名下（{myWindows.length}）</h5>
+          {!!myWindows.length && <div className="nanfu-pick-actions">
+            <button type="button" className="tlink" onClick={() => setPickedMine(new Set(myWindows.map((w) => w.id)))}>全选</button>
+            <button type="button" className="tlink" onClick={() => setPickedMine(new Set())}>清空</button>
+          </div>}
           {!myWindows.length ? <p className="nanfu-hint">我名下在本机没有窗口。</p>
             : <ul className="nanfu-picklist">{myWindows.map(w => <li key={w.id}>
               <label className="nanfu-check"><input type="checkbox" checked={pickedMine.has(w.id)} onChange={() => setPickedMine(prev => togglePick(prev, w.id))} disabled={windowsBusy} />
