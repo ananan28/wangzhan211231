@@ -109,7 +109,11 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          ws="$RUNNER_TEMP/nanfu-macos-kernel-workspace"
+          # Persist the 50 GB Chromium checkout across runs: the runner wipes
+          # $RUNNER_TEMP between jobs, and a China-network gclient sync often
+          # needs several attempts. A stable path means a retry resumes instead
+          # of downloading everything again.
+          ws="$HOME/nanfu-macos-kernel-workspace"
           mkdir -p "$ws"
           echo "APOSTATE_WORKSPACE=$ws" >> "$GITHUB_ENV"
 
@@ -203,7 +207,22 @@ jobs:
 
       - name: Fetch pinned Chromium (gclient sync)
         working-directory: vendor/aliasmode-chromium
-        run: bash scripts/fetch-sources.sh
+        # googlesource.com intermittently answers 429 or resets the connection
+        # from a China network. gclient already retries individual repositories;
+        # this retries the whole sync so a hard failure can resume from the
+        # persistent workspace instead of ending the run.
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            if bash scripts/fetch-sources.sh; then
+              echo "gclient sync succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "::warning::gclient sync attempt $attempt failed; resuming in 30s"
+            sleep 30
+          done
+          echo "gclient sync failed after 3 attempts" >&2
+          exit 1
 
       - name: Apply AliasMode patch series
         working-directory: vendor/aliasmode-chromium
