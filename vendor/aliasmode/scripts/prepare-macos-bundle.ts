@@ -276,13 +276,10 @@ export async function prepareMacosBundle(
   // Without the mkdir, cp would flatten the bundle's Contents into dest instead.
   await run(["rm", "-rf", destination]);
   mkdirSync(destination, { recursive: true });
-  await run(["cp", "-R", "-L", app, destination]);
-  const remainingLinks = (await capture(["find", destination, "-type", "l"])).trim();
-  if (remainingLinks) {
-    throw new Error(
-      `the staged Chromium kernel still contains symbolic links, which Tauri's resource bundler cannot copy: ${remainingLinks.split("\n")[0]}`,
-    );
-  }
+  // ditto preserves the framework's symlinks and versioned layout. `cp -R -L`
+  // flattens them, after which codesign rejects the app as "bundle format is
+  // ambiguous (could be app or framework)".
+  await run(["ditto", app, join(destination, "Chromium.app")]);
   chmodSync(join(destination, MACOS_CHROMIUM_EXECUTABLE), 0o755);
   // codesign needs the .app bundle; the version directory that contains it is not
   // a bundle and is rejected as "unrecognized, invalid, or unsuitable".
