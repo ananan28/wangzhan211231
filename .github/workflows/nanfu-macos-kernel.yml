@@ -201,6 +201,21 @@ jobs:
           test -f "build/args/$APOSTATE_TARGET.gn" || { echo "missing build/args/$APOSTATE_TARGET.gn" >&2; exit 1; }
           bash scripts/verify-host-tooling.sh "$APOSTATE_TARGET"
 
+      # Xcode 26/27 ship the Metal toolchain as a separate component; ANGLE's
+      # Metal shaders cannot compile without it. Install it here so a bare Mac
+      # needs no manual setup.
+      - name: Ensure Xcode Metal toolchain
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          if xcrun -f metal >/dev/null 2>&1; then
+            echo "Metal toolchain already present"
+            exit 0
+          fi
+          echo "Downloading the Metal toolchain (separate component in current Xcode)"
+          xcodebuild -downloadComponent MetalToolchain
+          xcrun -f metal >/dev/null 2>&1 || { echo "Metal toolchain still missing after download" >&2; exit 1; }
+
       - name: Bootstrap pinned depot_tools
         working-directory: vendor/aliasmode-chromium
         run: bash scripts/bootstrap.sh
