@@ -343,6 +343,14 @@ case "$target" in
         "build/vs_toolchain.py copy_dlls, run by build/toolchain/win/BUILD.gn at gn gen time"
     done
     ;;
+  macos-*)
+    # The canonical macOS artifact is a .zip (see .github/release/artifact-
+    # policy.json), and package-artifact.sh writes it with ditto because the
+    # framework bundle is held together by symlinks that `zip -r` would lose.
+    # Apple's tar cannot write .tar.zst, so probing for it here would reject a
+    # host that can package perfectly well.
+    need ditto scripts/package-artifact.sh
+    ;;
   *)
     need tar scripts/package-artifact.sh
     probe="$(mktemp -d)"
