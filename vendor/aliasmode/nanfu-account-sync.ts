@@ -113,6 +113,8 @@ export interface NanfuSyncOptions {
    * changed moves to that account on this machine instead of lingering here.
    */
   remoteOwners?: ReadonlyMap<string, string>;
+  /** The signed-in account's organization, so the cloud row is organization-visible. */
+  orgId?: string;
 }
 
 /**
@@ -170,7 +172,7 @@ export async function syncNanfuAccountWindows(options: NanfuSyncOptions): Promis
         version: 0,
         envelope: cipher.encrypt(config),
         dirty: true,
-      });
+      }, options.orgId);
       summary.pushed += 1;
     } catch {
       // Keep going: the next sign-in retries the windows that failed.
@@ -276,6 +278,7 @@ export async function pushNanfuWindow(options: {
   cipher: NanfuCipher;
   userId: string;
   deviceId: string;
+  orgId?: string;
   profile: Profile;
 }): Promise<void> {
   const extensionNames = new Map(options.store.listExtensions().map((item) => [item.id, item.name]));
@@ -285,5 +288,5 @@ export async function pushNanfuWindow(options: {
     version: 0,
     envelope: options.cipher.encrypt(config),
     dirty: true,
-  });
+  }, options.orgId);
 }

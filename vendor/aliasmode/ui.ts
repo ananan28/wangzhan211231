@@ -733,7 +733,7 @@ function installNanfuSyncHook(runtime: NanfuRuntime, store: ProfileStore | null)
     if (!sync) return;
     void pushNanfuWindow({
       store, client: runtime.client, cipher: sync.cipher,
-      userId: sync.userId, deviceId: sync.deviceId, profile,
+      userId: sync.userId, deviceId: sync.deviceId, orgId: sync.orgId, profile,
     }).catch(() => undefined);
   };
   // 关窗时抓到的登录态也照同样方式上云：同一账号换机后用密码解出来，窗口直接是登录状态。
@@ -1210,10 +1210,11 @@ export async function handleUiRequest(
           try {
             const cipher = createNanfuAccountCipher(body.password, state.userId);
             const deviceId = nanfuDeviceId(options.paths.root);
-            nanfu.sync = { cipher, userId: state.userId, deviceId };
+            let orgId: string | undefined;
             let remoteOwners: Map<string, string> | undefined;
             try {
               const organization = await client.orgMe();
+              orgId = organization?.orgId;
               if (organization && (organization.identity === "owner" || organization.identity === "admin")) {
                 const visible = await client.visibleEnvironments(organization.orgId);
                 remoteOwners = new Map(visible.map((environment) => [environment.id, environment.ownerUserId]));
@@ -1221,8 +1222,9 @@ export async function handleUiRequest(
             } catch {
               // 组织视图不可用时仍做基本的拉取/上传。
             }
+            nanfu.sync = { cipher, userId: state.userId, deviceId, orgId };
             await syncNanfuAccountWindows({
-              store, client, cipher, userId: state.userId, deviceId, remoteOwners,
+              store, client, cipher, userId: state.userId, deviceId, remoteOwners, orgId,
             });
             // 换机后把云端保存的登录态装回本机窗口（只补本机没有的，不覆盖更新的本机快照）。
             await pullNanfuSessions({ store, client, cipher, userId: state.userId }).catch(() => 0);

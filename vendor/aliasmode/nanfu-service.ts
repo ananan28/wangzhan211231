@@ -25,7 +25,7 @@ export interface NanfuRuntime {
    * password sign-in in this process: without the password nothing can decrypt
    * the account's cloud windows, which is the point of the derivation.
    */
-  sync?: { cipher: NanfuCipher; userId: string; deviceId: string };
+  sync?: { cipher: NanfuCipher; userId: string; deviceId: string; orgId?: string };
   syncHookInstalled?: boolean;
   /** The single-active-computer slot this process holds, with its heartbeat. */
   activeDevice?: { userId: string; deviceId: string; sessionId: string; timer: ReturnType<typeof setInterval> };

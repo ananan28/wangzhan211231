@@ -985,7 +985,7 @@ export class NanfuSyncClient {
     }));
   }
 
-  async upsert(userId: string, deviceId: string, record: NanfuLocalRecord): Promise<NanfuRemoteRecord> {
+  async upsert(userId: string, deviceId: string, record: NanfuLocalRecord, orgId?: string): Promise<NanfuRemoteRecord> {
     const rows = await this.request(
       `/${this.table}?on_conflict=owner_user_id,environment_id`,
       {
@@ -993,6 +993,9 @@ export class NanfuSyncClient {
         headers: { prefer: "resolution=merge-duplicates,return=representation" },
         body: JSON.stringify([{
           owner_user_id: userId,
+          // 带上组织编号，管理员的“员工窗口/云端数量”才看得到这条记录；
+          // 没有组织时保持个人记录（org_id 为空）。
+          ...(orgId ? { org_id: orgId } : {}),
           environment_id: record.id,
           version: record.version + 1,
           device_id: deviceId,
