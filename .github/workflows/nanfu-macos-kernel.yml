@@ -208,13 +208,15 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          if xcrun -f metal >/dev/null 2>&1; then
-            echo "Metal toolchain already present"
-            exit 0
+          # `xcrun -f metal` resolves a stub even when the component is missing,
+          # so ask xcodebuild to install it unconditionally (idempotent) and
+          # then prove the compiler actually runs.
+          echo "Installing the Metal toolchain component (idempotent)"
+          xcodebuild -downloadComponent MetalToolchain || true
+          if ! metal --version; then
+            echo "Metal toolchain is unavailable; ANGLE's Metal shaders cannot build" >&2
+            exit 1
           fi
-          echo "Downloading the Metal toolchain (separate component in current Xcode)"
-          xcodebuild -downloadComponent MetalToolchain
-          xcrun -f metal >/dev/null 2>&1 || { echo "Metal toolchain still missing after download" >&2; exit 1; }
 
       - name: Bootstrap pinned depot_tools
         working-directory: vendor/aliasmode-chromium
