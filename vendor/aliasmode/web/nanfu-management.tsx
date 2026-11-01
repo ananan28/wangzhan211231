@@ -1,5 +1,5 @@
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
-import { fetchNanfuMemberEnvironments, nanfuLoginName, type NanfuMember, type NanfuOrgOverview, type NanfuOrganization, type NanfuMutations, type NanfuVisibleEnvironment } from "./api.ts";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { fetchNanfuLocalWindowCounts, fetchNanfuLocalWindows, fetchNanfuMemberEnvironments, nanfuLoginName, reassignNanfuWindow, type NanfuLocalWindow, type NanfuMember, type NanfuOrgOverview, type NanfuOrganization, type NanfuMutations, type NanfuVisibleEnvironment } from "./api.ts";
 
 /** Resolves with the outcome so a dialog can stay open and show the server's reason. */
 export type NanfuMutationHandler = <K extends keyof NanfuMutations>(action: K, input: NanfuMutations[K]["input"]) => Promise<{ ok: boolean; error?: string }>;
@@ -37,6 +37,12 @@ const memberGroupNames = (overview: NanfuOrgOverview, userId: string) => overvie
   .map(grant => overview.groups.find(group => group.id === grant.groupId)?.name || grant.groupId);
 const memberGroupIds = (overview: NanfuOrgOverview, userId: string) => overview.grants
   .filter(grant => grant.userId === userId).map(grant => grant.groupId);
+const togglePick = (prev: Set<string>, id: string) => {
+  const next = new Set(prev);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  return next;
+};
 
 /** 比特式的居中弹窗：所有账号相关操作都在这里完成，不再往表格里塞。 */
 function Modal({ title, subtitle, onClose, children, footer }: {
@@ -231,12 +237,44 @@ function AddAccountDialog({ overview, owner, admin, currentUserId, busy, onMutat
 }
 
 /** 账号设置：独立弹窗，分组、密码、配额、移除各占一段，不再挤在表格里。 */
-function MemberSettingsDialog({ member, overview, owner, currentUserId, busy, onMutate, onClose }: {
+function MemberSettingsDialog({ member, overview, owner, currentUserId, busy, onMutate, onClose, onWindowsChanged }: {
   member: NanfuMember; overview: NanfuOrgOverview; owner: boolean;
   currentUserId: string; busy: boolean; onMutate: NanfuMutationHandler; onClose: () => void;
+  onWindowsChanged?: () => void;
 }) {
   const [resetError, setResetError] = useState("");
   const [error, setError] = useState("");
+  const [memberWindows, setMemberWindows] = useState<NanfuLocalWindow[]>([]);
+  const [myWindows, setMyWindows] = useState<NanfuLocalWindow[]>([]);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [pickedMine, setPickedMine] = useState<Set<string>>(new Set());
+  const [windowsBusy, setWindowsBusy] = useState(false);
+  const [windowsErr, setWindowsErr] = useState("");
+  const loadLocalWindows = async () => {
+    const [theirs, mine] = await Promise.all([
+      fetchNanfuLocalWindows(member.userId).catch(() => ({ windows: [] as NanfuLocalWindow[] })),
+      fetchNanfuLocalWindows(currentUserId).catch(() => ({ windows: [] as NanfuLocalWindow[] })),
+    ]);
+    setMemberWindows(theirs.windows);
+    setMyWindows(mine.windows);
+  };
+  useEffect(() => { void loadLocalWindows(); }, [member.userId, currentUserId]);
+  const moveWindows = async (ids: string[], toUserId: string) => {
+    if (!ids.length) return;
+    setWindowsBusy(true);
+    setWindowsErr("");
+    try {
+      for (const id of ids) await reassignNanfuWindow(id, toUserId);
+      setPicked(new Set());
+      setPickedMine(new Set());
+      await loadLocalWindows();
+      onWindowsChanged?.();
+    } catch (failure) {
+      setWindowsErr(failure instanceof Error ? failure.message : "窗口归属修改失败，请重试");
+    } finally {
+      setWindowsBusy(false);
+    }
+  };
   const parent = overview.members.find(item => item.userId === member.managerUserId);
   const group = nanfuAccountGroup(member);
   const grantedIds = memberGroupIds(overview, member.userId);
@@ -341,6 +379,32 @@ function MemberSettingsDialog({ member, overview, owner, currentUserId, busy, on
       </form>
     </section>
 
+    <section className="nanfu-dialog-section">
+      <h4>窗口归属（本机）</h4>
+      <p className="nanfu-hint">账号隔离后，每个账号只在自己的浏览器窗口列表里看到名下窗口。这里直接把本机窗口的归属改到对方，窗口数据不搬家。</p>
+      {windowsErr && <p className="modal-err" role="alert">{windowsErr}</p>}
+      <div className="nanfu-window-cols">
+        <div className="nanfu-window-col">
+          <h5>{memberLabel(member)} 名下（{memberWindows.length}）</h5>
+          {!memberWindows.length ? <p className="nanfu-hint">他名下在本机没有窗口。</p>
+            : <ul className="nanfu-picklist">{memberWindows.map(w => <li key={w.id}>
+              <label className="nanfu-check"><input type="checkbox" checked={picked.has(w.id)} onChange={() => setPicked(prev => togglePick(prev, w.id))} disabled={windowsBusy} />
+                <span>{w.name || w.id}{w.group ? ` · ${w.group}` : ""}</span></label>
+            </li>)}</ul>}
+          <button className="btn" type="button" disabled={windowsBusy || !picked.size} onClick={() => void moveWindows([...picked], currentUserId)}>收回给我（{picked.size}）</button>
+        </div>
+        <div className="nanfu-window-col">
+          <h5>我名下（{myWindows.length}）</h5>
+          {!myWindows.length ? <p className="nanfu-hint">我名下在本机没有窗口。</p>
+            : <ul className="nanfu-picklist">{myWindows.map(w => <li key={w.id}>
+              <label className="nanfu-check"><input type="checkbox" checked={pickedMine.has(w.id)} onChange={() => setPickedMine(prev => togglePick(prev, w.id))} disabled={windowsBusy} />
+                <span>{w.name || w.id}{w.group ? ` · ${w.group}` : ""}</span></label>
+            </li>)}</ul>}
+          <button className="btn primary" type="button" disabled={windowsBusy || !pickedMine.size} onClick={() => void moveWindows([...pickedMine], member.userId)}>分配给他（{pickedMine.size}）</button>
+        </div>
+      </div>
+    </section>
+
     <section className="nanfu-dialog-section nanfu-danger-zone">
       <h4>移除账号</h4>
       <p className="nanfu-hint">这里只回收窗口归属，不搬运本机文件，也不解密原账号的云端包。请先完成所需数据转移，再移除账号；本机数据不会删除。</p>
@@ -355,8 +419,8 @@ function MemberSettingsDialog({ member, overview, owner, currentUserId, busy, on
   </Modal>;
 }
 
-function MemberRow({ member, overview, currentUserId, onSettings }: {
-  member: NanfuMember; overview: NanfuOrgOverview; currentUserId: string; onSettings: () => void;
+function MemberRow({ member, overview, currentUserId, localCount, onSettings }: {
+  member: NanfuMember; overview: NanfuOrgOverview; currentUserId: string; localCount: number; onSettings: () => void;
 }) {
   const self = member.userId === currentUserId;
   const parent = overview.members.find(item => item.userId === member.managerUserId);
@@ -372,7 +436,9 @@ function MemberRow({ member, overview, currentUserId, onSettings }: {
     </td>
     <td><span className="nanfu-chip">{member.roleName ?? (group === "owner" ? "全部权限" : "默认权限")}</span></td>
     <td className="nanfu-col-groups">{granted.length ? granted.join("、") : <small>{group === "owner" || group === "admin" ? "全部窗口" : "未授权"}</small>}</td>
-    <td className={quotaFull ? "modal-err" : ""}>{member.used} / {member.quota === 0 ? "不限" : member.quota}{quotaFull && <small> · 已满</small>}
+    <td className={quotaFull ? "modal-err" : ""}>
+      <span className="nanfu-win-counts">本机 {localCount} · 云端 {member.used}</span>
+      <small>上限 {member.quota === 0 ? "不限" : member.quota}{quotaFull && " · 已满"}</small>
       <MemberWindows member={member} groups={overview.groups} />
     </td>
     <td>{member.status === "active" ? <span className="nanfu-chip ok">启用</span> : <span className="nanfu-chip off">停用</span>}{member.locked && <small> · 已锁定</small>}</td>
@@ -388,6 +454,13 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
   const [copyStatus, setCopyStatus] = useState("");
   const [adding, setAdding] = useState(false);
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
+  const [localCounts, setLocalCounts] = useState<Record<string, number>>({});
+  const refreshLocalCounts = () => {
+    void fetchNanfuLocalWindowCounts()
+      .then(result => setLocalCounts(result.counts))
+      .catch(() => undefined);
+  };
+  useEffect(() => { refreshLocalCounts(); }, [overview, busy]);
   // Members with member.manage open the same page, scoped to their own subtree.
   const staff = ["owner", "admin"].includes(organization.identity) || organization.permissions.includes("member.manage");
   if (!staff || organization.locked || organization.status !== "active") return null;
@@ -415,7 +488,8 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
     {adding && <AddAccountDialog overview={overview} owner={owner} admin={admin} currentUserId={currentUserId}
       busy={busy} onMutate={onMutate} onClose={() => setAdding(false)} />}
     {settingsMember && <MemberSettingsDialog key={settingsMember.userId} member={settingsMember} overview={overview}
-      owner={owner} currentUserId={currentUserId} busy={busy} onMutate={onMutate} onClose={() => setSettingsFor(null)} />}
+      owner={owner} currentUserId={currentUserId} busy={busy} onMutate={onMutate} onWindowsChanged={refreshLocalCounts}
+      onClose={() => setSettingsFor(null)} />}
 
     <section className="settings-card" aria-label="员工管理">
       <header>
@@ -435,7 +509,8 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
         {!sorted.length ? <p>还没有成员。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table nanfu-roster">
           <thead><tr><th>账号</th><th>角色</th><th>授权分组</th><th>窗口</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>{sorted.map(member => <MemberRow key={member.userId} member={member} overview={overview}
-            currentUserId={currentUserId} onSettings={() => { setAdding(false); setSettingsFor(member.userId); }} />)}</tbody>
+            currentUserId={currentUserId} localCount={localCounts[member.userId] ?? 0}
+            onSettings={() => { setAdding(false); setSettingsFor(member.userId); }} />)}</tbody>
         </table></div>}
       </div>
     </section>

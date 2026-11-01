@@ -863,12 +863,10 @@ export async function handleUiRequest(
       // 账号路由的单元测试用 null 桩代替窗口库，生产环境两者始终存在。
       if (store) store.setOwner(userId);
       if (!userId) return;
-      try {
-        const organization = await client.orgMe();
-        if (organization?.identity === "owner" && store) store.claimUnowned(userId);
-      } catch {
-        // 服务不可达时保留未归属行（对所有账号都不可见），绝不猜测归属。
-      }
+      // 升级前导入的旧窗口没有归属。每台机器上第一个登录的账号认领它们：
+      // 员工自己的电脑上就是员工本人，公司共用机上就是先登录的那个人。
+      // 行一旦有主，之后的 claim 都是空操作，第二个账号不会抢走。
+      if (store) store.claimUnowned(userId);
       // 启动时还不知道账号，runs 表可能留着这个账号上次的启动记录；切到账号后
       // 再对一次账，死进程会被清掉，活着的会被重新接管。
       if (launcher?.reconcileOrphans) await launcher.reconcileOrphans().catch(() => undefined);
@@ -1225,6 +1223,46 @@ export async function handleUiRequest(
         const environments = await client.memberEnvironments(organization.orgId, memberId, req.signal);
         account.assertCurrent(revision);
         return noStoreJson({ ok: true, environments, userId: account.state().userId });
+      }
+      // 本机窗口（不是云端）：账号隔离后主列表只显示自己的窗口，所有者/管理员
+      // 需要在这里按账号核对"这台机器上他到底有没有窗口"。
+      if (req.method === "GET" && action === "local-windows") {
+        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
+        if (!store) return noStoreJson({ ok: false, error: "窗口库未就绪" }, 503);
+        const target = new URL(req.url).searchParams.get("userId") || account.state().userId || "";
+        const organization = await client.orgMe().catch(() => null);
+        const staff = !!organization && (organization.identity === "owner" || organization.identity === "admin");
+        if (!staff && target !== account.state().userId) {
+          return noStoreJson({ ok: false, error: "当前账号无权查看其他账号的窗口" }, 403);
+        }
+        return noStoreJson({
+          ok: true,
+          windows: store.listProfilesForOwner(target).map((profile) => ({
+            id: profile.id, name: profile.name, group: profile.group,
+          })),
+        });
+      }
+      if (req.method === "GET" && action === "local-window-counts") {
+        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
+        if (!store) return noStoreJson({ ok: false, error: "窗口库未就绪" }, 503);
+        return noStoreJson({ ok: true, counts: store.localWindowCounts() });
+      }
+      // 分配／回收：同一台机器直接改本机窗口的归属，窗口数据不搬家。
+      if (req.method === "POST" && action === "reassign-window") {
+        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
+        if (!store) return noStoreJson({ ok: false, error: "窗口库未就绪" }, 503);
+        const body = await req.json().catch(() => null) as { profileId?: unknown; toUserId?: unknown } | null;
+        const profileId = typeof body?.profileId === "string" ? body.profileId : "";
+        const toUserId = typeof body?.toUserId === "string" ? body.toUserId : "";
+        if (!profileId || !isNanfuUuid(toUserId)) return noStoreJson({ ok: false, error: "窗口编号或目标账号无效" }, 400);
+        const organization = await client.orgMe().catch(() => null);
+        if (!organization || !(organization.identity === "owner" || organization.identity === "admin")) {
+          return noStoreJson({ ok: false, error: "只有所有者或管理员可以分配窗口" }, 403);
+        }
+        if (!store.reassignOwner(profileId, toUserId)) {
+          return noStoreJson({ ok: false, error: "窗口不存在，或归属没有变化" }, 404);
+        }
+        return noStoreJson({ ok: true });
       }
       if (req.method === "GET" && ["organization", "environments"].includes(action)) {
         if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);

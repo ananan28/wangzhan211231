@@ -171,6 +171,24 @@ export function fetchNanfuMemberEnvironments(
   return nanfuJson(`member-environments?userId=${encodeURIComponent(userId)}`, { signal });
 }
 
+/** 本机（不是云端）某账号名下的窗口，所有者/管理员用来核对员工窗口。 */
+export interface NanfuLocalWindow { id: string; name: string; group: string }
+export function fetchNanfuLocalWindows(userId?: string, signal?: AbortSignal): Promise<{ windows: NanfuLocalWindow[] }> {
+  return nanfuJson(`local-windows${userId ? `?userId=${encodeURIComponent(userId)}` : ""}`, { signal });
+}
+
+export function fetchNanfuLocalWindowCounts(signal?: AbortSignal): Promise<{ counts: Record<string, number> }> {
+  return nanfuJson("local-window-counts", { signal });
+}
+
+/** 分配／回收：同一台机器直接改本机窗口归属，窗口数据不搬家。 */
+export function reassignNanfuWindow(profileId: string, toUserId: string, signal?: AbortSignal): Promise<{ ok: true }> {
+  return nanfuJson("reassign-window", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ profileId, toUserId }), signal,
+  });
+}
+
 export function fetchNanfuTransfers(signal?: AbortSignal): Promise<{ userId: string; result: NanfuEnvTransfer[] }> {
   return nanfuJson("transfers", { signal });
 }

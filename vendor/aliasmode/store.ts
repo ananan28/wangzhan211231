@@ -318,6 +318,26 @@ export class ProfileStore {
       .all();
   }
 
+  /** One account's local windows, regardless of who is signed in (owner/admin assignment). */
+  listProfilesForOwner(ownerUserId: string): Profile[] {
+    const owner = ownerUserId.trim();
+    if (!owner) return [];
+    return this.db
+      .query<any, [string]>(`SELECT * FROM profiles WHERE trashed_at = 0 AND owner_user_id = ? ORDER BY id`)
+      .all(owner)
+      .map(rowToProfile);
+  }
+
+  /** Local window counts per account, for the roster's "本机" figure. */
+  localWindowCounts(): Record<string, number> {
+    const rows = this.db
+      .query<{ owner: string; n: number }, []>(
+        `SELECT owner_user_id AS owner, COUNT(*) AS n FROM profiles WHERE trashed_at = 0 GROUP BY owner_user_id`,
+      )
+      .all();
+    return Object.fromEntries(rows.map((row) => [row.owner, row.n]));
+  }
+
   /**
    * Move one window to another account on this machine. The transfer itself is
    * a cloud ownership change; this keeps the local cache in step, so the window
