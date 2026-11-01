@@ -839,17 +839,18 @@ export async function handleUiRequest(
     // 从头就是空工作区，绝不会看到别人的窗口。
     const scopeStoreToAccount = async (): Promise<void> => {
       const userId = account.state().userId;
-      store.setOwner(userId);
+      // 账号路由的单元测试用 null 桩代替窗口库，生产环境两者始终存在。
+      if (store) store.setOwner(userId);
       if (!userId) return;
       try {
         const organization = await client.orgMe();
-        if (organization?.identity === "owner") store.claimUnowned(userId);
+        if (organization?.identity === "owner" && store) store.claimUnowned(userId);
       } catch {
         // 服务不可达时保留未归属行（对所有账号都不可见），绝不猜测归属。
       }
       // 启动时还不知道账号，runs 表可能留着这个账号上次的启动记录；切到账号后
       // 再对一次账，死进程会被清掉，活着的会被重新接管。
-      await launcher.reconcileOrphans().catch(() => undefined);
+      if (launcher?.reconcileOrphans) await launcher.reconcileOrphans().catch(() => undefined);
     };
     try {
       // 第一步：生成带 PKCE 的 Google 授权地址。verifier 只留在本进程内，
@@ -1021,7 +1022,7 @@ export async function handleUiRequest(
 
       if (action === "state" && req.method === "GET") {
         // 每次读取都对齐一次归属：进程重启后第一次请求就把窗口范围切成当前账号。
-        store.setOwner(account.state().userId);
+        if (store) store.setOwner(account.state().userId);
         return noStoreJson({ ok: true, state: account.state(), persistent });
       }
       // Accounts an administrator created sign in with <name>@nanfu.local and
@@ -1079,7 +1080,7 @@ export async function handleUiRequest(
         client.cancelVisibleRequests();
         if (action === "signout") {
           await account.signOut();
-          store.setOwner("");
+          if (store) store.setOwner("");
           return noStoreJson({ ok: true, state: account.state(), persistent });
         }
         if (action === "restore") {
