@@ -77,6 +77,7 @@ import {
   ensureCloakBrowser,
   hostDisplayAvail,
   hostDisplayScale,
+  packagedChromiumExecutableSha256,
   pruneBrowserRuntimes,
   supportsChromium155Host,
 } from "./aliasmode-chromium.ts";
@@ -1118,7 +1119,7 @@ export class Launcher {
 
   /** Validate the deployment pin without reading the configured binary. */
   private approvedBinarySha256(engine: BinaryKind = "chromium"): string {
-    if (engine === "aliasmode") return ALIASMODE_CHROMIUM_EXECUTABLE_SHA256;
+    if (engine === "aliasmode") return packagedChromiumExecutableSha256() ?? ALIASMODE_CHROMIUM_EXECUTABLE_SHA256;
     if (engine === "chromium" && this.downloadsCloakBrowser()) {
       return cloakBrowserExecutableSha256(this.hostPlatform, this.hostArch)!;
     }

@@ -34,6 +34,59 @@ fn main() {
             "Chromium metadata must match the approved Windows runtime"
         );
         assert!(parsed.get("firefox").is_none(), "Windows metadata must not require Firefox");
+    } else if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        // The Nanfu macOS bundle ships the Chromium kernel instead of AliasMode Firefox. The
+        // kernel is built per run, so only its shape is pinned here; the packager measures the
+        // executable hash after signing and ./src/browser.rs verifies the shipped copy against it.
+        let chromium = parsed
+            .get("chromium")
+            .and_then(|value| value.as_object())
+            .expect("browser metadata is missing chromium");
+        for key in ["executable", "sha256", "archiveSha256", "version"] {
+            assert!(
+                chromium
+                    .get(key)
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|value| !value.is_empty()),
+                "Chromium metadata is missing {key}"
+            );
+        }
+        assert!(parsed.get("firefox").is_none(), "macOS metadata must not require Firefox");
+        let executable = chromium
+            .get("executable")
+            .and_then(|value| value.as_str())
+            .expect("Chromium metadata is missing executable");
+        assert!(
+            !executable.starts_with('/')
+                && !executable.starts_with('\\')
+                && !executable.contains(':')
+                && executable
+                    .split(['/', '\\'])
+                    .all(|component| !component.is_empty() && component != "." && component != "..")
+                && executable.ends_with("Chromium.app/Contents/MacOS/Chromium"),
+            "Chromium metadata executable path is unsafe"
+        );
+        let version = chromium
+            .get("version")
+            .and_then(|value| value.as_str())
+            .expect("Chromium metadata is missing version");
+        assert!(
+            version.split('.').count() >= 3
+                && version.split('.').all(|part| part.parse::<u32>().is_ok()),
+            "Chromium metadata version must be a dotted number: the runtime directory is chromium-<version>"
+        );
+        for key in ["sha256", "archiveSha256"] {
+            let sha256 = chromium
+                .get(key)
+                .and_then(|value| value.as_str())
+                .expect("Chromium metadata is missing hash");
+            assert!(
+                sha256.len() == 64
+                    && sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    && sha256.bytes().any(|byte| byte != b'0'),
+                "Chromium metadata has an invalid {key}"
+            );
+        }
     } else {
         let firefox = parsed
             .get("firefox")

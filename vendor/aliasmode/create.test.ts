@@ -72,9 +72,9 @@ test("buildNewProfile rejects an unknown browser engine", () => {
   expect(() => buildNewProfile({ engine: "webkit" as any }, () => false)).toThrow("unsupported profile engine");
 });
 
-test("new profiles default to AliasMode Chromium on Windows and AliasMode Firefox on macOS and Linux", () => {
+test("new profiles default to AliasMode Chromium on Windows and macOS and AliasMode Firefox on Linux", () => {
   expect(defaultProfileEngine("win32")).toBe("chromium");
-  expect(defaultProfileEngine("darwin")).toBe("firefox");
+  expect(defaultProfileEngine("darwin")).toBe("chromium");
   expect(defaultProfileEngine("linux")).toBe("firefox");
   expect(buildNewProfile({}, () => false).engine).toBe(defaultProfileEngine());
 

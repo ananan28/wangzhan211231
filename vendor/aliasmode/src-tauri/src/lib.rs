@@ -425,12 +425,21 @@ pub fn run() {
             credentials::set_secret_dir(&data_dir);
 
             let resource_dir = app.path().resource_dir()?;
-            let firefox = if cfg!(windows) {
+            // The Nanfu desktop app ships Chromium on Windows and macOS; only Linux still bundles
+            // AliasMode Firefox.
+            let firefox = if cfg!(any(windows, target_os = "macos")) {
                 None
             } else {
                 let mut runtime = browser::verify_firefox_resource(&resource_dir).map_err(boxed)?;
                 runtime.executable = cli_compatible_windows_path(&runtime.executable);
                 Some(runtime)
+            };
+            // The macOS app bundle carries its own Chromium kernel; hand it to the sidecar so a
+            // profile opens without downloading one.
+            let chromium = if cfg!(target_os = "macos") {
+                Some(browser::verify_chromium_resource(&resource_dir).map_err(boxed)?)
+            } else {
+                None
             };
             let playwright_runtime = cli_compatible_windows_path(
                 &resource_dir
@@ -500,6 +509,7 @@ pub fn run() {
                 &handle,
                 &data_dir,
                 firefox.as_ref(),
+                chromium.as_ref(),
                 &playwright_runtime,
                 &nonce,
                 &agent_nonce,

@@ -185,9 +185,25 @@ export function cloakBrowserExecutableSha256(platform: NodeJS.Platform, arch: st
   return cloakBrowser(platform, arch)?.executableSha256;
 }
 
+/**
+ * The executable SHA-256 the desktop app recorded for the Chromium 155 it staged beside itself.
+ * The Nanfu macOS kernel is built per run, so its hash is measured at packaging time; the sidecar
+ * receives it in NANFU_CHROMIUM_EXECUTABLE_SHA256 together with NANFU_CHROMIUM_RUNTIME_DIR.
+ */
+export function packagedChromiumExecutableSha256(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const recorded = env.NANFU_CHROMIUM_EXECUTABLE_SHA256?.trim().toLowerCase();
+  return recorded && /^[a-f0-9]{64}$/.test(recorded) ? recorded : undefined;
+}
+
 /** The computers that can run Chromium 155. */
-export function supportsChromium155Host(platform: NodeJS.Platform, arch: string): boolean {
-  return (platform === "win32" && arch === "x64") || (platform === "darwin" && arch === "arm64")
+export function supportsChromium155Host(
+  platform: NodeJS.Platform,
+  arch: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (platform === "win32" && arch === "x64")
+    // Upstream publishes no Intel Mac build; an app that ships its own kernel can still run one.
+    || (platform === "darwin" && (arch === "arm64" || (arch === "x64" && !!env.NANFU_CHROMIUM_RUNTIME_DIR)))
     || (platform === "linux" && arch === "x64");
 }
 
@@ -210,9 +226,15 @@ export function linuxChromiumSandboxBlocked(
   return !exists(LINUX_CHROMIUM_APPARMOR_PROFILE);
 }
 
-/** New Chromium profiles made on an Apple Silicon Mac use this runtime, unless a CloakBrowser binary is configured. */
+/**
+ * New Chromium profiles made on an Apple Silicon Mac use this runtime, unless a CloakBrowser binary is configured.
+ * An Intel Mac uses it only when the app ships the kernel itself (NANFU_CHROMIUM_RUNTIME_DIR).
+ */
 export function hostChromiumRuntime(platform = process.platform, env = process.env, arch: string = process.arch): "aliasmode" | undefined {
-  return platform === "darwin" && arch === "arm64" && !env.CLOAKBROWSER_BINARY_PATH ? "aliasmode" : undefined;
+  return platform === "darwin" && !env.CLOAKBROWSER_BINARY_PATH
+    && (arch === "arm64" || (arch === "x64" && !!env.NANFU_CHROMIUM_RUNTIME_DIR))
+    ? "aliasmode"
+    : undefined;
 }
 
 /** New Chromium profiles that name no runtime use Chromium 155 wherever this computer can run it. */
@@ -335,18 +357,36 @@ function partialName(spec: PinnedRuntime): string {
 }
 
 /**
- * The copy that the Windows installer ships next to the app, so a fresh install opens a
+ * The copy that the installer ships next to the app, so a fresh install opens a
  * profile without downloading anything. NANFU_CHROMIUM_RUNTIME_DIR points at it directly.
+ *
+ * Windows installs it under the application folder; a macOS app bundle carries it in
+ * Contents/Resources/chromium/<chromium-version>/Chromium.app, which Tauri maps from
+ * src-tauri/resources/chromium/. The packaged kernel records its own hash, so the
+ * Nanfu macOS build verifies the copy it actually staged rather than an upstream pin.
  */
 async function bundledRuntime(spec: PinnedRuntime, hashFile: (path: string) => Promise<string>, platform: NodeJS.Platform): Promise<string | null> {
-  if (platform !== "win32" || spec.runtime !== "aliasmode") return null;
+  if (spec.runtime !== "aliasmode") return null;
   const installed = dirname(process.execPath);
-  const directories = process.env.NANFU_CHROMIUM_RUNTIME_DIR
-    ? [process.env.NANFU_CHROMIUM_RUNTIME_DIR]
-    : [join(installed, "chromium", spec.dir), join(installed, "resources", "chromium", spec.dir)];
+  const expected = packagedChromiumExecutableSha256() ?? spec.executableSha256;
+  const override = process.env.NANFU_CHROMIUM_RUNTIME_DIR;
+  if (override) {
+    // The desktop app verified this copy before starting the sidecar; a mismatch is tampering, not
+    // a reason to download a different kernel.
+    const executable = join(override, spec.executable);
+    if (!existsSync(executable) || await hashFile(executable) !== expected) {
+      throw new Error("the Chromium runtime packaged with the app did not match its recorded SHA-256");
+    }
+    return executable;
+  }
+  const directories = platform === "win32"
+    ? [join(installed, "chromium", spec.dir), join(installed, "resources", "chromium", spec.dir)]
+    : platform === "darwin"
+      ? [join(installed, "..", "Resources", "chromium", spec.dir)]
+      : [];
   for (const directory of directories) {
     const executable = join(directory, spec.executable);
-    if (existsSync(executable) && await hashFile(executable) === spec.executableSha256) return executable;
+    if (existsSync(executable) && await hashFile(executable) === expected) return executable;
   }
   return null;
 }

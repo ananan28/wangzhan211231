@@ -12,12 +12,14 @@ const FIREFOX_EXECUTABLE_NAME: &str = if cfg!(windows) {
 } else {
     "aliasmode"
 };
+const CHROMIUM_EXECUTABLE_NAME: &str = "Chromium";
 
 /// No installer carries CloakBrowser: the sidecar downloads it on first use.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BrowserMetadata {
-    firefox: FirefoxMetadata,
+    firefox: Option<FirefoxMetadata>,
+    chromium: Option<ChromiumMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,9 +31,30 @@ struct FirefoxMetadata {
     archive_sha256: String,
 }
 
+/// The Nanfu desktop app ships Chromium instead of Firefox on Windows and macOS. Windows verifies
+/// the copy it installed from the sidecar's pins; the macOS app bundle verifies it here, because
+/// the kernel is built per run and the packager records its executable hash in browser.json.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChromiumMetadata {
+    executable: String,
+    sha256: String,
+    version: String,
+    archive_sha256: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct FirefoxRuntime {
     pub executable: PathBuf,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChromiumRuntime {
+    /// The executable inside the app bundle's Resources.
+    pub executable: PathBuf,
+    /// The directory that holds Chromium.app, which the sidecar stages as NANFU_CHROMIUM_RUNTIME_DIR.
+    pub runtime_dir: PathBuf,
     pub sha256: String,
 }
 
@@ -103,23 +126,64 @@ fn verify_resource(
 
 pub fn verify_firefox_resource(resource_dir: &Path) -> Result<FirefoxRuntime, String> {
     let metadata = embedded_metadata()?;
-    if metadata.firefox.version != FIREFOX_VERSION
-        || Path::new(&metadata.firefox.executable)
+    let firefox = metadata
+        .firefox
+        .ok_or_else(|| "packaged AliasMode Firefox metadata is missing".to_owned())?;
+    if firefox.version != FIREFOX_VERSION
+        || Path::new(&firefox.executable)
             .file_name()
             .is_none_or(|name| name != FIREFOX_EXECUTABLE_NAME)
-        || !is_sha256(&metadata.firefox.sha256)
-        || !is_sha256(&metadata.firefox.archive_sha256)
+        || !is_sha256(&firefox.sha256)
+        || !is_sha256(&firefox.archive_sha256)
     {
         return Err("packaged AliasMode Firefox metadata is not approved".to_owned());
     }
     let (executable, sha256) = verify_resource(
         resource_dir,
         "firefox",
-        &metadata.firefox.executable,
-        &metadata.firefox.sha256,
+        &firefox.executable,
+        &firefox.sha256,
         "AliasMode Firefox",
     )?;
     Ok(FirefoxRuntime { executable, sha256 })
+}
+
+/// Verify the Chromium 155 kernel the macOS app bundle ships under Resources/chromium/.
+///
+/// The packager stages `<version>/Chromium.app` and records the executable's SHA-256, so the
+/// certificate that matters is the one measured after it was signed, not an upstream pin.
+pub fn verify_chromium_resource(resource_dir: &Path) -> Result<ChromiumRuntime, String> {
+    let metadata = embedded_metadata()?;
+    let chromium = metadata
+        .chromium
+        .ok_or_else(|| "packaged Chromium metadata is missing".to_owned())?;
+    let executable_path = Path::new(&chromium.executable);
+    if chromium.version.is_empty()
+        || chromium.version.contains(['/', '\\', ':'])
+        || executable_path
+            .file_name()
+            .is_none_or(|name| name != CHROMIUM_EXECUTABLE_NAME)
+        || !is_sha256(&chromium.sha256)
+        || !is_sha256(&chromium.archive_sha256)
+    {
+        return Err("packaged Chromium metadata is not approved".to_owned());
+    }
+    // The sidecar's pins name the runtime directory chromium-<version>; keep packaging and lookup
+    // on that one convention.
+    let directory = format!("chromium-{}", chromium.version);
+    let relative = format!("{directory}/{}", chromium.executable);
+    let (executable, sha256) = verify_resource(
+        resource_dir,
+        "chromium",
+        &relative,
+        &chromium.sha256,
+        "Chromium",
+    )?;
+    Ok(ChromiumRuntime {
+        executable,
+        runtime_dir: resource_dir.join("chromium").join(directory),
+        sha256,
+    })
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -137,7 +201,16 @@ mod tests {
     fn reads_firefox_metadata() {
         let firefox = r#""firefox":{"executable":"aliasmode","sha256":"aa","version":"1","archiveSha256":"bb"}"#;
         let metadata: BrowserMetadata = serde_json::from_str(&format!("{{{firefox}}}")).unwrap();
-        assert_eq!(metadata.firefox.executable, "aliasmode");
+        assert_eq!(metadata.firefox.unwrap().executable, "aliasmode");
+    }
+
+    #[test]
+    fn reads_chromium_metadata_without_firefox() {
+        let chromium = r#""chromium":{"executable":"Chromium.app/Contents/MacOS/Chromium","sha256":"aa","version":"155.0.8059.85","archiveSha256":"bb"}"#;
+        let metadata: BrowserMetadata = serde_json::from_str(&format!("{{{chromium}}}")).unwrap();
+        let chromium = metadata.chromium.unwrap();
+        assert_eq!(chromium.version, "155.0.8059.85");
+        assert!(metadata.firefox.is_none());
     }
 
     #[test]

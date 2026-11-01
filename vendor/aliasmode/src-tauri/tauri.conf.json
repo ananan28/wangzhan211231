@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AliasMode",
-  "version": "0.1.0-beta.72",
+  "version": "0.1.0-beta.73",
   "identifier": "com.aliasmode.desktop",
   "build": {
     "frontendDist": "bootstrap"
@@ -17,9 +17,15 @@
     "publisher": "AliasMode",
     "copyright": "Copyright © 2026 Xreacher",
     "createUpdaterArtifacts": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico"],
-    "externalBin": ["binaries/aliasmode-sidecar"],
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/aliasmode-sidecar"
+    ],
     "resources": {
       "resources/playwright/": "playwright/"
     },

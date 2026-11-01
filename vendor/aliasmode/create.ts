@@ -97,11 +97,12 @@ export function defaultScreen(floor: { width: number; height: number } | null, r
 }
 
 /**
- * The engine of a new profile that names none: AliasMode Chromium on Windows and AliasMode
- * Firefox on macOS and Linux. CloakBrowser profiles on one computer can be linked to each other.
+ * The engine of a new profile that names none: AliasMode Chromium on Windows and macOS, AliasMode
+ * Firefox on Linux. The Nanfu desktop app ships no macOS Firefox, so a Mac opens Chromium profiles.
+ * CloakBrowser profiles on one computer can be linked to each other.
  */
 export function defaultProfileEngine(platform: NodeJS.Platform = process.platform): ProfileEngine {
-  return platform === "darwin" || platform === "linux" ? "firefox" : "chromium";
+  return platform === "linux" ? "firefox" : "chromium";
 }
 
 /** A unique profile id, collision-checked against `exists`. */

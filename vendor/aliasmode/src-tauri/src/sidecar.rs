@@ -1,4 +1,8 @@
-use crate::{browser::FirefoxRuntime, credentials, runtime_descriptor::RuntimeDescriptorState};
+use crate::{
+    browser::{ChromiumRuntime, FirefoxRuntime},
+    credentials,
+    runtime_descriptor::RuntimeDescriptorState,
+};
 use reqwest::{redirect::Policy, Client};
 use serde::Deserialize;
 use std::{
@@ -297,6 +301,8 @@ fn scrubbed_sidecar_command(app: &AppHandle) -> Result<Command, String> {
         .env("CLOAKBROWSER_DOWNLOAD_URL", "")
         .env("ALIASMODE_FIREFOX_BINARY_PATH", "")
         .env("ALIASMODE_FIREFOX_BINARY_SHA256", "")
+        .env("NANFU_CHROMIUM_RUNTIME_DIR", "")
+        .env("NANFU_CHROMIUM_EXECUTABLE_SHA256", "")
         .env("ALIASMODE_ACCESS_TOKEN", "")
         .env("ALIASMODE_REFRESH_TOKEN", "")
         .env("ALIASMODE_DEVICE_CREDENTIAL", "")
@@ -403,6 +409,7 @@ pub async fn launch_and_verify(
     app: &AppHandle,
     data_dir: &Path,
     firefox: Option<&FirefoxRuntime>,
+    chromium: Option<&ChromiumRuntime>,
     playwright_runtime: &Path,
     nonce: &str,
     agent_nonce: &str,
@@ -420,6 +427,13 @@ pub async fn launch_and_verify(
         command = command
             .env("ALIASMODE_FIREFOX_BINARY_PATH", &firefox.executable)
             .env("ALIASMODE_FIREFOX_BINARY_SHA256", &firefox.sha256);
+    }
+    // The macOS app bundle ships its Chromium kernel; the sidecar treats this copy as approved
+    // instead of the upstream pin it would otherwise download.
+    if let Some(chromium) = chromium {
+        command = command
+            .env("NANFU_CHROMIUM_RUNTIME_DIR", &chromium.runtime_dir)
+            .env("NANFU_CHROMIUM_EXECUTABLE_SHA256", &chromium.sha256);
     }
     // Chromium 155 on Windows draws pages at the primary display's scale, as Chrome does there.
     // New profiles get a screen no smaller than that display; Firefox profiles get the display.

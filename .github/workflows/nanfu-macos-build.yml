@@ -1,0 +1,132 @@
+# Nanfu macOS app build.
+#
+# Consumes a kernel artifact from a successful "Nanfu macOS kernel" run, stages it as the app's
+# bundled Chromium (scripts/prepare-macos-bundle.ts), then builds the Tauri app and the .dmg.
+# The Nanfu macOS app ships no Firefox: Chromium is the only engine, as on Windows.
+#
+# The kernel is not downloaded from a release. Dispatch the kernel workflow first, then pass its
+# run id here (Actions -> Nanfu macOS kernel -> the run -> the number in the URL).
+#
+# This workflow is a development build: it does not publish to R2 and it is not notarized, so the
+# .dmg opens only after the quarantine attribute is removed unless the kernel was Developer ID
+# signed and the shell is signed with the same team.
+name: Nanfu macOS build
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Target architecture (universal pairs the arm64 sidecar and Node with the arm64 kernel)"
+        type: choice
+        default: arm64
+        options:
+          - arm64
+          - x64
+          - universal
+      kernel_run_id:
+        description: "Run ID of a successful 'Nanfu macOS kernel' build (the number in its URL)"
+        type: string
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  build:
+    # macos-15 is Apple silicon and can cross-build x86_64 for the universal Rust binary;
+    # macos-15-intel is a native Intel host.
+    runs-on: ${{ inputs.arch == 'x64' && 'macos-15-intel' || 'macos-15' }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        working-directory: vendor/aliasmode
+    env:
+      TARGET_TRIPLE: ${{ inputs.arch == 'arm64' && 'aarch64-apple-darwin' || inputs.arch == 'x64' && 'x86_64-apple-darwin' || 'universal-apple-darwin' }}
+      NANFU_MACOS_TARGET: ${{ inputs.arch == 'arm64' && 'aarch64-apple-darwin' || inputs.arch == 'x64' && 'x86_64-apple-darwin' || 'universal' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.21"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ inputs.arch == 'arm64' && 'aarch64-apple-darwin' || inputs.arch == 'x64' && 'x86_64-apple-darwin' || 'aarch64-apple-darwin,x86_64-apple-darwin' }}
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Download the Chromium kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          # A universal app still carries one kernel; the arm64 kernel is the published one.
+          name: ${{ inputs.arch == 'x64' && 'nanfu-macos-kernel-macos-x64' || 'nanfu-macos-kernel-macos-arm64' }}
+          run-id: ${{ inputs.kernel_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ runner.temp }}/nanfu-kernel
+      - name: Resolve the kernel archive and its SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$(find "$RUNNER_TEMP/nanfu-kernel" -type f -name '*.zip' -print -quit)"
+          if [ -z "$archive" ]; then
+            echo "::error::the downloaded kernel artifact contains no .zip"
+            exit 1
+          fi
+          sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          echo "NANFU_CHROMIUM_ARCHIVE=$archive" >> "$GITHUB_ENV"
+          echo "NANFU_CHROMIUM_SHA256=$sha" >> "$GITHUB_ENV"
+          echo "Chromium kernel: $archive ($sha)"
+      - name: Prepare the bundle (kernel, sidecar, Playwright runtime)
+        run: bun scripts/prepare-macos-bundle.ts
+      - name: Build the app and the disk image
+        run: |
+          bunx tauri build \
+            --config src-tauri/nanfu.conf.json \
+            --config src-tauri/tauri.macos.conf.json \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}' \
+            --bundles app,dmg \
+            --target "$TARGET_TRIPLE"
+      - name: Verify the bundle carries the kernel and the runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="src-tauri/target/$TARGET_TRIPLE/release/bundle"
+          app="$(find "$bundle/macos" -maxdepth 1 -name '*.app' -print -quit)"
+          dmg="$(find "$bundle/dmg" -maxdepth 1 -name '*.dmg' -print -quit)"
+          if [ -z "$app" ] || [ -z "$dmg" ]; then
+            echo "::error::the build produced no .app or no .dmg"
+            exit 1
+          fi
+          kernel="$(find "$app/Contents/Resources/chromium" -type f -name Chromium -path '*/Contents/MacOS/*' -print -quit)"
+          if [ -z "$kernel" ]; then
+            echo "::error::the bundled Chromium kernel is missing from $app"
+            exit 1
+          fi
+          for required in \
+            "$app/Contents/Resources/playwright/node/node" \
+            "$app/Contents/MacOS/aliasmode-sidecar" \
+            "$app/Contents/MacOS/aliasmode-mcp"; do
+            if [ ! -f "$required" ]; then
+              echo "::error::a packaged runtime is missing: $required"
+              exit 1
+            fi
+          done
+          if [ -d "$app/Contents/Resources/firefox" ]; then
+            echo "::error::the macOS bundle must not ship Firefox"
+            exit 1
+          fi
+          echo "bundled kernel: $kernel"
+          lipo -archs "$kernel"
+          lipo -archs "$app/Contents/MacOS/aliasmode-sidecar"
+          codesign --verify --strict "$app"
+          codesign --verify --strict "$kernel"
+          shasum -a 256 "$dmg"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/nanfu-macos-${{ inputs.arch }}-app.zip"
+      - name: Upload the macOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanfu-macos-${{ inputs.arch }}
+          path: |
+            vendor/aliasmode/src-tauri/target/${{ env.TARGET_TRIPLE }}/release/bundle/dmg/*.dmg
+            ${{ runner.temp }}/nanfu-macos-${{ inputs.arch }}-app.zip
+          if-no-files-found: error
+          retention-days: 7
