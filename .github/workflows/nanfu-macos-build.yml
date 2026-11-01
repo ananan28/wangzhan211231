@@ -81,14 +81,41 @@ jobs:
           unzip -Z1 "$archive" | grep -E 'Chromium\.app/Contents/MacOS/' | head -10 || true
       - name: Prepare the bundle (kernel, sidecar, Playwright runtime)
         run: bun scripts/prepare-macos-bundle.ts
-      - name: Build the app and the disk image
+      - name: Build the app bundle
         run: |
           bunx tauri build \
             --config src-tauri/nanfu.conf.json \
             --config src-tauri/tauri.macos.conf.json \
             --config '{"bundle":{"createUpdaterArtifacts":false}}' \
-            --bundles app,dmg \
+            --bundles app \
             --target "$TARGET_TRIPLE"
+      - name: Re-sign the copied bundles and create the disk image
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="src-tauri/target/$TARGET_TRIPLE/release/bundle"
+          app="$(find "$bundle/macos" -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$app" ]; then
+            echo "::error::the build produced no .app"
+            exit 1
+          fi
+          # Tauri copies resources file by file, which invalidates the nested
+          # Chromium signature. Re-seal the kernel app, then the outer app, and
+          # only then make the dmg so it carries the valid bundle.
+          kernel_app="$(find "$app/Contents/Resources/chromium" -type d -name 'Chromium.app' -print -quit || true)"
+          if [ -n "$kernel_app" ]; then
+            xattr -cr "$kernel_app"
+            codesign --force --deep --sign - "$kernel_app"
+            codesign --verify --deep --strict "$kernel_app"
+          fi
+          xattr -cr "$app"
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict "$app"
+          mkdir -p "$bundle/dmg"
+          dmg="$bundle/dmg/Nanfu-macos-${{ inputs.arch }}.dmg"
+          rm -f "$dmg"
+          hdiutil create -volname "南孚浏览器" -srcfolder "$app" -ov -format UDZO "$dmg"
+          ls -lh "$dmg"
       - name: Verify the bundle carries the kernel and the runtimes
         shell: bash
         run: |
@@ -121,8 +148,7 @@ jobs:
           echo "bundled kernel: $kernel"
           lipo -archs "$kernel"
           lipo -archs "$app/Contents/MacOS/aliasmode-sidecar"
-          codesign --verify --strict "$app"
-          codesign --verify --strict "$kernel"
+          codesign --verify --deep --strict "$app"
           shasum -a 256 "$dmg"
           ditto -c -k --keepParent "$app" "$RUNNER_TEMP/nanfu-macos-${{ inputs.arch }}-app.zip"
       - name: Upload the macOS build
