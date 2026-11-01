@@ -89,6 +89,10 @@ export async function probeServableGpus(
     clearTimeout(timer);
     return parseServableGpus(stderr);
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    try {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      /* a killed probe can hold the temp dir for a moment; leave it to the OS */
+    }
   }
 }

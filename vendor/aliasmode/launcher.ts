@@ -2028,7 +2028,7 @@ export class Launcher {
     if (profile.proxy) await this.persistWebRtcPolicyPreference(profileId);
     // Write the DNT pref both ways: turning it off in the app must clear a
     // signal an earlier launch left in Preferences.
-    if (profile.engine !== "firefox") await this.persistDoNotTrackPreference(profileId, profile.doNotTrack === true);
+    if (!profile.firefox) await this.persistDoNotTrackPreference(profileId, profile.doNotTrack === true);
 
     const port = allocatePort({
       ...this.portRange,
