@@ -284,11 +284,14 @@ export async function prepareMacosBundle(
     );
   }
   chmodSync(join(destination, MACOS_CHROMIUM_EXECUTABLE), 0o755);
+  // codesign needs the .app bundle; the version directory that contains it is not
+  // a bundle and is rejected as "unrecognized, invalid, or unsuitable".
+  const stagedApp = join(destination, "Chromium.app");
   // Quarantine or Finder metadata on a copied bundle makes codesign refuse to seal it.
-  await run(["xattr", "-cr", destination]);
-  await run(["codesign", "--force", "--deep", "--sign", "-", destination]);
-  if (await runQuietly(["codesign", "--verify", "--deep", "--strict", destination]) !== 0) {
-    throw new Error(`the staged Chromium kernel has an invalid code signature: ${destination}`);
+  await run(["xattr", "-cr", stagedApp]);
+  await run(["codesign", "--force", "--deep", "--sign", "-", stagedApp]);
+  if (await runQuietly(["codesign", "--verify", "--deep", "--strict", stagedApp]) !== 0) {
+    throw new Error(`the staged Chromium kernel has an invalid code signature: ${stagedApp}`);
   }
   const executable = join(destination, MACOS_CHROMIUM_EXECUTABLE);
   if (statSync(executable, { throwIfNoEntry: false })?.isFile() !== true) {
