@@ -331,10 +331,13 @@ async function removeArchives(store: ProfileStore, installed: ReadonlyArray<{ id
 }
 
 function importPlan(store: ProfileStore, pkg: NanfuEnvPackage) {
-  const profiles = store.listProfiles();
+  // Ids are globally unique in one machine store, so an import must avoid every
+  // account's ids and names — not just the signed-in account's. Otherwise an
+  // accept collides with another account's window and is rejected outright.
+  const all = store.listAllProfileIdentities();
   return planNanfuEnvImport(pkg, {
-    takenIds: [...profiles.map((profile) => profile.id), ...store.listTrashed().map((row) => row.id)],
-    takenNames: [...profiles.map((profile) => profile.name), ...store.listTrashed().map((row) => row.name)],
+    takenIds: all.map((row) => row.id),
+    takenNames: all.map((row) => row.name),
   });
 }
 

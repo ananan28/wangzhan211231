@@ -330,6 +330,11 @@ export class ProfileStore {
       .map(rowToProfile);
   }
 
+  /** Every local window id and name (all owners, active and trashed) for collision-free imports. */
+  listAllProfileIdentities(): Array<{ id: string; name: string }> {
+    return this.db.query<{ id: string; name: string }, []>("SELECT id, name FROM profiles").all();
+  }
+
   /** Local window counts per account, for the roster's "本机" figure. */
   localWindowCounts(): Record<string, number> {
     const rows = this.db
