@@ -1041,8 +1041,8 @@ function FingerprintSettings({
   const { t } = useTranslation();
   const storedGpu = gpuAnchor && gpuVendor && gpuRenderer ? `${gpuAnchor}\n${gpuVendor}\n${gpuRenderer}` : "";
   const memoryChoices = hardwareOptions?.memoryGb ?? [];
-  const hostPersona = /Mac/i.test(navigator.userAgent) ? "macos" : /Win/i.test(navigator.userAgent) ? "windows" : "linux";
-  const persona = platformOs || hostPersona;
+  const hostOs = hostPersona();
+  const persona = platformOs || hostOs;
   const gpuChoices = (hardwareOptions?.gpus ?? []).filter((gpu) => gpu.platform === persona);
   const gpuGroup = (anchor: string) => {
     if (anchor.includes("nvidia")) return "NVIDIA";
@@ -1100,10 +1100,13 @@ function FingerprintSettings({
           {onPlatformOsChange ? (
             <select value={platformOs} disabled={disabled} onChange={(event) => onPlatformOsChange(event.target.value)}>
               <option value="">{t("Automatic — match this computer")}</option>
-              <option value="windows">Windows</option>
-              <option value="macos">macOS</option>
-              <option value="linux">Linux</option>
+              {([["windows", "Windows"], ["macos", "macOS"], ["linux", "Linux"]] as const).map(([value, label]) => (
+                <option key={value} value={value} disabled={value !== hostOs}>
+                  {label}{value !== hostOs ? "（当前内核不支持跨系统）" : ""}
+                </option>
+              ))}
             </select>
+            {onPlatformOsChange && <small className="fp-note">当前内核只支持本机系统；跨系统窗口会启动失败。</small>}
           ) : (
             <input value={{ windows: "Windows", macos: "macOS", linux: "Linux" }[platformOs] ?? "Automatic"} readOnly tabIndex={-1} className="ro" />
           )}
@@ -1439,8 +1442,14 @@ async function storeDesktopCloudCredentials(
   return true;
 }
 
-const BLANK_FORM = {
-  name: "", engine: "chromium" as "chromium" | "firefox", chromiumRuntime: "" as "" | "aliasmode", group: "", platform: "", proxyType: "http", host: "", port: "", user: "", pass: "",
+/** The host OS this manager can actually launch: the 155 kernel dies on a cross-OS persona. */
+function hostPersona(): "windows" | "macos" | "linux" {
+  if (/Mac/i.test(navigator.userAgent)) return "macos";
+  if (/Win/i.test(navigator.userAgent)) return "windows";
+  return "linux";
+}
+
+const BLANK_FORM = {  name: "", engine: "chromium" as "chromium" | "firefox", chromiumRuntime: "" as "" | "aliasmode", group: "", platform: "", proxyType: "http", host: "", port: "", user: "", pass: "",
   screen: "", platformOs: "", locale: "", timezone: "", cores: "", memoryGb: "", gpuVendor: "", gpuRenderer: "", gpuAnchor: "", doNotTrack: "", seed: "", customNo: "", username: "", password: "", email: "", emailPassword: "", twofa: "",
 };
 
@@ -3250,6 +3259,10 @@ function App() {
       setCreateErr("批量创建时请留空自定义编号，避免编号重复");
       return;
     }
+    if (form.engine === "chromium" && form.platformOs && form.platformOs !== hostPersona()) {
+      setCreateErr("当前 Chromium 内核只支持本机操作系统；跨系统窗口会启动失败。请把操作系统改为本机系统。");
+      return;
+    }
     if (count >= 50 && !confirm(
       `即将创建 ${count} 个环境。\n\n` +
       `预估磁盘占用约 ${formatBatchDiskEstimate(count)}（按每个环境 300–600MB 估算，实际占用以创建结果为准）。\n\n` +
@@ -3462,6 +3475,9 @@ function App() {
     setEditSaving(true);
     setEditErr(null);
     try {
+      if (editEngine === "chromium" && editForm.platformOs && editForm.platformOs !== hostPersona()) {
+        throw new Error("当前 Chromium 内核只支持本机操作系统；跨系统窗口会启动失败。请把操作系统改为本机系统。");
+      }
       if (isCloudMode && !editLive && editExpectedVersion === null) throw new Error("Cloud profile version is missing; close and reopen Edit");
       const r = await updateProfile(editId, {
         name: editForm.name ?? "", group: editForm.group ?? "", platform: editForm.platform ?? "",

@@ -261,6 +261,7 @@ const PREFLIGHT_GUIDANCE = {
   proxy_https_auth: "Authenticated HTTPS proxies are unsupported. Use HTTP or SOCKS5.",
   persona_mobile: "This profile has a mobile user agent. Use a desktop browser profile.",
   persona_unsupported: "This profile's user agent has no recognized desktop platform. Check its saved browser identity.",
+  persona_cross_os: "This profile's saved operating system differs from this computer. The Chromium 155 kernel cannot start a cross-OS profile (its GPU process fails), so edit the profile and choose this computer's operating system.",
   firefox_configuration: "The saved Firefox configuration is missing or incompatible with this runtime. Use a matching AliasMode runtime and profile export.",
   firefox_extensions: "This Firefox profile contains Chrome extensions. Remove them before opening it.",
   firefox_host: "Firefox requires macOS, Linux x64, or Windows x64.",
@@ -1292,6 +1293,13 @@ export class Launcher {
     }
     if (isMobileUserAgent(profile.ua)) {
       throw new BrowserLaunchError("preflight", "persona_mobile");
+    }
+    // The 155 kernel's child processes die when the persona OS differs from
+    // the host (GPU process error 63), so refuse before spawning instead of
+    // leaving the operator with a window that never opens.
+    if (profile.chromiumRuntime === "aliasmode" && profile.platformOs) {
+      const hostOs = this.hostPlatform === "win32" ? "windows" : this.hostPlatform === "darwin" ? "macos" : "linux";
+      if (profile.platformOs !== hostOs) throw new BrowserLaunchError("preflight", "persona_cross_os");
     }
     // Cross-OS desktop spoofing is supported: CloakBrowser applies the persona's
     // platform/brand via --fingerprint-* flags regardless of the host OS (the
