@@ -1098,15 +1098,17 @@ function FingerprintSettings({
         <label className="fld">
           <span>{t("Operating system")}</span>
           {onPlatformOsChange ? (
-            <select value={platformOs} disabled={disabled} onChange={(event) => onPlatformOsChange(event.target.value)}>
-              <option value="">{t("Automatic — match this computer")}</option>
-              {([["windows", "Windows"], ["macos", "macOS"], ["linux", "Linux"]] as const).map(([value, label]) => (
-                <option key={value} value={value} disabled={value !== hostOs}>
-                  {label}{value !== hostOs ? "（当前内核不支持跨系统）" : ""}
-                </option>
-              ))}
-            </select>
-            {onPlatformOsChange && <small className="fp-note">当前内核只支持本机系统；跨系统窗口会启动失败。</small>}
+            <>
+              <select value={platformOs} disabled={disabled} onChange={(event) => onPlatformOsChange(event.target.value)}>
+                <option value="">{t("Automatic — match this computer")}</option>
+                {([["windows", "Windows"], ["macos", "macOS"], ["linux", "Linux"]] as const).map(([value, label]) => (
+                  <option key={value} value={value} disabled={engine === "chromium" && value !== hostOs}>
+                    {label}{engine === "chromium" && value !== hostOs ? "（当前内核不支持跨系统）" : ""}
+                  </option>
+                ))}
+              </select>
+              {engine === "chromium" && <small className="fp-note">当前内核只支持本机系统；跨系统窗口会启动失败。</small>}
+            </>
           ) : (
             <input value={{ windows: "Windows", macos: "macOS", linux: "Linux" }[platformOs] ?? "Automatic"} readOnly tabIndex={-1} className="ro" />
           )}
