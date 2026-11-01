@@ -271,12 +271,12 @@ export async function prepareMacosBundle(
   // Tauri copies resources file by file and rejects a directory symlink, while Chromium Framework
   // is held together by them (Versions/Current, the framework binary, the helper apps). Resolve
   // them here so the staged bundle is exactly what the bundler will ship, and sign that tree.
-  // Copy the bundle CONTENTS (src/.) into a directory we create ourselves. `cp -R
-  // <app> <dest>` nests the app under dest when dest already exists, which then
-  // breaks every later path; this form is deterministic either way.
+  // Make the version directory first, then copy the app INTO it: dest exists, so
+  // `cp -R <app> <dest>` deterministically produces dest/Chromium.app/... .
+  // Without the mkdir, cp would flatten the bundle's Contents into dest instead.
   await run(["rm", "-rf", destination]);
   mkdirSync(destination, { recursive: true });
-  await run(["cp", "-R", "-L", `${app}/.`, `${destination}/`]);
+  await run(["cp", "-R", "-L", app, destination]);
   const remainingLinks = (await capture(["find", destination, "-type", "l"])).trim();
   if (remainingLinks) {
     throw new Error(
