@@ -125,6 +125,7 @@ function AddAccountDialog({ overview, owner, admin, currentUserId, busy, onMutat
   const [inputError, setInputError] = useState("");
   const [saving, setSaving] = useState(false);
   const usernameRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const self = overview.members.find(member => member.userId === currentUserId);
   const initialParent = self && self.identity !== "owner" ? currentUserId : "";
   const [parent, setParent] = useState(initialParent);
@@ -171,10 +172,10 @@ function AddAccountDialog({ overview, owner, admin, currentUserId, busy, onMutat
     onClose={onClose}
     footer={<>
       <button className="btn" type="button" disabled={busy || saving} onClick={onClose}>取消</button>
-      <button className="btn primary" type="submit" form="nanfu-add-account-form" disabled={busy || saving}>确定</button>
+      <button className="btn primary" type="button" disabled={busy || saving} onClick={() => formRef.current?.requestSubmit()}>确定</button>
     </>}
   >
-    <form id="nanfu-add-account-form" className="nanfu-dialog-form" aria-label="添加账号" onSubmit={event => void submit(event)}>
+    <form ref={formRef} id="nanfu-add-account-form" className="nanfu-dialog-form" aria-label="添加账号" onSubmit={event => void submit(event)}>
       <p className="nanfu-hint">直接填登录名和密码就能建号：不需要对方先注册，也不需要邀请码。</p>
 
       <label className="fld"><span>姓名 <b className="req">*</b></span>

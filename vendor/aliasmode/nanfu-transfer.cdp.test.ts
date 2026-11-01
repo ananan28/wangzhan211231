@@ -357,8 +357,10 @@ test.skipIf(!enabled)("staff account forms validate and remain usable in real Ch
     const confirmAdd = page.locator(".nanfu-dialog .modal-foot").getByRole("button", { name: "确定", exact: true });
     const created = [{ action: "create-account", input: {
       email: "测试员工", password: "Fixture123", identity: "member", quota: 0,
-      managerUserId: undefined, roleId: undefined, groupIds: [], name: undefined,
+      managerUserId: undefined, roleId: undefined, groupIds: [], name: "合成员工",
     } }];
+    // 姓名是必填项：不填，浏览器的原生校验会先拦下提交，根本到不了业务校验。
+    await add.locator('[name="name"]').fill("合成员工");
 
     // Invalid input is rejected in place and never reaches the mutation channel.
     for (const [name, password, message] of [
