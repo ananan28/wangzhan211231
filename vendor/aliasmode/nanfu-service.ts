@@ -27,6 +27,10 @@ export interface NanfuRuntime {
    */
   sync?: { cipher: NanfuCipher; userId: string; deviceId: string };
   syncHookInstalled?: boolean;
+  /** The single-active-computer slot this process holds, with its heartbeat. */
+  activeDevice?: { userId: string; deviceId: string; sessionId: string; timer: ReturnType<typeof setInterval> };
+  /** True after another computer took the slot and this session signed out. */
+  kicked?: boolean;
 }
 
 export function createNanfuRuntime(options: NanfuServiceLoadOptions & {

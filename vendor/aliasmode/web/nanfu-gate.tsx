@@ -28,6 +28,10 @@ export function NanfuGate({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     const result = await fetchNanfuState();
     setAccount(result.state);
+    // 同一账号在另一台电脑登录后，本机被抢占；下一次心跳会退出登录。
+    if (result.kicked) {
+      setError("账号已在另一台电脑登录，本机已退出。若要在本机继续，请先在那台电脑退出后再登录。");
+    }
     return result.state;
   }, []);
 

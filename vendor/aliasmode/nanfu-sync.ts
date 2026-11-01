@@ -640,6 +640,48 @@ export class NanfuSyncClient {
     return rows.map(deviceKeyRow);
   }
 
+  /** Claim the one active-computer slot; the newest sign-in wins. */
+  async claimActiveDevice(userId: string, deviceId: string, sessionId: string): Promise<{ kickedOther: boolean }> {
+    if (!isNanfuUuid(userId)) throw new NanfuSyncError("账号编号无效", 400);
+    const query = new URLSearchParams({ select: "device_id", user_id: `eq.${userId}` });
+    const rows = await this.request(`/nanfu_active_device?${query}`, { method: "GET" });
+    const existing = Array.isArray(rows) ? rows[0] : undefined;
+    const kickedOther = !!existing && String(existing.device_id) !== deviceId;
+    await this.request(`/nanfu_active_device?on_conflict=user_id`, {
+      method: "POST",
+      headers: { prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify([{
+        user_id: userId,
+        device_id: deviceId,
+        session_id: sessionId,
+        signed_in_at: new Date().toISOString(),
+        last_seen_at: new Date().toISOString(),
+      }]),
+    });
+    return { kickedOther };
+  }
+
+  /** Refresh this session's hold; false means another computer took the slot. */
+  async heartbeatActiveDevice(userId: string, deviceId: string, sessionId: string): Promise<boolean> {
+    const query = new URLSearchParams({
+      user_id: `eq.${userId}`, device_id: `eq.${deviceId}`, session_id: `eq.${sessionId}`,
+    });
+    const rows = await this.request(`/nanfu_active_device?${query}`, {
+      method: "PATCH",
+      headers: { prefer: "return=representation" },
+      body: JSON.stringify({ last_seen_at: new Date().toISOString() }),
+    });
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
+  /** Give the slot back on a clean sign-out. */
+  async releaseActiveDevice(userId: string, deviceId: string, sessionId: string): Promise<void> {
+    const query = new URLSearchParams({
+      user_id: `eq.${userId}`, device_id: `eq.${deviceId}`, session_id: `eq.${sessionId}`,
+    });
+    await this.request(`/nanfu_active_device?${query}`, { method: "DELETE", headers: { prefer: "return=minimal" } });
+  }
+
   /**
    * Store one sealed package in this account's personal slot. The slot is
    * keyed by (account, environment), so uploading again replaces the package

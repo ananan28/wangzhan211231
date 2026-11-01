@@ -9,7 +9,7 @@
  * cookie values, or proxy credentials. Same rule the `inspect` command follows.
  */
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { BrowserLaunchError, platformHomeUrl, type Launcher } from "./launcher.ts";
 import type { ProfileStore } from "./store.ts";
@@ -882,6 +882,46 @@ export async function handleUiRequest(
       // 再对一次账，死进程会被清掉，活着的会被重新接管。
       if (launcher?.reconcileOrphans) await launcher.reconcileOrphans().catch(() => undefined);
     };
+    // 一个账号只允许一台电脑在线：新登录抢占槽位，旧电脑在下一次心跳（≤60 秒）
+    // 发现槽位已易主就自动退出。没有跨设备实时通道，就用这把锁避免两台电脑
+    // 同时改窗口互相覆盖。
+    const startActiveDevice = async (): Promise<void> => {
+      const userId = account.state().userId;
+      if (!userId || !options.paths) return;
+      if (nanfu.activeDevice) {
+        clearInterval(nanfu.activeDevice.timer);
+        nanfu.activeDevice = undefined;
+      }
+      const deviceId = nanfuDeviceId(options.paths.root);
+      const sessionId = randomUUID();
+      try {
+        await client.claimActiveDevice(userId, deviceId, sessionId);
+      } catch {
+        // 账号服务不可达时不阻断登录；联网后会随下次登录重新登记。
+        return;
+      }
+      nanfu.kicked = false;
+      const timer = setInterval(() => {
+        void (async () => {
+          try {
+            const alive = await client.heartbeatActiveDevice(userId, deviceId, sessionId);
+            if (!alive) {
+              clearInterval(timer);
+              nanfu.activeDevice = undefined;
+              nanfu.kicked = true;
+              await account.signOut().catch(() => undefined);
+              if (store) store.setOwner("");
+            }
+          } catch {
+            // 网络抖动：下一次心跳继续确认。
+          }
+        })();
+      }, 60_000);
+      if (typeof timer === "object" && timer && "unref" in timer) {
+        (timer as unknown as { unref: () => void }).unref();
+      }
+      nanfu.activeDevice = { userId, deviceId, sessionId, timer };
+    };
     try {
       // 第一步：生成带 PKCE 的 Google 授权地址。verifier 只留在本进程内，
       // 浏览器拿到的只有 code_challenge 和一次性的 state。
@@ -1031,6 +1071,7 @@ export async function handleUiRequest(
           account.assertCurrent(revision);
           const selfJoin = await joinOrganization();
           await scopeStoreToAccount();
+          await startActiveDevice();
           // 会话已经生效，转移密钥发布失败只影响后续转移，不能把登录判成失败。
           try {
             publishTransferKey();
@@ -1053,7 +1094,7 @@ export async function handleUiRequest(
       if (action === "state" && req.method === "GET") {
         // 每次读取都对齐一次归属：进程重启后第一次请求就把窗口范围切成当前账号。
         if (store) store.setOwner(account.state().userId);
-        return noStoreJson({ ok: true, state: account.state(), persistent });
+        return noStoreJson({ ok: true, state: account.state(), persistent, kicked: nanfu.kicked === true });
       }
       // Accounts an administrator created sign in with <name>@nanfu.local and
       // keep that name; only self-registered addresses may choose their own.
@@ -1109,6 +1150,13 @@ export async function handleUiRequest(
       if (req.method === "POST" && ["signup", "signin", "restore", "signout"].includes(action)) {
         client.cancelVisibleRequests();
         if (action === "signout") {
+          if (nanfu.activeDevice) {
+            const { userId, deviceId, sessionId, timer } = nanfu.activeDevice;
+            clearInterval(timer);
+            nanfu.activeDevice = undefined;
+            void client.releaseActiveDevice(userId, deviceId, sessionId).catch(() => undefined);
+          }
+          nanfu.kicked = false;
           await account.signOut();
           nanfu.sync = undefined;
           if (store) store.setOwner("");
@@ -1119,6 +1167,7 @@ export async function handleUiRequest(
           const selfJoin = state.authenticated ? await joinOrganization() : { ok: true };
           if (state.authenticated) {
             await scopeStoreToAccount();
+            await startActiveDevice();
             publishTransferKey();
           } else if (store) {
             store.setOwner("");
@@ -1184,6 +1233,7 @@ export async function handleUiRequest(
             // 云端同步是增强能力，不能阻断登录。
           }
         }
+        await startActiveDevice();
         // An invite code taken at sign-in is redeemed instead of claiming the
         // default seat, otherwise the invitation could never be used again.
         const invite = typeof body.invite === "string" ? body.invite.trim() : "";

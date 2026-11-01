@@ -70,7 +70,7 @@ async function nanfuJson(path: string, init?: RequestInit): Promise<any> {
   return body;
 }
 
-export function fetchNanfuState(signal?: AbortSignal): Promise<{ state: NanfuAccountState; persistent: boolean }> {
+export function fetchNanfuState(signal?: AbortSignal): Promise<{ state: NanfuAccountState; persistent: boolean; kicked?: boolean }> {
   return nanfuJson("state", { signal });
 }
 
