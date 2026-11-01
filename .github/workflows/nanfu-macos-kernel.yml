@@ -1,0 +1,279 @@
+# Nanfu macOS kernel build.
+#
+# Purpose: build the AliasMode-patched Chromium 155.0.8059.85 for macOS so the
+# Nanfu app can ship a macOS kernel, matching what the Windows build already
+# consumes (aliasmode-chromium-155.0.8059.85-windows-x64.zip).
+#
+# The heavy lifting is delegated to the vendored engine pipeline at
+# vendor/aliasmode-chromium/scripts/{bootstrap,fetch-sources,apply-patches,
+# configure,build,package-artifact,sign-macos}.sh, which pins depot_tools,
+# Chromium, the patch series and the GN args in vendor/aliasmode-chromium/build/.
+#
+# RUNNER REALITY (important):
+#   * GitHub-hosted macOS runners are NOT usable here. A full Chromium build
+#     needs ~68 GB (50 GB checkout + 16 GB out/ + depot_tools), and hosted
+#     macOS images ship ~14 GB of disk. This runs on a self-hosted Apple
+#     Silicon Mac (label below), which also carries the pinned macOS 26.5 SDK.
+#   * scripts/prepare-mac-sdk.sh REFUSES any SDK other than build/MAC_SDK_VERSION
+#     (26.5) and build/MAC_SDK_BUILD (25F70). Install full Xcode + that SDK
+#     before dispatching; scripts/verify-host-tooling.sh names every gap.
+#
+# macOS SDK: vendor/aliasmode-chromium/build/MAC_SDK_VERSION pins 26.5
+# (build 25F70). scripts/prepare-mac-sdk.sh resolves it and links it into
+# out/<target>/sdk/xcode_links, and configure.sh writes mac_sdk_path into
+# args.gn.
+
+name: Nanfu macOS kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which macOS kernel(s) to build"
+        type: choice
+        default: macos-arm64
+        options:
+          - macos-arm64
+          - both
+          - macos-x64
+      runner:
+        description: "Self-hosted macOS runner label (arm64 macOS with the pinned 26.5 SDK, >= 100 GB disk)"
+        type: string
+        default: nanfu-macos-m4
+      ninja_jobs:
+        description: "ninja -j (job count)"
+        type: string
+        default: "10"
+      fresh_build:
+        description: "Delete out/<target> before building (fresh build)"
+        type: boolean
+        default: true
+      sign:
+        description: "Developer ID sign + notarize the .app (needs the six APPLE_* secrets)"
+        type: boolean
+        default: false
+      apply_nanfu_patches:
+        description: "EXPERIMENTAL: also apply kernel/patches on top of the AliasMode series"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: resolve targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - name: Resolve target matrix from input
+        id: resolve
+        shell: bash
+        run: |
+          case "${{ inputs.target }}" in
+            both)         printf '{"include":[{"target":"macos-arm64"},{"target":"macos-x64"}]}' ;;
+            macos-arm64)  printf '{"include":[{"target":"macos-arm64"}]}' ;;
+            macos-x64)    printf '{"include":[{"target":"macos-x64"}]}' ;;
+            *) echo "unknown target: ${{ inputs.target }}" >&2; exit 1 ;;
+          esac > matrix.json
+          echo "matrix=$(cat matrix.json)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.target }}
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    # Self-hosted: no 6-hour GitHub cap. 600 min is the upstream ceiling for a
+    # full fetch + official build on 12 vCPUs.
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 600
+    env:
+      APOSTATE_TARGET: ${{ matrix.target }}
+      APOSTATE_JOBS: ${{ inputs.ninja_jobs }}
+      APOSTATE_FRESH_BUILD: ${{ inputs.fresh_build && '1' || '' }}
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      # Checkout MUST come first: every later step runs with the engine folder
+      # as its working directory, and that folder only exists after checkout.
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Initialize workspace
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          ws="$RUNNER_TEMP/nanfu-macos-kernel-workspace"
+          mkdir -p "$ws"
+          echo "APOSTATE_WORKSPACE=$ws" >> "$GITHUB_ENV"
+
+      - name: Report available disk
+        working-directory: ${{ github.workspace }}
+        run: df -h "$APOSTATE_WORKSPACE"
+
+      # ---------------------------------------------------------------
+      # macos-x64 is not a target upstream ships (only macos-arm64.gn
+      # exists). Provision it for this draft by adding the GN definition and
+      # teaching the scripts that only enumerate "macos-arm64" to also accept
+      # "macos-x64". This is the one part of the workflow that should
+      # eventually be upstreamed as a proper target instead of a shim.
+      # ---------------------------------------------------------------
+      - name: Provision macos-x64 target (draft shim)
+        if: matrix.target == 'macos-x64'
+        working-directory: vendor/aliasmode-chromium
+        run: |
+          set -euo pipefail
+          cat > build/args/macos-x64.gn <<'GN'
+          # Mirrors build/args/macos-arm64.gn; only target_cpu differs. The rest
+          # of the effective args come from build/args/common.gni (official build,
+          # proprietary_codecs, widevine, disable_fieldtrial_testing_config, ...).
+          target_os = "mac"
+          target_cpu = "x64"
+          mac_sdk_min = "15.0"
+          is_debug = false
+          is_official_build = true
+          symbol_level = 0
+          use_lld = true
+          is_component_build = false
+          use_remoteexec = false
+          use_siso = false
+          GN
+          python3 - <<'PY'
+          import pathlib
+
+          def edit(path, pairs):
+              p = pathlib.Path(path)
+              t = p.read_text(encoding="utf-8")
+              for old, new in pairs:
+                  if old not in t:
+                      raise SystemExit(f"{path}: pattern not found: {old!r}")
+                  t = t.replace(old, new, 1)
+              p.write_text(t, encoding="utf-8")
+
+          # fetch-sources.sh: add a macos-x64 gclient branch. Listing arm64 too
+          # lets the same Apple-silicon host also cross-build arm64 later.
+          edit("scripts/fetch-sources.sh", [(
+              "  macos-arm64)",
+              "  macos-x64)\n    printf 'target_os = [\"mac\"]\\ntarget_cpu = [\"x64\", \"arm64\"]\\n' >> .gclient\n    ;;\n  macos-arm64)",
+          )])
+
+          # verify-runner.sh: accept macos-x64 on Apple silicon (cross) or Intel (native).
+          edit("scripts/verify-runner.sh", [(
+              "macos-arm64:macOS:ARM64",
+              "macos-arm64:macOS:ARM64|macos-x64:macOS:ARM64|macos-x64:macOS:X64",
+          )])
+
+          # configure.sh: pass the native-macOS guard and pin the same SDK for x64.
+          edit("scripts/configure.sh", [
+              ('"${1:-$(target_default)}" = macos-arm64',
+               '"${1:-$(target_default)}" = macos-arm64 -o "${1:-$(target_default)}" = macos-x64'),
+              ('"$TARGET" = macos-arm64',
+               '"$TARGET" = macos-arm64 -o "$TARGET" = macos-x64'),
+          ])
+
+          # build.sh: native-macOS guard, mac installer/packaging target, output list.
+          edit("scripts/build.sh", [
+              ('"${1:-$(target_default)}" = macos-arm64',
+               '"${1:-$(target_default)}" = macos-arm64 -o "${1:-$(target_default)}" = macos-x64'),
+              ('"$TARGET" = macos-arm64',
+               '"$TARGET" = macos-arm64 -o "$TARGET" = macos-x64'),
+              ("macos-arm64) artifacts='Chromium.app chrome_crashpad_handler'",
+               "macos-arm64|macos-x64) artifacts='Chromium.app chrome_crashpad_handler'"),
+          ])
+
+          print("macos-x64 target provisioned")
+          PY
+
+      - name: Verify build inputs and host tooling
+        working-directory: vendor/aliasmode-chromium
+        run: |
+          set -euo pipefail
+          test -f "build/args/$APOSTATE_TARGET.gn" || { echo "missing build/args/$APOSTATE_TARGET.gn" >&2; exit 1; }
+          bash scripts/verify-host-tooling.sh "$APOSTATE_TARGET"
+
+      - name: Bootstrap pinned depot_tools
+        working-directory: vendor/aliasmode-chromium
+        run: bash scripts/bootstrap.sh
+
+      - name: Fetch pinned Chromium (gclient sync)
+        working-directory: vendor/aliasmode-chromium
+        run: bash scripts/fetch-sources.sh
+
+      - name: Apply AliasMode patch series
+        working-directory: vendor/aliasmode-chromium
+        run: bash scripts/apply-patches.sh
+
+      # The Nanfu kernel series is validated against PRISTINE 155.0.8059.85,
+      # not against the AliasMode-patched tree. 0003 duplicates upstream patch
+      # 0161 on the exact same lines of net/base/features.cc, so it will not
+      # apply here. Leave disabled until the series is rebased onto the
+      # AliasMode tree (and 0003 dropped or made conditional).
+      - name: Apply Nanfu kernel patches (experimental)
+        if: inputs.apply_nanfu_patches
+        working-directory: vendor/aliasmode-chromium
+        run: |
+          bash "$GITHUB_WORKSPACE/kernel/verify-patches.sh" \
+            --in-tree --allow-dirty --require-version "$APOSTATE_WORKSPACE/src"
+
+      - name: Configure target (gn gen)
+        working-directory: vendor/aliasmode-chromium
+        run: bash scripts/configure.sh "$APOSTATE_TARGET"
+
+      - name: Build official binary and manifest (ninja)
+        working-directory: vendor/aliasmode-chromium
+        run: bash scripts/build.sh "$APOSTATE_TARGET"
+
+      - name: Report disk after build
+        if: always()
+        working-directory: ${{ github.workspace }}
+        run: |
+          df -h "$APOSTATE_WORKSPACE" || true
+          du -sh "$APOSTATE_WORKSPACE" 2>/dev/null || true
+
+      # Optional. Empty secrets => sign-macos.sh prints one line and exits 0.
+      - name: Sign and notarize (macOS)
+        if: matrix.target == 'macos-arm64' && inputs.sign
+        working-directory: vendor/aliasmode-chromium
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: bash scripts/sign-macos.sh "$APOSTATE_TARGET"
+
+      - name: Package kernel artifact
+        working-directory: vendor/aliasmode-chromium
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < build/CHROMIUM_VERSION)"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          if [ "$APOSTATE_TARGET" = "macos-arm64" ]; then
+            # Upstream packaging: zip + .manifest.json (SHA-256), using the
+            # filename pinned in .github/release/artifact-policy.json.
+            bash scripts/package-artifact.sh "$APOSTATE_TARGET" \
+              "$GITHUB_WORKSPACE/artifacts/apostate-$VERSION-macos-arm64.zip"
+          else
+            # Draft: macos-x64 is not in the upstream release policy yet, so zip
+            # the app bundle directly. Production should add macos-x64 to
+            # package-artifact.sh + .github/release/artifact-policy.json.
+            OUT="$APOSTATE_WORKSPACE/src/out/$APOSTATE_TARGET"
+            ditto -c -k --keepParent "$OUT/Chromium.app" \
+              "$GITHUB_WORKSPACE/artifacts/nanfu-chromium-$VERSION-macos-x64.zip"
+          fi
+          ls -lh "$GITHUB_WORKSPACE/artifacts"
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanfu-macos-kernel-${{ matrix.target }}
+          path: artifacts/**
+          if-no-files-found: error
+          retention-days: 7
