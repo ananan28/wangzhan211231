@@ -1,64 +1,186 @@
 .nanfu-account-page[hidden], .nanfu-staff-page[hidden] { display: none; }
 .nanfu-transfer-page[hidden] { display: none; }
 /* Secondary transfer cards stay collapsed so the cloud flow is the only thing in view. */
-.nanfu-advanced > summary { cursor: pointer; padding: 12px 14px; color: var(--ink); font-size: 12.5px; font-weight: 600; }
-.nanfu-advanced > summary::marker { color: var(--muted); }
+.nanfu-advanced > summary {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px; cursor: pointer; list-style: none;
+  color: var(--ink); font-size: 12.5px; font-weight: 600;
+}
+.nanfu-advanced > summary::-webkit-details-marker { display: none; }
+.nanfu-advanced > summary::before {
+  content: ""; width: 0; height: 0; flex: 0 0 auto;
+  border: 4px solid transparent; border-left-color: var(--muted); border-right-width: 0;
+  transition: transform .15s var(--ease);
+}
+.nanfu-advanced[open] > summary::before { transform: rotate(90deg) translateX(-1px); }
+.nanfu-advanced > summary:hover { color: var(--accent-ink); }
 .nanfu-advanced[open] > summary { border-bottom: 1px solid var(--line); }
 .nanfu-advanced > .card-body { padding: 13px; }
+/* Collapsible block inside a card header strip (opt-in detail, not a page). */
+.settings-card.nanfu-advanced > summary { background: var(--surface-sunken); }
+.settings-card.nanfu-advanced > summary:hover { background: var(--surface-hover); }
+.nanfu-advanced .card-body h4 {
+  margin: 16px 0 6px; color: var(--ink);
+  font-size: 12px; font-weight: 650;
+}
+.nanfu-advanced .card-body h4:first-child { margin-top: 0; }
+.nanfu-advanced .card-body ul {
+  margin: 6px 0 0; padding-left: 18px;
+  color: var(--muted); font-size: 12px; line-height: 1.7;
+}
 .nanfu-auth-form, .nanfu-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
 .nanfu-auth-form .fld, .nanfu-filters .fld { flex: 1 1 220px; min-width: 0; }
-.nanfu-auth-form .nanfu-advanced { flex: 1 1 100%; border: 1px solid var(--line); border-radius: 10px; padding-bottom: 12px; }
+.nanfu-auth-form .nanfu-advanced { flex: 1 1 100%; border: 1px solid var(--line); border-radius: var(--r-lg); padding-bottom: 12px; }
 .nanfu-auth-form .nanfu-advanced > .fld { padding: 0 14px; }
 .nanfu-hint a { color: var(--accent); text-decoration: none; }
 .nanfu-hint a:hover { text-decoration: underline; }
 .nanfu-account-page .settingspage { overflow: auto; }
-.nanfu-account-page p { overflow-wrap: anywhere; margin: 12px 0; }
-.nanfu-table-wrap { overflow: auto; max-width: 100%; }
-.nanfu-table { width: 100%; border-collapse: collapse; text-align: left; }
-.nanfu-table th, .nanfu-table td { padding: 10px; border-bottom: 1px solid currentColor; overflow-wrap: anywhere; vertical-align: top; }
+/* Prose rhythm comes from the column gap, not from double paragraph margins. */
+.nanfu-account-page p, .nanfu-staff-page p, .nanfu-transfer-page p { margin: 0; overflow-wrap: anywhere; }
+/* 南孚表格：与窗口列表共用一套表头、行高和分隔线。滚动留在卡片内部，
+   表头吸顶，首末单元格多留一点内边距，数字列等宽。 */
+.nanfu-table-wrap {
+  overflow: auto; max-width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+}
+.nanfu-table { width: 100%; border-collapse: separate; border-spacing: 0; text-align: left; }
+.nanfu-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  padding: 9px 12px;
+  background: var(--surface-sunken); border-bottom: 1px solid var(--line);
+  color: var(--muted); font-size: 11px; font-weight: 650;
+  letter-spacing: 0.04em; text-align: left; white-space: nowrap;
+}
+.nanfu-table tbody td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-soft); font-size: var(--t-sm); line-height: 1.55;
+  overflow-wrap: anywhere; vertical-align: top;
+}
+.nanfu-table tbody tr:last-child td { border-bottom: 0; }
+.nanfu-table tbody tr:hover td:not(.modal-err) { background: var(--surface-sunken); }
+.nanfu-table thead th:first-child, .nanfu-table tbody td:first-child { padding-left: 14px; }
+.nanfu-table thead th:last-child, .nanfu-table tbody td:last-child { padding-right: 14px; }
+.nanfu-table tbody td small { color: var(--muted); font-size: 11.5px; }
+/* A quota cell flagged with .modal-err is a status, not an alert box mid-row. */
+.nanfu-table td.modal-err {
+  background: none; border-radius: 0; padding: 11px 12px; font-size: var(--t-sm);
+}
+.nanfu-table td.modal-err .nanfu-win-counts { color: var(--danger-ink); }
+/* The same class is used inline (e.g. 已过期) — keep it a pill, not a block. */
+.nanfu-table span.modal-err {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin: 0; padding: 2px 9px; border-radius: var(--r-pill);
+  font-size: 11.5px; font-weight: 600;
+}
+.nanfu-table tbody td .btn { height: 28px; }
+.nanfu-table tbody td .btn + .btn { margin-left: 6px; }
 .nanfu-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 14px 0; }
 .nanfu-form .fld { flex: 1 1 170px; min-width: 150px; }
 .nanfu-controls { border: 0; padding: 0; min-width: 0; }
 .nanfu-controls legend { font-weight: 600; }
-.nanfu-permissions { display: flex; flex-wrap: wrap; gap: 10px; }
-.nanfu-invites li { margin: 12px 0; overflow-wrap: anywhere; }
-.nanfu-invites .btn { margin-left: 10px; }
+/* Permission and group checkboxes read as one row of tappable pills. */
+.nanfu-permissions { display: flex; flex-wrap: wrap; gap: 6px; }
+.nanfu-permissions label {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: var(--surface); color: var(--ink-soft); font-size: 12px;
+  cursor: pointer; transition: background .12s var(--ease), border-color .12s var(--ease);
+}
+.nanfu-permissions label:hover { background: var(--surface-hover); border-color: var(--line-strong); }
+.nanfu-permissions label:has(input:checked) { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
+.nanfu-permissions input { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; }
+/* Inside a pill the box is optically centred; the list rows below nudge it down. */
+.nanfu-permissions label input { margin: 0; }
+.nanfu-invites { margin: 0; padding: 0; list-style: none; }
+.nanfu-invites li {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0; padding: 8px 0; overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--line-soft); font-size: var(--t-sm); color: var(--muted);
+}
+.nanfu-invites li:last-child { border-bottom: 0; }
+.nanfu-invites code {
+  padding: 2px 7px; border-radius: var(--r-xs);
+  background: var(--surface-sunken); border: 1px solid var(--line);
+  color: var(--ink-soft); font: 11.5px var(--mono);
+}
+.nanfu-invites .btn { margin-left: auto; }
 
 /* Staff page: four-tier roster and a single-line add form. */
 .nanfu-staff-page .settingspage { overflow: auto; }
-.nanfu-staff-counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
-.nanfu-staff-counts span { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--ink-soft); }
+.nanfu-staff-counts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.nanfu-staff-counts span {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px;
+  padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: var(--surface-sunken); color: var(--muted);
+  font-size: 11.5px; font-weight: 550; font-variant-numeric: tabular-nums;
+}
 .nanfu-add-account { margin-top: 10px; }
 .nanfu-add-account .fld { flex: 1 1 190px; }
 .nanfu-add-account .nanfu-hint { flex-basis: 100%; margin: 0; }
-.nanfu-hint { color: var(--muted); font-size: 12px; }
+.nanfu-hint { color: var(--muted); font-size: 12px; line-height: 1.65; }
 .nanfu-group { margin-top: 18px; }
 .nanfu-group h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
-.nanfu-count { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-size: 11px; font-weight: 400; color: var(--muted); }
+.nanfu-count {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 8px;
+  border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: var(--surface-sunken); color: var(--muted);
+  font-size: 11px; font-weight: 550; font-variant-numeric: tabular-nums;
+}
 .nanfu-selfcheck { max-width: 620px; }
 .nanfu-selfcheck-group { margin-top: 14px; }
 .nanfu-selfcheck-group h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; }
-.nanfu-selfcheck-group.mismatched h4 { color: var(--bad, #c0392b); }
+.nanfu-selfcheck-group.mismatched h4 { color: var(--danger-ink); }
 .nanfu-selfcheck-group ul { margin: 6px 0 0; padding-left: 18px; }
 .nanfu-selfcheck-row { margin-bottom: 6px; }
 .nanfu-selfcheck-row span { display: block; font-size: 12.5px; }
 .nanfu-selfcheck-row small { display: block; color: var(--muted); font-size: 12px; }
-.nanfu-tag { margin-left: 6px; border-radius: 999px; padding: 0 7px; font-size: 11px; background: var(--surface-hover); border: 1px solid var(--line); color: var(--muted); }
+/* Identity marker ("我"), not a status: brand accent instead of grey. */
+.nanfu-tag {
+  display: inline-flex; align-items: center; height: 19px; margin-left: 6px;
+  padding: 0 7px; border: 1px solid var(--accent-line); border-radius: var(--r-pill);
+  background: var(--accent-soft); color: var(--accent-ink);
+  font-size: 10.5px; font-weight: 650; vertical-align: middle;
+}
 .nanfu-row-actions > summary { cursor: pointer; color: var(--ink-soft); }
 .nanfu-row-actions h5 { margin: 16px 0 6px; font-size: 12px; color: var(--ink); }
 .nanfu-row-actions h5:first-of-type { margin-top: 8px; }
 .nanfu-row-form { margin: 10px 0 0; }
-.nanfu-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.nanfu-check { display: inline-flex; align-items: flex-start; gap: 7px; font-size: 12.5px; line-height: 1.45; }
+.nanfu-check input { margin: 2px 0 0; flex: 0 0 auto; accent-color: var(--accent); }
 
 /* Per-row window peek: collapsed by default, opens inline under the quota count. */
 .nanfu-windows { margin: 6px 0 0; }
-.nanfu-windows > summary { cursor: pointer; font-size: 12px; color: var(--ink-soft); }
+.nanfu-windows > summary {
+  display: inline-flex; align-items: center; gap: 5px;
+  list-style: none; cursor: pointer;
+  color: var(--ink-soft); font-size: 12px;
+}
+.nanfu-windows > summary::-webkit-details-marker { display: none; }
+.nanfu-windows > summary::before {
+  content: ""; width: 0; height: 0; flex: 0 0 auto;
+  border: 3.5px solid transparent; border-left-color: var(--faint); border-right-width: 0;
+  transition: transform .15s var(--ease);
+}
+.nanfu-windows[open] > summary::before { transform: rotate(90deg); }
+.nanfu-windows > summary:hover { color: var(--accent-ink); }
 .nanfu-windows > p { margin: 6px 0 0; font-size: 12px; }
-.nanfu-windows .nanfu-invites { margin: 6px 0 0; padding-left: 16px; font-size: 12px; }
-.nanfu-windows .nanfu-invites li { margin: 4px 0; }
+.nanfu-windows .nanfu-invites { margin: 6px 0 0; padding-left: 0; font-size: 12px; }
+/* Two-line rows here (id, then metadata): keep them blocks, not flex items. */
+.nanfu-windows .nanfu-invites li { display: block; margin: 2px 0; padding: 4px 0; }
+.nanfu-windows .nanfu-invites li small { display: block; margin-top: 1px; color: var(--muted); font-size: 11px; }
 .nanfu-add-account .nanfu-groups, .nanfu-row-form .nanfu-groups { flex: 1 1 100%; }
 .nanfu-groups legend { font-size: 12px; padding: 0 4px; }
 .nanfu-groups .nanfu-permissions { margin-top: 4px; }
+
+/* Empty list / no-data line used across the 南孚 pages. */
+.nanfu-empty {
+  margin: 0; padding: 16px;
+  border: 1px dashed var(--line-strong); border-radius: var(--r-lg);
+  background: var(--surface-sunken); color: var(--muted);
+  font-size: 12.5px; line-height: 1.6; text-align: center;
+}
 
 /* ============================================================================
    Typeface
@@ -740,13 +862,25 @@ button.newgroup:disabled { color: var(--faint); border-color: var(--line); backg
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
 
 .pagehead {
-  display: flex; align-items: center; gap: 10px;
-  padding: 0 18px; height: 60px; flex: 0 0 auto;
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 20px; height: 60px; flex: 0 0 auto;
   background: var(--surface); border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 0 rgba(var(--shadow-rgb), .02);
 }
-.pagehead h1 { margin: 0; font-size: var(--t-lg); font-weight: 700; letter-spacing: -0.035em; }
-.pagehead .pagesub { color: var(--faint); font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
-.pagehead .headactions { display: flex; align-items: center; gap: 6px; }
+/* One page title, one weight, everywhere — never wraps, never crowds the actions. */
+.pagehead h1 {
+  margin: 0; min-width: 0;
+  font-size: var(--t-lg); font-weight: 700; letter-spacing: -0.035em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pagehead .pagesub {
+  display: inline-flex; align-items: center; height: 22px; flex: 0 0 auto;
+  padding: 0 9px; border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: var(--surface-sunken); color: var(--muted);
+  font-size: 11.5px; font-weight: 550; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pagehead .headactions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; margin-left: auto; }
 
 /* Account chip, top-right. */
 .account-button {
@@ -786,6 +920,11 @@ button.newgroup:disabled { color: var(--faint); border-color: var(--line); backg
 }
 /* The filter row is part of the card head, so it carries no fill of its own. */
 
+/* Pages built out of a single column of cards (settings, extensions, 账号 / 员工 /
+   转移) cap tighter than the roster so the card edge and its content share one
+   measure instead of leaving a white band on the right. */
+.workspace:has(> .settingspage) { width: min(1080px, 100% - 32px); }
+
 .filterbar {
   display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
   padding: 13px 14px; border-bottom: 1px solid var(--line-soft);
@@ -799,15 +938,19 @@ button.newgroup:disabled { color: var(--faint); border-color: var(--line); backg
   padding: 8px 14px; border-bottom: 1px solid var(--line-soft);
 }
 .sites-label { font-size: 11px; letter-spacing: .06em; color: var(--muted); margin-right: 2px; }
+/* Quick-site chips: one quiet pill, the remove glyph only on the edge. */
 .site-chip {
   display: inline-flex; align-items: center; overflow: hidden;
-  border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: var(--surface-sunken);
+  transition: border-color .12s var(--ease);
 }
-.site-chip .btn { border: 0; border-radius: 0; }
+.site-chip:hover { border-color: var(--line-strong); }
+.site-chip .btn { border: 0; border-radius: 0; height: 24px; padding: 0 10px; font-size: 11.5px; }
 .site-remove {
   display: inline-flex; align-items: center; justify-content: center; align-self: stretch;
-  width: 22px; border: 0; border-left: 1px solid var(--line-soft);
-  background: transparent; color: var(--muted); cursor: pointer;
+  width: 22px; border: 0; border-left: 1px solid var(--line);
+  background: transparent; color: var(--faint); cursor: pointer;
 }
 .site-remove:hover { color: var(--danger-ink); background: var(--danger-soft); }
 .site-add { display: inline-flex; align-items: center; gap: 6px; }
@@ -864,13 +1007,18 @@ button.newgroup:disabled { color: var(--faint); border-color: var(--line); backg
 .settingspage {
   flex: 1; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 14px;
-  padding: 18px 20px;
-  /* Settings read as prose, not as a data table — keep the measure short enough
-     to scan without the eye travelling the full width of a wide window. */
-  max-width: 860px; width: 100%;
+  padding: 20px 20px 24px;
+  /* The card itself is already capped at a readable measure (see
+     `.workspace:has(> .settingspage)`), so the content fills it edge to edge. */
+  max-width: 100%; width: 100%;
 }
+/* Tab labels and page content share one left edge. */
+.workspace > .tabs { padding: 0 20px; }
 .settingspage > * { flex: 0 0 auto; }
+/* One section title per page, sitting on the same baseline as the card heads. */
 .sect-title { margin: 0; color: var(--ink); font-size: 15px; font-weight: 650; letter-spacing: -0.02em; }
+.settingspage > .sect-title { margin-top: 2px; }
+.settingspage > p { margin: 0; line-height: 1.6; }
 .settingspage .sect-title + * { margin-top: -2px; }
 
 .identity-card {
@@ -995,6 +1143,13 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 .emptystate p { max-width: 380px; margin: 0; font-size: 12.5px; line-height: 1.6; }
 .emptystate .btn { margin-top: 8px; }
 .empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+/* A page-level empty state becomes a plate of its own instead of floating text
+   on an otherwise blank card. */
+.settingspage > .emptystate, .scripts-page > .emptystate {
+  padding: 40px 24px 44px;
+  background: var(--surface-sunken);
+  border: 1px dashed var(--line-strong); border-radius: var(--r-xl);
+}
 
 /* Table footer / pagination ------------------------------------------------ */
 
@@ -1133,6 +1288,9 @@ td.col-tags .chip + .chip { margin-left: 4px; }
   position: fixed; inset: 0; z-index: 70;
   display: flex; align-items: center; justify-content: center; padding: 24px;
   background: var(--backdrop);
+  /* The blur keeps the page behind a dialog as a soft field instead of a busy
+     pattern of table rows competing with the form. */
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
   animation: fade-in .12s ease-out;
 }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
@@ -1140,14 +1298,16 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 .modal {
   width: 100%; max-width: 560px; max-height: calc(100vh - 48px);
   display: flex; flex-direction: column; overflow: hidden;
-  background: var(--surface); border-radius: var(--r-xl); box-shadow: var(--sh-modal);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl); box-shadow: var(--sh-modal);
   animation: modal-in .16s cubic-bezier(.2, .8, .3, 1);
 }
 @keyframes modal-in { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
 
 .modal-head {
-  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
-  padding: 16px 20px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 9px; flex: 0 0 auto;
+  min-height: 58px; padding: 14px 20px; border-bottom: 1px solid var(--line);
   background: var(--surface);
   font-size: var(--t-md); font-weight: 650; letter-spacing: -0.02em;
 }
@@ -1155,8 +1315,10 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 .modal-head > .icon { color: var(--muted); }
 .modal-head .modal-close {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; margin-left: auto; flex: 0 0 auto;
+  width: 30px; height: 30px; margin-left: auto; flex: 0 0 auto;
   color: var(--muted); background: none; border: 0; border-radius: var(--r-sm);
+  font-size: 13px; line-height: 1;
+  transition: background .12s var(--ease), color .12s var(--ease);
 }
 .modal-head .modal-close:hover { background: var(--surface-hover); color: var(--ink); }
 
@@ -1164,6 +1326,8 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 /* The body is a flex column, so its children would otherwise shrink to fit and
    clip their own content instead of letting the body scroll. */
 .modal-body > * { flex: 0 0 auto; }
+/* Its gap already spaces rows; default paragraph margins would double it. */
+.modal-body > p, .modal-body > ul, .modal-body > ol { margin: 0; }
 .modal-foot {
   display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
   padding: 14px 20px; border-top: 1px solid var(--line); background: var(--surface-sunken);
@@ -1173,8 +1337,10 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 .modal-foot .spacer { flex: 1; }
 
 .fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* Field labels carry the label's weight, not the hint's: grey 550 read as
+   disabled on white cards. */
 .fld > span {
-  color: var(--muted); font-size: 11.5px; font-weight: 550; letter-spacing: 0.01em;
+  color: var(--ink-soft); font-size: 11.5px; font-weight: 600; letter-spacing: 0.01em;
 }
 .fld > span .muted { color: var(--faint); font-weight: 400; }
 .fld input, .fld select {
@@ -1394,9 +1560,9 @@ td.col-tags .chip + .chip { margin-left: 4px; }
   color: var(--warn-ink); background: var(--warn-soft); border: 1px solid var(--warn-line); border-radius: var(--r-lg);
   font-size: 12.5px; line-height: 1.6;
 }
-.persona-warning strong { display: flex; align-items: center; gap: 7px; color: #92400e; font-size: 13px; }
-.persona-convert { align-self: flex-start; color: var(--on-accent); background: var(--warn); border-color: var(--warn); }
-.persona-convert:hover:not(:disabled) { background: #b45309; border-color: #b45309; color: var(--on-accent); }
+.persona-warning strong { display: flex; align-items: center; gap: 7px; color: var(--warn-ink); font-size: 13px; }
+.persona-convert { align-self: flex-start; color: var(--on-fill); background: var(--warn); border-color: var(--warn); }
+.persona-convert:hover:not(:disabled) { background: var(--warn-ink); border-color: var(--warn-ink); color: var(--surface); }
 
 /* Settings modal ----------------------------------------------------------- */
 
@@ -1407,12 +1573,21 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 .settings-card { border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; background: var(--surface); }
 .settings-card > header {
   display: flex; align-items: center; gap: 8px;
-  padding: 10px 13px; background: var(--surface-sunken); border-bottom: 1px solid var(--line);
+  min-height: 40px; padding: 9px 14px;
+  background: var(--surface-sunken); border-bottom: 1px solid var(--line);
 }
 .settings-card > header .icon { color: var(--muted); }
-.settings-card > header h2 { flex: 1; margin: 0; color: var(--ink); font-size: 12.5px; font-weight: 650; letter-spacing: -0.01em; }
+/* h2 and h3 both appear as card titles across the pages; one look for both. */
+.settings-card > header h2,
+.settings-card > header h3 {
+  flex: 1; margin: 0; min-width: 0;
+  color: var(--ink); font-size: 12.5px; font-weight: 650; letter-spacing: -0.01em;
+}
 .settings-card > header .btn { margin: -3px 0; }
-.settings-card .card-body { display: flex; flex-direction: column; gap: 12px; padding: 13px; }
+.settings-card .card-body { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
+/* Status lines and alerts inside a card never inherit the muted prose colour. */
+.settings-card .card-body > p[role="status"] { margin: 0; color: var(--accent-ink); font-size: 12px; }
+.settings-card .card-body > p[role="alert"]:not(.modal-err) { margin: 0; color: var(--warn-ink); font-size: 12px; }
 .settings-card .card-body > .fld-row { gap: 10px; }
 .cardnote { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .formnote {
@@ -1719,8 +1894,13 @@ td.col-tags .chip + .chip { margin-left: 4px; }
   background-image: linear-gradient(180deg, rgba(94, 136, 240, .55), rgba(94, 136, 240, .16));
 }
 
+/* The gate's washes are tuned twice: a light tint on stone, a deeper glow on the
+   dark canvas, so the brand blue never turns into a pale band. */
 :root[data-theme="dark"] .onboarding {
-  background: radial-gradient(120% 90% at 50% 0%, #1e1e25 0%, var(--bg) 62%);
+  background:
+    radial-gradient(1100px 560px at 10% -10%, rgba(94, 136, 240, 0.16), transparent 62%),
+    radial-gradient(900px 520px at 100% 110%, rgba(255, 158, 122, 0.08), transparent 58%),
+    var(--bg);
 }
 :root[data-theme="dark"] .dropzone { background: rgba(94, 136, 240, .12); }
 :root[data-theme="dark"] .navitem:hover:not(:disabled),
@@ -1730,34 +1910,45 @@ td.col-tags .chip + .chip { margin-left: 4px; }
    as the export it came from. Absent entirely when nothing was imported to
    check against — "unknown" must not read as "verified". */
 .fpbadge {
-  display: inline-block; margin-left: 7px; padding: 1px 7px; border-radius: 999px;
+  display: inline-block; margin-left: 7px; padding: 1px 8px; border-radius: var(--r-pill);
   font-size: 10.5px; font-weight: 600; letter-spacing: .2px; vertical-align: middle;
-  cursor: help;
+  cursor: help; border: 1px solid transparent;
 }
-.fpbadge.ok { background: var(--green-soft); color: var(--green); border: 1px solid #cbe9d5; }
-.fpbadge.warn { background: #fdf3e2; color: var(--amber); border: 1px solid #f0dcb8; }
+.fpbadge.ok { background: var(--success-soft); color: var(--success-ink); border-color: var(--success-line); }
+.fpbadge.warn { background: var(--warn-soft); color: var(--warn-ink); border-color: var(--warn-line); }
 .hint-note { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line-soft); color: var(--muted); }
 
 /* Local scripts -------------------------------------------------------------- */
-.scripts-page { padding: 24px; overflow: auto; }
-.scripts-head, .script-actions { display: flex; align-items: center; gap: 10px; }
-.scripts-head { justify-content: space-between; margin-bottom: 14px; }
-.scripts-head .sect-title { margin-bottom: 3px; }
-.scripts-tabs { margin: 0 0 14px; }
+.scripts-page { padding: 22px 24px 24px; overflow: auto; gap: 0; }
+.scripts-head, .script-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.scripts-head { justify-content: space-between; margin-bottom: 12px; }
+.scripts-head .sect-title { margin-bottom: 4px; }
+/* Tabs sit on the page's own margin, not inset from it. */
+.scripts-tabs { margin: 0 0 16px; padding: 0; }
 .scripts-library { display: grid; gap: 14px; }
-.scripts-library-search { display: flex; gap: 8px; }
-.scripts-library-search .input { flex: 1; }
+.scripts-library-search { display: flex; flex-wrap: wrap; gap: 8px; }
+.scripts-library-search .input { flex: 1; min-width: 180px; }
 .script-publication { display: grid; gap: 10px; padding-top: 2px; }
-.script-publication-preview { display: grid; gap: 2px; padding: 10px; color: var(--muted); background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--r-sm); font-size: var(--t-sm); }
+.script-publication-preview { display: grid; gap: 3px; padding: 11px 12px; color: var(--muted); background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--r-md); font-size: var(--t-sm); }
 .script-publication-preview b { color: var(--ink); }
 .script-library-pager { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0 0; }
-.scripts-run-note { display: block; width: 100%; margin-bottom: 12px; padding: 8px 10px; color: var(--accent-ink); text-align: left; background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: var(--r-sm); cursor: pointer; font: inherit; font-size: var(--t-sm); }
+.scripts-run-note { display: block; width: 100%; margin-bottom: 12px; padding: 9px 12px; color: var(--accent-ink); text-align: left; background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: var(--r-md); cursor: pointer; font: inherit; font-size: var(--t-sm); font-weight: 550; }
 .scripts-run-note:hover { background: var(--accent-soft-hover); }
 .scripts-layout { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); gap: 14px; align-items: start; }
-.scripts-list { display: flex; flex-direction: column; gap: 5px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }
-.script-row { display: grid; gap: 2px; width: 100%; padding: 9px 10px; color: var(--ink-soft); text-align: left; background: transparent; border: 0; border-radius: var(--r-sm); cursor: pointer; }
-.script-row:hover:not(:disabled), .script-row.active { background: var(--surface-hover); color: var(--ink); }
+.scripts-list {
+  display: flex; flex-direction: column; gap: 2px; padding: 5px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+  max-height: 460px; overflow: auto;
+}
+.script-row { display: grid; gap: 2px; width: 100%; padding: 9px 10px; color: var(--ink-soft); text-align: left; background: transparent; border: 0; border-radius: var(--r-sm); cursor: pointer; transition: background .12s var(--ease), color .12s var(--ease); }
+.script-row b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.script-row:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink); }
+/* An open script keeps the accent so the list always shows where you are. */
+.script-row.active { background: var(--accent-soft); color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.script-row.active:hover:not(:disabled) { background: var(--accent-soft-hover); color: var(--accent-ink); }
+.script-row.active b { color: var(--accent-ink); }
 .script-row span, .script-row small { color: var(--muted); font-size: var(--t-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.script-row.active span, .script-row.active small { color: var(--accent-ink); opacity: .85; }
 .script-detail { min-width: 0; }
 .script-detail header { justify-content: space-between; }
 .script-detail header h2 { margin: 0; font-size: var(--t-md); }
@@ -1772,6 +1963,8 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 @media (max-width: 700px) { .scripts-layout { grid-template-columns: 1fr; }.scripts-head, .scripts-library-search { align-items: flex-start; flex-direction: column; }.scripts-library-search { align-items: stretch; } }
 
 /* ---------- 南孚登录门禁 ---------- */
+/* 登录页是用户看到的第一屏：保留左右分栏的品牌卡，颜色全部走 token，
+   浅色和深色主题都成立；蓝色侧栏是唯一固定为品牌深蓝的区域。 */
 .onboarding {
   min-height: 100vh;
   display: flex;
@@ -1779,9 +1972,9 @@ td.col-tags .chip + .chip { margin-left: 4px; }
   justify-content: center;
   padding: 40px 24px;
   background:
-    radial-gradient(1200px 600px at 12% 0%, rgba(56, 132, 255, 0.16), transparent 60%),
-    radial-gradient(900px 500px at 100% 100%, rgba(0, 194, 168, 0.12), transparent 55%),
-    #f3f5fa;
+    radial-gradient(1100px 560px at 10% -10%, rgba(51, 102, 230, 0.12), transparent 62%),
+    radial-gradient(900px 520px at 100% 110%, rgba(255, 158, 122, 0.10), transparent 58%),
+    var(--bg);
 }
 
 .onboarding .gate-card {
@@ -1791,17 +1984,18 @@ td.col-tags .chip + .chip { margin-left: 4px; }
   padding: 0;
   overflow: hidden;
   border-radius: 22px;
-  background: #fff;
-  border: 1px solid rgba(16, 35, 74, 0.08);
-  box-shadow: 0 32px 80px rgba(16, 35, 74, 0.16);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-modal);
 }
 
 .onboarding .gate-card.gate-loading {
   grid-template-columns: 1fr;
   max-width: 460px;
-  padding: 40px;
+  padding: 44px 36px;
   text-align: center;
 }
+.gate-note { margin: 10px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
 
 .gate-aside {
   padding: 40px 32px;
@@ -1809,7 +2003,7 @@ td.col-tags .chip + .chip { margin-left: 4px; }
   flex-direction: column;
   gap: 14px;
   color: #eaf1ff;
-  background: linear-gradient(160deg, #12275a 0%, #1b3f95 52%, #0f6fd6 100%);
+  background: linear-gradient(160deg, #0f2350 0%, #1c3f92 55%, var(--accent-fill) 100%);
 }
 
 .gate-logo {
@@ -1821,13 +2015,13 @@ td.col-tags .chip + .chip { margin-left: 4px; }
   font-size: 24px;
   font-weight: 700;
   color: #fff;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(150deg, var(--accent), var(--accent-2));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 16px rgba(51, 102, 230, 0.28);
 }
 
 .gate-brand { display: flex; gap: 14px; align-items: center; justify-content: center; }
-.gate-brand-name { font-size: 20px; font-weight: 700; color: #12275a; }
-.gate-brand-sub { font-size: 13px; color: #5b6b88; }
+.gate-brand-name { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+.gate-brand-sub { font-size: 13px; color: var(--muted); }
 
 .gate-aside-title { margin: 6px 0 0; font-size: 22px; font-weight: 700; letter-spacing: 0.4px; }
 .gate-aside-text { margin: 0; font-size: 13.5px; line-height: 1.75; color: rgba(234, 241, 255, 0.82); }
@@ -1841,33 +2035,40 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 
 .gate-panel { padding: 40px 44px 32px; display: flex; flex-direction: column; }
 .gate-header { margin-bottom: 24px; }
-.gate-eyebrow { font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: #0f6fd6; font-weight: 700; }
-.gate-panel h1 { margin: 8px 0 6px; font-size: 26px; line-height: 1.25; color: #12275a; }
-.gate-lede { margin: 0; font-size: 13.5px; line-height: 1.7; color: #5b6b88; }
+.gate-eyebrow {
+  display: inline-flex; align-items: center; height: 21px; padding: 0 9px;
+  border: 1px solid var(--accent-line); border-radius: var(--r-pill);
+  background: var(--accent-soft); color: var(--accent-ink);
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+}
+.gate-panel h1 { margin: 12px 0 8px; font-size: 26px; line-height: 1.25; font-weight: 700; letter-spacing: -0.03em; color: var(--ink); }
+.gate-lede { margin: 0; font-size: 13.5px; line-height: 1.7; color: var(--muted); }
 
 .gate-form { display: grid; gap: 16px; }
-.gate-field { display: grid; gap: 8px; }
-.gate-field > span { font-size: 13px; font-weight: 600; color: #25395f; }
+.gate-field { display: grid; gap: 7px; }
+.gate-field > span { font-size: 12.5px; font-weight: 600; color: var(--ink-soft); }
 .gate-field input {
   width: 100%;
   box-sizing: border-box;
-  height: 46px;
+  height: 44px;
   padding: 0 14px;
-  border-radius: 12px;
-  border: 1px solid #d7deeb;
-  background: #fbfcff;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
   font-size: 14.5px;
-  color: #12203a;
+  color: var(--ink);
+  box-shadow: var(--sh-field);
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
-.gate-field input::placeholder { color: #9aa7bd; }
+.gate-field input::placeholder { color: var(--faint); }
+.gate-field input:hover:not(:disabled) { border-color: var(--line-strong); }
 .gate-field input:focus {
   outline: none;
-  background: #fff;
-  border-color: #2f7cf6;
-  box-shadow: 0 0 0 4px rgba(47, 124, 246, 0.14);
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: var(--sh-field), var(--ring);
 }
-.gate-field input:disabled { background: #f2f4f9; color: #8d99ad; }
+.gate-field input:disabled { background: var(--surface-hover); color: var(--muted); opacity: .7; }
 
 .gate-invite { display: grid; gap: 10px; }
 .gate-invite-toggle {
@@ -1875,76 +2076,84 @@ td.col-tags .chip + .chip { margin-left: 4px; }
   padding: 0;
   border: 0;
   background: none;
-  color: #2f7cf6;
-  font-size: 13px;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 550;
   cursor: pointer;
 }
 .gate-invite-toggle:hover { text-decoration: underline; }
 
 .gate-alert {
   padding: 11px 14px;
-  border-radius: 11px;
-  font-size: 13px;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  font-size: 12.5px;
   line-height: 1.6;
 }
-.gate-alert-error { color: #a1231b; background: #fdeceb; border: 1px solid #f6c9c5; }
-.gate-alert-info { color: #16528f; background: #ecf4ff; border: 1px solid #c8defa; }
+.gate-alert-error { color: var(--danger-ink); background: var(--danger-soft); border-color: var(--danger-line); }
+.gate-alert-info { color: var(--accent-ink); background: var(--accent-soft); border-color: var(--accent-line); }
 
 .gate-submit {
-  height: 48px;
+  height: 46px;
   margin-top: 4px;
-  border: 0;
-  border-radius: 12px;
+  border: 1px solid var(--accent-fill);
+  border-radius: var(--r-md);
   font-size: 15px;
   font-weight: 600;
-  color: #fff;
+  color: var(--on-fill);
   cursor: pointer;
-  background: linear-gradient(135deg, #2f7cf6, #1457c8);
-  box-shadow: 0 12px 24px rgba(47, 124, 246, 0.28);
-  transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+  background: var(--accent-fill);
+  box-shadow: var(--glow);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease, opacity 0.12s ease;
 }
-.gate-submit:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 16px 30px rgba(47, 124, 246, 0.34); }
+.gate-submit:hover:not(:disabled) { background: var(--accent-fill-hover); border-color: var(--accent-fill-hover); transform: translateY(-1px); box-shadow: var(--glow-strong); }
+.gate-submit:active:not(:disabled) { background: var(--accent-fill-press); transform: none; box-shadow: none; }
 .gate-submit:disabled { opacity: 0.55; cursor: not-allowed; box-shadow: none; }
+.gate-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .gate-footer {
   margin-top: 22px;
   padding-top: 16px;
-  border-top: 1px solid #edf0f6;
+  border-top: 1px solid var(--line-soft);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-size: 12.5px;
-  color: #7b8798;
+  font-size: 12px;
+  color: var(--muted);
 }
-.gate-footer a { color: #2f7cf6; text-decoration: none; }
+.gate-footer a { color: var(--accent); text-decoration: none; }
 .gate-footer a:hover { text-decoration: underline; }
 
+/* 第三方登录与分隔线仍是内联样式（只加类名，不动结构）：深色主题下改用 token，
+   否则深色页面里会跳出一块纯白按钮。 */
+:root[data-theme="dark"] .gate-alt { color: var(--muted) !important; }
+:root[data-theme="dark"] .gate-alt > span:empty { background: var(--line) !important; }
+:root[data-theme="dark"] .gate-google {
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+  box-shadow: none !important;
+}
+:root[data-theme="dark"] .gate-google:hover:not(:disabled) {
+  background: var(--surface-hover) !important;
+  border-color: var(--line-strong) !important;
+}
+
 @media (max-width: 880px) {
+  .onboarding { padding: 24px 16px; }
   .onboarding .gate-card { grid-template-columns: 1fr; }
   .gate-aside { display: none; }
-  .gate-panel { padding: 32px 24px 26px; }
+  .gate-panel { padding: 30px 24px 24px; }
+  .gate-panel h1 { font-size: 23px; }
 }
 
 /* ---------- 账号页排版 ---------- */
-.nanfu-account-page .settingspage { max-width: 980px; }
-.nanfu-account-page .settings-card {
-  border-radius: 16px;
-  border: 1px solid rgba(16, 35, 74, 0.08);
-  box-shadow: 0 10px 26px rgba(16, 35, 74, 0.07);
-  margin-bottom: 18px;
-  background: #fff;
-}
-.nanfu-account-page .settings-card > header {
-  padding: 16px 20px 0;
-}
-.nanfu-account-page .settings-card > header h3 {
-  margin: 0;
-  font-size: 15px;
-  letter-spacing: 0.2px;
-  color: #12275a;
-}
-.nanfu-account-page .settings-card .card-body { padding: 14px 20px 20px; }
+/* Same cards as the rest of the product, only roomier: the account page is where
+   people type passwords, so the fields get a little more air than a dense list. */
+.nanfu-account-page .settings-card > header { min-height: 46px; padding: 11px 16px; }
+.nanfu-account-page .settings-card > header h3 { font-size: 13px; letter-spacing: -0.01em; }
+.nanfu-account-page .settings-card .card-body { padding: 16px; gap: 14px; }
 .nanfu-account-page .nanfu-form,
 .nanfu-account-page .nanfu-auth-form {
   display: grid;
@@ -1952,90 +2161,175 @@ td.col-tags .chip + .chip { margin-left: 4px; }
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   align-items: end;
 }
+/* Full-width rows: the invite disclosure and the explanatory hint under a form. */
+.nanfu-account-page .nanfu-auth-form .nanfu-advanced { grid-column: 1 / -1; }
+.nanfu-account-page .nanfu-form > .nanfu-hint,
+.nanfu-account-page .nanfu-auth-form > .nanfu-hint { grid-column: 1 / -1; }
 .nanfu-account-page .nanfu-form .fld,
 .nanfu-account-page .nanfu-auth-form .fld { display: grid; gap: 7px; }
 .nanfu-account-page .nanfu-form .fld > span,
-.nanfu-account-page .nanfu-auth-form .fld > span { font-size: 12.5px; font-weight: 600; color: #25395f; }
+.nanfu-account-page .nanfu-auth-form .fld > span { color: var(--ink-soft); font-size: 12px; font-weight: 600; }
 .nanfu-account-page .nanfu-form input,
+.nanfu-account-page .nanfu-form select,
 .nanfu-account-page .nanfu-auth-form input,
+.nanfu-account-page .nanfu-auth-form select,
 .nanfu-account-page .nanfu-filters input,
 .nanfu-account-page .nanfu-filters select {
-  height: 42px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid #d7deeb;
-  background: #fbfcff;
-  font-size: 14px;
+  height: 38px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface); color: var(--ink); font-size: var(--t-base);
+  box-shadow: var(--sh-field);
 }
+.nanfu-account-page .nanfu-form input:hover,
+.nanfu-account-page .nanfu-auth-form input:hover,
+.nanfu-account-page .nanfu-filters input:hover { border-color: var(--line-strong); }
 .nanfu-account-page .nanfu-form input:focus,
-.nanfu-account-page .nanfu-auth-form input:focus { outline: none; border-color: #2f7cf6; box-shadow: 0 0 0 3px rgba(47, 124, 246, 0.14); background: #fff; }
+.nanfu-account-page .nanfu-form select:focus,
+.nanfu-account-page .nanfu-auth-form input:focus,
+.nanfu-account-page .nanfu-auth-form select:focus {
+  outline: none; border-color: var(--accent); box-shadow: var(--sh-field), var(--ring);
+}
 .nanfu-account-page .nanfu-form .btn,
-.nanfu-account-page .nanfu-auth-form .btn { height: 42px; align-self: end; }
-.nanfu-account-page .nanfu-filters { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin: 14px 0; align-items: end; }
-.nanfu-account-page .nanfu-hint { margin: 12px 0 0; font-size: 12.5px; line-height: 1.7; color: #7b8798; }
-.nanfu-account-page .nanfu-table-wrap { border: 1px solid #e6ebf3; border-radius: 12px; overflow: auto; }
-.nanfu-account-page .nanfu-table th { background: #f6f8fc; font-size: 12.5px; color: #5b6b88; }
+.nanfu-account-page .nanfu-auth-form .btn { height: 38px; align-self: end; }
+.nanfu-account-page .nanfu-filters {
+  display: grid; gap: 12px; align-items: end;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  margin: 0; padding: 12px;
+  background: var(--surface-sunken); border: 1px solid var(--line-soft); border-radius: var(--r-lg);
+}
+.nanfu-account-page .nanfu-filters > label:not(.fld) {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 38px; color: var(--ink-soft); font-size: 12.5px;
+}
+.nanfu-account-page .nanfu-filters input[type="checkbox"] {
+  width: 15px; height: 15px; margin: 0; padding: 0;
+  border: 0; background: none; box-shadow: none;
+  accent-color: var(--accent); cursor: pointer;
+}
+.nanfu-account-page .nanfu-hint { margin: 0; font-size: 12px; line-height: 1.7; }
+.nanfu-account-page .nanfu-table-wrap { border-radius: var(--r-md); }
 
 /* ── 首页仪表盘 ───────────────────────────────────────────── */
-.home-dashboard { display: flex; flex-direction: column; gap: 18px; max-width: 720px; }
-.home-hero { display: flex; align-items: center; gap: 14px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-.home-hero .gate-logo { width: 46px; height: 46px; border-radius: 10px; background: #2457D6; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; flex: none; }
-.home-hero h2 { margin: 0 0 4px; font-size: 18px; }
-.home-hero p { margin: 0; color: var(--muted); }
-.home-stats { display: flex; gap: 14px; }
-.home-stat { flex: 1; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-.home-stat-num { display: block; font-size: 26px; font-weight: 700; }
-.home-stat-label { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; word-break: break-all; }
-.home-help { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-.home-help h3 { margin: 0 0 8px; font-size: 14px; }
-.home-help ol { margin: 0; padding-left: 20px; color: var(--muted); line-height: 1.9; }
-.home-actions { display: flex; gap: 10px; }
-
-/* ── 左下角窗口额度悬浮卡 ───────────────────────────────────── */
-.quota-float {
-  position: fixed; left: 18px; bottom: 18px; z-index: 60;
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 12px 16px; border: 1px solid var(--line);
-  border-radius: var(--r-lg); background: var(--surface);
-  box-shadow: var(--sh-md); font-size: 13px; color: var(--ink);
-  line-height: 1.4;
+/* The dashboard is a column of cards on the canvas, not one giant empty card. */
+.workspace.home-dashboard {
+  gap: 16px; padding: 26px 26px 30px; overflow: auto;
+  max-width: min(880px, 100% - 32px);
+  background: var(--bg); border: 0; box-shadow: none;
 }
-.quota-float span:first-child { font-weight: 650; }
+.home-dashboard > * { flex: 0 0 auto; }
+.home-hero {
+  display: flex; align-items: center; gap: 16px; padding: 22px 24px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-xl); box-shadow: var(--sh-sm);
+}
+.home-hero .gate-logo {
+  display: flex; align-items: center; justify-content: center;
+  width: 48px; height: 48px; flex: none;
+  border-radius: var(--r-lg); font-size: 22px; font-weight: 700; color: #fff;
+  background: linear-gradient(150deg, var(--accent), var(--accent-2));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 2px 8px rgba(51, 102, 230, .28);
+}
+.home-hero h2 { margin: 0 0 4px; font-size: 18px; font-weight: 700; letter-spacing: -0.025em; }
+.home-hero p { margin: 0; color: var(--muted); font-size: var(--t-sm); }
+.home-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.home-stat {
+  min-width: 0; padding: 18px 20px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: var(--sh-xs);
+}
+.home-stat-num {
+  display: block; color: var(--ink);
+  font-size: 26px; font-weight: 700; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums; line-height: 1.15;
+}
+.home-stat-label {
+  display: block; margin-top: 5px; color: var(--muted); font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.home-help {
+  padding: 18px 22px 20px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-xl); box-shadow: var(--sh-xs);
+}
+.home-help h3 { margin: 0 0 10px; font-size: 14px; font-weight: 650; letter-spacing: -0.015em; }
+.home-help ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+.home-help li + li { margin-top: 7px; }
+.home-help li::marker { color: var(--accent); font-weight: 650; }
+.home-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.home-actions .btn { height: 36px; padding: 0 15px; }
+
+/* ── 窗口额度条（窗口列表底部） ─────────────────────────────── */
+/* Was a floating card at the window's bottom-left, where it sat on top of the
+   sidebar's last links. It now closes the roster card instead of covering it. */
+.quota-float {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+  gap: 4px 14px; flex: 0 0 auto;
+  margin: 0; padding: 8px 14px;
+  background: var(--surface-sunken); border-top: 1px solid var(--line-soft);
+  color: var(--muted); font-size: 12px; line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+.quota-float span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.quota-float span:first-child { color: var(--ink-soft); font-weight: 600; }
 .quota-float span:last-child { color: var(--muted); }
 
 /* ── 员工管理：居中弹窗 + 单表格名册 ─────────────────────────── */
-.nanfu-head-actions { display: flex; align-items: center; gap: 8px; }
-.nanfu-dialog { max-width: 600px; }
+.nanfu-head-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.nanfu-dialog { max-width: 620px; }
 .nanfu-dialog-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .nanfu-dialog-title strong { font-size: var(--t-md); font-weight: 650; letter-spacing: -0.02em; }
 .nanfu-dialog-title small { color: var(--muted); font-size: 12px; font-weight: 400; }
 .nanfu-dialog-form { display: flex; flex-direction: column; gap: 12px; }
-.nanfu-dialog-section { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-lg); }
-.nanfu-dialog-section > h4 { margin: 0; font-size: 13px; font-weight: 650; }
-.nanfu-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.nanfu-danger-zone { border-color: var(--danger-line, #f0c8c8); }
+/* Each block in a long staff dialog is its own card, so the dialog scans as an
+   outline rather than one wall of labelled fields. */
+.nanfu-dialog-section {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 15px 15px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+}
+.nanfu-dialog-section > h4 {
+  display: flex; align-items: center; gap: 7px; margin: 0;
+  color: var(--ink); font-size: 12.5px; font-weight: 650; letter-spacing: -0.01em;
+}
+.nanfu-dialog-section > h4::before {
+  content: ""; width: 3px; height: 12px; flex: 0 0 auto;
+  border-radius: var(--r-pill); background: var(--accent);
+}
+.nanfu-dialog-section .card-body { background: var(--surface); }
+.nanfu-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.nanfu-dialog-section .nanfu-dialog-actions { padding-top: 2px; }
+.nanfu-danger-zone { border-color: var(--danger-line); background: var(--danger-soft); }
+.nanfu-danger-zone > h4 { color: var(--danger-ink); }
+.nanfu-danger-zone > h4::before { background: var(--danger); }
 .nanfu-checks { display: flex; flex-direction: column; gap: 8px; }
 .nanfu-input-row { display: flex; align-items: center; gap: 10px; }
 .nanfu-input-row input { flex: 1; min-width: 0; }
 .nanfu-generate, .nanfu-groups-actions .tlink {
   padding: 0; border: 0; background: none; cursor: pointer;
-  color: var(--accent); font: inherit; font-size: 12.5px; white-space: nowrap;
+  color: var(--accent); font: inherit; font-size: 12.5px; font-weight: 550; white-space: nowrap;
 }
+.nanfu-generate:hover:not(:disabled), .nanfu-groups-actions .tlink:hover:not(:disabled) { text-decoration: underline; }
 .nanfu-generate:disabled { opacity: .5; cursor: default; }
 .nanfu-groups-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
-.nanfu-groups-head > span { font-size: 12px; font-weight: 600; color: var(--ink); }
-.nanfu-groups-actions { display: flex; gap: 10px; }
-.req { color: var(--danger, #d33); font-weight: 600; }
+.nanfu-groups-head > span { font-size: 12px; font-weight: 650; color: var(--ink); }
+.nanfu-groups-actions { display: flex; gap: 12px; }
+.req { color: var(--danger); font-weight: 600; }
 
-.nanfu-roster th { white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--muted); }
-.nanfu-roster td { font-size: 12.5px; }
+.nanfu-roster th { white-space: nowrap; }
 .nanfu-roster .nanfu-col-account { min-width: 180px; }
 .nanfu-roster .nanfu-col-groups { min-width: 140px; color: var(--ink-soft); }
-.nanfu-account-name { font-weight: 600; }
+.nanfu-account-name { color: var(--ink); font-weight: 600; }
 .nanfu-roster td > small { display: block; margin-top: 2px; font-size: 11.5px; color: var(--muted); }
-.nanfu-chip { display: inline-block; padding: 1px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-sunken); font-size: 12px; color: var(--ink-soft); }
-.nanfu-chip.ok { color: var(--success-ink, #1a7f37); }
-.nanfu-chip.off { color: var(--muted); }
+.nanfu-win-counts { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nanfu-chip {
+  display: inline-flex; align-items: center; height: 21px;
+  padding: 0 9px; border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: var(--surface-sunken); color: var(--ink-soft);
+  font-size: 11.5px; font-weight: 550; white-space: nowrap;
+}
+.nanfu-chip.ok { color: var(--success-ink); background: var(--success-soft); border-color: var(--success-line); }
+.nanfu-chip.off { color: var(--muted); background: var(--surface-hover); border-color: var(--line-soft); }
 
 /* ── 窗口列表：列宽拖拽 ─────────────────────────────────────── */
 .profile-table th { position: relative; }
@@ -2053,12 +2347,49 @@ body.col-resizing { cursor: col-resize; user-select: none; }
 /* ── 员工设置：本机窗口归属（分配／回收） ───────────────────── */
 .nanfu-window-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 @media (max-width: 560px) { .nanfu-window-cols { grid-template-columns: 1fr; } }
-.nanfu-window-col { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: var(--r-md); }
-.nanfu-window-col > h5 { margin: 0; font-size: 12.5px; font-weight: 650; }
-.nanfu-picklist { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; max-height: 200px; overflow: auto; list-style: none; }
-.nanfu-picklist .nanfu-check { align-items: flex-start; }
+.nanfu-window-col {
+  display: flex; flex-direction: column; gap: 9px;
+  min-width: 0; padding: 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+}
+.nanfu-window-col > h5 {
+  display: flex; align-items: center; gap: 6px; margin: 0;
+  color: var(--ink); font-size: 12px; font-weight: 650;
+}
+.nanfu-window-col > .btn { align-self: flex-start; }
+.nanfu-picklist {
+  display: flex; flex-direction: column; gap: 2px;
+  margin: 0; padding: 6px; max-height: 200px; overflow: auto; list-style: none;
+  background: var(--surface-sunken); border: 1px solid var(--line-soft); border-radius: var(--r-sm);
+}
+.nanfu-picklist li { margin: 0; padding: 3px 4px; border-radius: var(--r-xs); }
+.nanfu-picklist li:hover { background: var(--surface-hover); }
+.nanfu-picklist .nanfu-check { align-items: flex-start; font-size: 12px; color: var(--ink-soft); }
 .nanfu-picklist .nanfu-check span { min-width: 0; overflow-wrap: anywhere; }
 .nanfu-win-counts { font-weight: 600; }
-.nanfu-pick-actions { display: flex; gap: 10px; margin: 2px 0 6px; }
-.nanfu-pick-actions .tlink { padding: 0; border: 0; background: none; cursor: pointer; color: var(--accent); font: inherit; font-size: 12.5px; }
+.nanfu-pick-actions { display: flex; gap: 12px; margin: 0; }
+.nanfu-pick-actions .tlink {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  color: var(--accent); font: inherit; font-size: 12px; font-weight: 550;
+}
+.nanfu-pick-actions .tlink:hover:not(:disabled) { text-decoration: underline; }
 .nanfu-pick-actions .tlink:disabled { opacity: .5; cursor: default; }
+
+/* ── 响应式收尾 ─────────────────────────────────────────────── */
+@media (max-width: 760px) {
+  .home-stats { grid-template-columns: 1fr; }
+  .workspace.home-dashboard { padding: 16px 14px 20px; }
+  .settingspage { padding: 14px 12px 18px; }
+  .pagehead { padding: 0 12px; gap: 8px; }
+  .pagehead .pagesub { padding: 0 7px; font-size: 11px; }
+  .nanfu-account-page .nanfu-form,
+  .nanfu-account-page .nanfu-auth-form { grid-template-columns: 1fr; }
+  .nanfu-dialog .modal-body { padding: 14px 12px; }
+  .nanfu-dialog .modal-head, .nanfu-dialog .modal-foot { padding-left: 14px; padding-right: 14px; }
+  .nanfu-head-actions { flex-wrap: wrap; }
+}
+/* Narrow drops of the staff card header buttons under their title. */
+@media (max-width: 560px) {
+  .settings-card > header { flex-wrap: wrap; }
+  .settings-card > header h2, .settings-card > header h3 { flex: 1 1 100%; }
+}

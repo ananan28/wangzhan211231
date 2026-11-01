@@ -268,14 +268,14 @@ export function NanfuGate({ children }: { children: ReactNode }) {
             </form>
 
             <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#8d99ad", fontSize: 12.5 }}>
+              <div className="gate-alt" style={{ display: "flex", alignItems: "center", gap: 10, color: "#8d99ad", fontSize: 12.5 }}>
                 <span style={{ flex: 1, height: 1, background: "#edf0f6" }} />
                 <span>或</span>
                 <span style={{ flex: 1, height: 1, background: "#edf0f6" }} />
               </div>
               <button
                 type="button"
-                className="gate-submit"
+                className="gate-submit gate-google"
                 style={{
                   display: "flex",
                   alignItems: "center",

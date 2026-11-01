@@ -290,7 +290,7 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
             <p>把窗口配置、指纹、代理、扩展文件与已采集的网站登录态在本机加密后上传。只有上传时已登记的设备能解开；新电脑请先登录并打开本页登记，再由原电脑重新上传。扩展内部账号数据暂不包含，网站也可能要求重新验证。</p>
             {cloud?.error && <p role="alert">{cloud.error}</p>}
             {cloud && !cloud.deviceKeyPublished && <p role="alert">本机设备密钥尚未登记到云端，上传和下载可能失败；请检查网络后点“刷新转移列表”。</p>}
-            {!sendable.length ? <p>本机还没有 Chromium 引擎的窗口可上传。</p> : <fieldset disabled={busy || !cloudReady} className="nanfu-form">
+            {!sendable.length ? <p className="nanfu-empty">本机还没有 Chromium 引擎的窗口可上传。</p> : <fieldset disabled={busy || !cloudReady} className="nanfu-form">
               <label className="fld"><span>选择本机窗口</span><select value={uploadId} onChange={(event) => setUploadId(event.target.value)}>
                 <option value="">请选择要上传的窗口</option>
                 {sendable.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.id}</option>)}
@@ -298,7 +298,7 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
               <button className="btn primary" type="button" disabled={!uploadId || busy} onClick={uploadToCloud}>上传到云端</button>
               <p>只支持 Chromium 引擎的窗口；Camoufox / Firefox 引擎暂不支持云端转移，请继续在这类窗口上手动登录。</p>
             </fieldset>}
-            {!cloudPackages.length ? <p>这个账号还没有上传过云端环境。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table">
+            {!cloudPackages.length ? <p className="nanfu-empty">这个账号还没有上传过云端环境。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table">
               <thead><tr><th>窗口</th><th>上传时间</th><th>大小</th><th>操作</th></tr></thead>
               <tbody>{cloudPackages.map((row) => <tr key={row.id}>
                 <td>{row.environmentName || row.environmentId}<br /><small>{row.environmentId}</small></td>
@@ -320,7 +320,7 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
 
       {data && organization && !locked && <>
         <section className="settings-card" aria-label="云端转移"><header><h3>云端转移（含登录态）</h3></header><div className="card-body">
-          {!sendable.length ? <p>本机还没有可以转移的 Chromium 环境；先新建或导入一个环境，再回来发送。</p> : <>
+          {!sendable.length ? <p className="nanfu-empty">本机还没有可以转移的 Chromium 环境；先新建或导入一个环境，再回来发送。</p> : <>
             <fieldset disabled={busy} className="nanfu-form">
               <label className="fld"><span>选择本机环境</span><select value={cloudEnvironmentId} onChange={(event) => setCloudEnvironmentId(event.target.value)}>
                 <option value="">请选择要转移的环境</option>
@@ -339,7 +339,7 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
         <section className="settings-card" aria-label="云端收件箱"><header><h3>待接收（云端）</h3></header><div className="card-body">
           {packages && !packages.keyPublished && <p className="modal-err" role="alert">本机转移密钥尚未上传到南孚服务，别人暂时无法向你发送；请检查网络后点“刷新转移列表”。</p>}
           {packages?.error && <p role="alert">{packages.error}</p>}
-          {!incomingPackages.length ? <p>暂无可接收的云端转移。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table">
+          {!incomingPackages.length ? <p className="nanfu-empty">暂无可接收的云端转移。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table">
             <thead><tr><th>环境</th><th>发送人</th><th>发送时间</th><th>有效期至</th><th>操作</th></tr></thead>
             <tbody>{incomingPackages.map((row) => <tr key={row.id}>
               <td>{row.environmentName || localNames.get(row.environmentId) || row.environmentId}<br /><small>{row.environmentId}</small></td>
@@ -354,7 +354,7 @@ export function NanfuTransferPage({ active }: { active: boolean }) {
         </div></section>
 
         <section className="settings-card" aria-label="我发出的云端转移"><header><h3>我发出的云端转移</h3></header><div className="card-body">
-          {!sentPackages.length ? <p>还没有发出过云端转移。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table">
+          {!sentPackages.length ? <p className="nanfu-empty">还没有发出过云端转移。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table">
             <thead><tr><th>环境</th><th>接收人</th><th>状态</th><th>发送时间</th><th>操作</th></tr></thead>
             <tbody>{sentPackages.map((row) => <tr key={row.id}>
               <td>{row.environmentName || row.environmentId}<br /><small>{row.environmentId}</small></td>

@@ -288,8 +288,8 @@ export function NanfuAccountPage({ active, localCount, onLocal }: { active: bool
               <label className="fld"><span>可见分组</span><select value={group} onChange={event => setGroup(event.target.value)}><option value="all">全部可见分组</option>{groups.map(id => <option key={id} value={id}>{id}</option>)}</select></label>
               <label><input type="checkbox" checked={ownedOnly} onChange={event => setOwnedOnly(event.target.checked)} />仅本人拥有</label>
             </div>
-            {!environments.length && <p>暂无可见组织环境；组织可能为空，或尚未向你授权分组。</p>}
-            {!!environments.length && !filtered.length && <p>当前筛选条件下没有环境。</p>}
+            {!environments.length && <p className="nanfu-empty">暂无可见组织环境；组织可能为空，或尚未向你授权分组。</p>}
+            {!!environments.length && !filtered.length && <p className="nanfu-empty">当前筛选条件下没有环境。</p>}
             {!!filtered.length && <div className="nanfu-table-wrap"><table className="nanfu-table"><thead><tr><th>环境编号</th><th>来源</th><th>归属</th><th>分组</th><th>状态</th></tr></thead><tbody>{filtered.map(item => <tr key={`${item.orgId}:${item.ownerUserId}:${item.id}`}>
               <td>{item.id}</td><td>组织云端</td><td>{item.ownerUserId === account.userId ? "本人" : item.ownerUserId}</td><td>{item.groupId ?? "未分组"}</td><td>仅元数据 · 不可启动</td>
             </tr>)}</tbody></table></div>}

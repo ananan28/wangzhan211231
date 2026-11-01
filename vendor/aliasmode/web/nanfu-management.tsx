@@ -514,7 +514,7 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
         </p>
         {overAllocated && <p className="modal-err" role="alert">成员配额合计 {allocated} 已超过组织窗口 {organization.planQuota}：服务端按实际用量拦截，新建环境会失败。请下调成员配额。</p>}
         {!overAllocated && orgQuotaFull && <p className="modal-err" role="alert">组织窗口已用满（{used} / {organization.planQuota}），新建或接收环境会被服务端拒绝；本机窗口不计入组织额度。</p>}
-        {!sorted.length ? <p>还没有成员。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table nanfu-roster">
+        {!sorted.length ? <p className="nanfu-empty">还没有成员。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table nanfu-roster">
           <thead><tr><th>账号</th><th>角色</th><th>授权分组</th><th>窗口</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>{sorted.map(member => <MemberRow key={member.userId} member={member} overview={overview}
             currentUserId={currentUserId} localCount={localCounts[member.userId] ?? 0}
@@ -552,7 +552,7 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
             <label className="fld"><span>授权操作</span><select name="granted"><option value="true">授权可见</option><option value="false">撤销授权</option></select></label>
             <button className="btn" type="submit">保存分组授权</button>
           </form>
-          {!overview.grants.length ? <p>暂无显式分组授权。</p> : <ul>{overview.grants.map(grant => {
+          {!overview.grants.length ? <p className="nanfu-empty">暂无显式分组授权。</p> : <ul>{overview.grants.map(grant => {
             const member = overview.members.find(item => item.userId === grant.userId);
             return <li key={`${grant.groupId}:${grant.userId}`}>
               {overview.groups.find(group => group.id === grant.groupId)?.name || grant.groupId} → {member ? memberLabel(member) : grant.userId}
@@ -579,7 +579,7 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
             <button className="btn" type="submit">生成邀请码</button>
           </form>
           {copyStatus && <p role="status">{copyStatus}</p>}
-          {!overview.invites.length ? <p>暂无邀请码。</p> : <ul className="nanfu-invites">{overview.invites.map(invite => <li key={invite.code}>
+          {!overview.invites.length ? <p className="nanfu-empty">暂无邀请码。</p> : <ul className="nanfu-invites">{overview.invites.map(invite => <li key={invite.code}>
             <code>{invite.code}</code> · {nanfuIdentityName(invite.identity)} · {invite.redeemedBy ? "已兑换" : Date.parse(invite.expiresAt) <= Date.now() ? "已过期" : "未兑换"} · 到期：{invite.expiresAt}
             <button type="button" className="btn" onClick={() => void copy(invite.code)}>复制邀请码</button>
           </li>)}</ul>}
