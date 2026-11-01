@@ -1,5 +1,5 @@
 import { Channel } from "@tauri-apps/api/core";
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import "./proxies.css";
@@ -211,14 +211,14 @@ const MAX_CUSTOM_NO = 12;
  * Only the checkbox column is fixed; everything else can be hidden.
  */
 const COLUMNS = [
-  { key: "no", label: "No.", sort: true, width: 96 },
-  { key: "name", label: "Name", sort: true, width: 220 },
-  { key: "group", label: "Group", sort: true, width: 120 },
-  { key: "platform", label: "Platform", sort: true, width: 128 },
-  { key: "tags", label: "Tags", sort: false, width: 140 },
-  { key: "proxy", label: "Proxy", sort: true, width: 160 },
+  { key: "no", label: "No.", sort: true, width: 84 },
+  { key: "name", label: "Name", sort: true, width: 200 },
+  { key: "group", label: "Group", sort: true, width: 108 },
+  { key: "platform", label: "Platform", sort: true, width: 104 },
+  { key: "tags", label: "Tags", sort: false, width: 120 },
+  { key: "proxy", label: "Proxy", sort: true, width: 132 },
   /* Every row action lives here, beside Open/Close — no hover reveal. */
-  { key: "action", label: "Action", sort: false, width: 230 },
+  { key: "action", label: "Action", sort: false, width: 196 },
 ] as const;
 
 /** Width of the always-present select-all checkbox column. */
@@ -268,6 +268,45 @@ function readHiddenColumns(): Set<ColumnKey> {
     const known = new Set(COLUMNS.map((column) => column.key as string));
     return new Set((Array.isArray(raw) ? raw : []).filter((key) => known.has(key)) as ColumnKey[]);
   } catch { return new Set(DEFAULT_HIDDEN_COLUMNS); }
+}
+
+const COLUMN_WIDTHS_KEY = "aliasmode.roster.columnWidths";
+/** Column widths the operator dragged; unknown or out-of-range values fall back. */
+function readColumnWidths(): Record<ColumnKey, number> {
+  const defaults = Object.fromEntries(COLUMNS.map((column) => [column.key, column.width])) as Record<ColumnKey, number>;
+  try {
+    const raw = JSON.parse(localStorage.getItem(COLUMN_WIDTHS_KEY) ?? "null");
+    if (!raw || typeof raw !== "object") return defaults;
+    const next = { ...defaults };
+    for (const column of COLUMNS) {
+      const value = Number((raw as Record<string, unknown>)[column.key]);
+      if (Number.isFinite(value) && value >= 56 && value <= 520) next[column.key] = Math.round(value);
+    }
+    return next;
+  } catch { return defaults; }
+}
+
+/** 批量改名：前缀 + 递增序号，按列表当前顺序套到选中的窗口上。 */
+function RenameDialog({ count, busy, onCancel, onConfirm }: {
+  count: number; busy: boolean; onCancel: () => void; onConfirm: (base: string, start: number) => void;
+}) {
+  const [base, setBase] = useState("窗口");
+  const [start, setStart] = useState(1);
+  return <div className="modal-backdrop" onClick={busy ? undefined : onCancel}>
+    <div className="modal" role="dialog" aria-modal="true" aria-label="批量改名" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-head">批量改名<button type="button" className="modal-close" aria-label="关闭" onClick={onCancel}>✕</button></div>
+      <div className="modal-body">
+        <p className="nanfu-hint">把选中的 {count} 个窗口按当前列表顺序依次命名为「前缀 + 序号」。</p>
+        <label className="fld"><span>名称前缀</span><input autoFocus value={base} maxLength={60} onChange={(event) => setBase(event.target.value)} /></label>
+        <label className="fld"><span>起始序号</span><input type="number" min={0} max={9999} value={start} onChange={(event) => setStart(Math.max(0, Math.min(9999, Math.trunc(Number(event.target.value) || 0))))} /></label>
+        <p className="nanfu-hint">示例：{base.trim() || "窗口"}{start}、{base.trim() || "窗口"}{start + 1} …</p>
+      </div>
+      <div className="modal-foot">
+        <button className="btn" type="button" disabled={busy} onClick={onCancel}>取消</button>
+        <button className="btn primary" type="button" disabled={busy || !base.trim() || count === 0} onClick={() => onConfirm(base, start)}>{busy ? "正在改名…" : "确定"}</button>
+      </div>
+    </div>
+  </div>;
 }
 
 function readSidebarCollapsed(): boolean {
@@ -1448,6 +1487,8 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null); // transient success banner
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameBusy, setRenameBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const deleteInFlight = useRef(false);
   const cloneInFlight = useRef(false);
@@ -2551,6 +2592,29 @@ function App() {
       writeSetting(HIDDEN_COLUMNS_KEY, JSON.stringify([...next]));
       return next;
     });
+  // 列宽可拖拽：拖表头右边缘调整，松手后记住。窄窗口只按当前宽度横向滚动。
+  const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(readColumnWidths);
+  const columnWidthsRef = useRef(columnWidths);
+  columnWidthsRef.current = columnWidths;
+  const startColumnResize = (event: ReactMouseEvent<HTMLSpanElement>, key: ColumnKey) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = columnWidthsRef.current[key];
+    const move = (moveEvent: MouseEvent) => {
+      const next = Math.max(56, Math.min(520, startWidth + moveEvent.clientX - startX));
+      setColumnWidths((current) => ({ ...current, [key]: Math.round(next) }));
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      document.body.classList.remove("col-resizing");
+      writeSetting(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidthsRef.current));
+    };
+    document.body.classList.add("col-resizing");
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  };
   const applyPageSize = (size: number) => { setPageSize(size); writeSetting(PAGE_SIZE_KEY, String(size)); };
   const chooseTheme = (choice: ThemeChoice) => {
     setTheme(choice);
@@ -2651,6 +2715,32 @@ function App() {
     } catch (e) {
       setActionErr(String(e));
     }
+  };
+
+  // 批量改名：按列表顺序套「前缀 + 序号」，逐个走和单窗口编辑相同的保存通道。
+  const renameSelected = async (baseName: string, startNumber: number) => {
+    const base = baseName.trim();
+    if (!selected.size || !base || renameBusy) return;
+    setRenameBusy(true);
+    setActionErr(null);
+    const ordered = visibleProfiles.filter((profile) => selected.has(profile.id)).map((profile) => profile.id);
+    const targets = ordered.length ? ordered : [...selected];
+    const failed: string[] = [];
+    for (let index = 0; index < targets.length; index += 1) {
+      const id = targets[index]!;
+      try {
+        const result = await updateProfile(id, { name: `${base}${startNumber + index}` });
+        if (result?.ok === false) failed.push(`${id}: ${result.error ?? "失败"}`);
+      } catch (error) {
+        failed.push(`${id}: ${error instanceof Error ? error.message : "失败"}`);
+      }
+    }
+    setRenameBusy(false);
+    setRenameOpen(false);
+    setSelected(new Set());
+    if (failed.length) setActionErr(`批量改名完成，${failed.length} 个失败：${failed[0]}`);
+    else flash(`已重命名 ${targets.length} 个窗口`);
+    await load();
   };
 
   const cloneWindows = async (ids: string[]) => {
@@ -3611,7 +3701,8 @@ function App() {
   const visibleColumnCount = 1 + shownColumns.length;
   // Sum of what is actually on screen: below this the wrapper scrolls rather
   // than letting the browser crush Name down to "mia.h…".
-  const tableMinWidth = CHECKBOX_COLUMN_WIDTH + shownColumns.reduce((total, column) => total + column.width, 0);
+  const widthOf = (column: (typeof COLUMNS)[number]) => columnWidths[column.key] ?? column.width;
+  const tableMinWidth = CHECKBOX_COLUMN_WIDTH + shownColumns.reduce((total, column) => total + widthOf(column), 0);
   const columnHead = (column: (typeof COLUMNS)[number]) => {
     // The Action column carries no header text: its buttons explain themselves,
     // and a floating "ACTION" label over a right-aligned cluster read as an
@@ -3619,8 +3710,10 @@ function App() {
     const label = column.key === "action" ? "" : column.key === "group" && isCloudMode ? t("Folder") : t(column.label);
     // Every column declares its width, so a wide window's extra space spreads
     // proportionally across all of them — an even layout, no dead gap.
-    const style = { width: column.width } as CSSProperties;
-    if (!column.sort) return <th key={column.key} className={`col-${column.key}`} style={style}>{label}</th>;
+    const style = { width: widthOf(column) } as CSSProperties;
+    const handle = <span className="col-resize" role="separator" aria-orientation="vertical" title={t("Drag to resize")}
+      onMouseDown={(event) => startColumnResize(event, column.key)} onClick={(event) => event.stopPropagation()} />;
+    if (!column.sort) return <th key={column.key} className={`col-${column.key}`} style={style}>{label}{handle}</th>;
     const key = column.key as SortKey;
     return (
       <th
@@ -3634,6 +3727,7 @@ function App() {
           {label}
           <Icon className="sortglyph sm" name={sort.key === key ? (sort.dir === 1 ? "sortUp" : "sortDown") : "sort"} />
         </span>
+        {handle}
       </th>
     );
   };
@@ -4148,6 +4242,9 @@ function App() {
           <button className="btn solid-danger tip" data-tip={t("Close selected browsers")} disabled={!selected.size} onClick={closeSelected}>
             <Icon name="power" className="sm" />{t("Close")}
           </button>
+          <button className="btn" type="button" onClick={() => setRenameOpen(true)}>
+            <Icon name="edit" className="sm" />批量改名
+          </button>
           {(!isCloudMode || selectedEditable) && <>
           <button
             className="btn"
@@ -4234,6 +4331,9 @@ function App() {
           </>}
         </div>
         )}
+
+        {renameOpen && <RenameDialog count={selected.size} busy={renameBusy}
+          onCancel={() => setRenameOpen(false)} onConfirm={(base, start) => void renameSelected(base, start)} />}
 
         <div
           className={`tablewrap${tableScrolled ? " scrolled" : ""}`}

@@ -48,8 +48,8 @@ export function NanfuStaffPage({ active }: { active: boolean }) {
     }
   };
 
-  const mutate = async <K extends keyof NanfuMutations,>(action: K, input: NanfuMutations[K]["input"]): Promise<void> => {
-    if (busy) return;
+  const mutate = async <K extends keyof NanfuMutations,>(action: K, input: NanfuMutations[K]["input"]): Promise<{ ok: boolean; error?: string }> => {
+    if (busy) return { ok: false, error: "正在处理上一个操作，请稍候再试" };
     setBusy(true);
     setNotice(null);
     setError(null);
@@ -64,9 +64,12 @@ export function NanfuStaffPage({ active }: { active: boolean }) {
         : "reclaimed" in result ? `成员已移除，已回收 ${result.reclaimed} 个组织环境。`
         : "操作已成功，成员列表已刷新。");
       await load();
+      return { ok: true };
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "操作失败，请刷新后重试");
+      const message = failure instanceof Error ? failure.message : "操作失败，请刷新后重试";
+      setError(message);
       if (failure instanceof NanfuApiError && failure.status === 401) setOrganization(null);
+      return { ok: false, error: message };
     } finally {
       setBusy(false);
     }
