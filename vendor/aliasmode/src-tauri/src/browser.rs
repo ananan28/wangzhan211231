@@ -401,7 +401,7 @@ fn extract_chromium_kernel(
     // unsigned arm64 binary. Seal the extracted (symlink-intact) bundle ad-hoc
     // before hashing: signing changes the executable, so the recorded pre-sign
     // hash no longer applies and the signed hash is what the sidecar receives.
-    let app_bundle = staging.join(app_directory).join("Chromium.app");
+    let app_bundle = staging.join(&app_directory).join("Chromium.app");
     let _ = std::process::Command::new("/usr/bin/xattr")
         .arg("-cr")
         .arg(&app_bundle)
