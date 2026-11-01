@@ -247,6 +247,28 @@ export async function pullNanfuSessions(options: {
   return restored;
 }
 
+/**
+ * Transfers are moves: once a package is accepted, the sender no longer owns
+ * that window. Retire the sender's local copy (to Trash, where it stays
+ * recoverable) and drop the sender's cloud record, so only the recipient has it.
+ */
+export async function retireAcceptedTransfers(options: {
+  store: ProfileStore;
+  client: NanfuSyncClient;
+  userId: string;
+}): Promise<number> {
+  const { store, client, userId } = options;
+  let retired = 0;
+  const sent = await client.sentCloudTransfers(userId);
+  for (const row of sent) {
+    if (row.status !== "accepted") continue;
+    if (!store.getProfile(row.environmentId)) continue;
+    if (store.trashProfile(row.environmentId)) retired += 1;
+    await client.remove(userId, row.environmentId).catch(() => undefined);
+  }
+  return retired;
+}
+
 /** Push one window after an edit, so the cloud copy follows local changes. */
 export async function pushNanfuWindow(options: {
   store: ProfileStore;

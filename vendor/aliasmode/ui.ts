@@ -20,7 +20,7 @@ import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from
 import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import { loadNanfuService, type NanfuRuntime } from "./nanfu-service.ts";
-import { createNanfuAccountCipher, nanfuDeviceId, pullNanfuSessions, pushNanfuSession, pushNanfuWindow, syncNanfuAccountWindows } from "./nanfu-account-sync.ts";
+import { createNanfuAccountCipher, nanfuDeviceId, pullNanfuSessions, pushNanfuSession, pushNanfuWindow, retireAcceptedTransfers, syncNanfuAccountWindows } from "./nanfu-account-sync.ts";
 import { NANFU_LOGIN_SUFFIX, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuLoginName, isValidNanfuPassword, nanfuPasswordProblem, normalizeNanfuLogin, type NanfuSession } from "./nanfu-account.ts";
 import { NanfuSyncError, isNanfuUuid } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
@@ -1177,6 +1177,8 @@ export async function handleUiRequest(
             });
             // 换机后把云端保存的登录态装回本机窗口（只补本机没有的，不覆盖更新的本机快照）。
             await pullNanfuSessions({ store, client, cipher, userId: state.userId }).catch(() => 0);
+            // 已经转给别人的窗口是“移动”：发送方这边移到回收站，云端记录也删掉。
+            await retireAcceptedTransfers({ store, client, userId: state.userId }).catch(() => 0);
             installNanfuSyncHook(nanfu, store);
           } catch {
             // 云端同步是增强能力，不能阻断登录。
