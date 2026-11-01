@@ -191,6 +191,19 @@ export function fetchNanfuHardwareOptions(signal?: AbortSignal): Promise<NanfuHa
   return nanfuJson("hardware-options", { signal });
 }
 
+export interface NanfuFingerprintPreview {
+  surfaces: Array<{ surface: string; layer: string; evidence: string; value: string }>;
+  limitations: string[];
+}
+export function fetchNanfuFingerprintPreview(
+  input: Record<string, unknown>, signal?: AbortSignal,
+): Promise<{ preview: NanfuFingerprintPreview }> {
+  return nanfuJson("fingerprint-preview", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input), signal,
+  });
+}
+
 /** 分配／回收：同一台机器直接改本机窗口归属，窗口数据不搬家。 */
 export function reassignNanfuWindow(profileId: string, toUserId: string, signal?: AbortSignal): Promise<{ ok: true }> {
   return nanfuJson("reassign-window", {

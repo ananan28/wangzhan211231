@@ -1368,6 +1368,40 @@ export async function handleUiRequest(
           gpus,
         });
       }
+      // 预览内核实际组合出的整套指纹：不是 UI 推算，是看真实启动参数下的
+      // --fingerprint-explain 输出。建窗口前就能看到 CPU/内存/显卡/字体/
+      // 媒体设备/语音等真实取值和内核自己声明的不一致风险。
+      if (req.method === "POST" && action === "fingerprint-preview") {
+        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
+        try {
+          const body = await req.json().catch(() => null) as Record<string, unknown> | null;
+          if (!body) return noStoreJson({ ok: false, error: "预览参数无效" }, 400);
+          const seed = body.seed === undefined || body.seed === "" ? 123456789 : parseStrictSeed(body.seed);
+          const screen = body.screen ? parseStrictResolution(body.screen) : { width: 1920, height: 1080 };
+          const platformOs = parseStrictPlatformOs(body.platformOs);
+          const locale = normalizeProfileLocale(body.locale) ?? "en-US";
+          const timezone = body.timezone ? parseStrictTimezone(body.timezone) : "";
+          const cores = body.cores ? parseStrictCores(body.cores) : undefined;
+          const memoryGb = normalizeMemoryGb(body.memoryGb);
+          const gpu = normalizeGpuIdentity(body.gpuVendor, body.gpuRenderer, body.gpuAnchor);
+          const profile: Profile = {
+            id: "preview", engine: "chromium", chromiumRuntime: "aliasmode",
+            accId: "", name: "preview", group: "", platform: "",
+            username: "", password: "", twofa: "", proxy: null, ua: "",
+            timezone, locale,
+            screenWidth: screen.width, screenHeight: screen.height,
+            fingerprintSeed: seed, cookies: [], seeded: false,
+            ...(platformOs ? { platformOs } : {}),
+            ...(cores ? { hardware: { cores } } : {}),
+            ...(memoryGb ? { memoryGb } : {}),
+            ...(gpu.gpuVendor ? gpu : {}),
+          };
+          const preview = await launcher.fingerprintPreview(profile);
+          return noStoreJson({ ok: true, preview });
+        } catch (error) {
+          return noStoreJson({ ok: false, error: msg(error) }, 400);
+        }
+      }
       // 分配／回收：同一台机器直接改本机窗口的归属，窗口数据不搬家。
       if (req.method === "POST" && action === "reassign-window") {
         if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);

@@ -44,6 +44,7 @@ import {
 } from "./fingerprint-extension.ts";
 import { allocatePort } from "./ports.ts";
 import { probeServableGpus, type ServableGpu } from "./nanfu-gpu-catalogue.ts";
+import { renderFingerprintPreview, type FingerprintPreview } from "./nanfu-fingerprint-preview.ts";
 import {
   DEFAULT_WINDOW_HEIGHT_SCALE, DEFAULT_WINDOW_WIDTH_SCALE, deriveFingerprintFlags, isMobileUserAgent, launchWindowSize,
   platformFromUA, proxyServerFlag,
@@ -1324,6 +1325,15 @@ export class Launcher {
       return probeServableGpus(executable);
     })().catch(() => []);
     return this.gpuCatalogue;
+  }
+
+  /**
+   * The kernel's own composition for a draft profile, shown before launch.
+   * Uses the same binary as the real launch, so the preview is the truth.
+   */
+  async fingerprintPreview(profile: Profile): Promise<FingerprintPreview> {
+    const executable = await this.ensureAliasmodeChromiumFn(this.chromiumRuntimeRoot);
+    return renderFingerprintPreview(executable, profile);
   }
 
   /**

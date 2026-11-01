@@ -119,8 +119,10 @@ import {
   fetchNanfuState,
   nanfuAuthAction,
   fetchNanfuHardwareOptions,
+  fetchNanfuFingerprintPreview,
   type NanfuAccountState,
   type NanfuHardwareOptions,
+  type NanfuFingerprintPreview,
 } from "./api.ts";
 import { NanfuAccountPage } from "./nanfu-account.tsx";
 import { NanfuGate } from "./nanfu-gate.tsx";
@@ -969,6 +971,14 @@ function browserLabel(engine: "chromium" | "firefox", chromiumRuntime?: string, 
   return ownChromium ? "南孚 Chromium" : "Chromium 155 beta";
 }
 
+const FP_PREVIEW_LABELS: ReadonlyArray<readonly [string, string]> = [
+  ["gpu_identity", "显卡"], ["webgpu", "WebGPU"], ["cpu", "CPU"], ["memory", "内存"],
+  ["panel", "分辨率"], ["os_release", "系统版本"], ["machine_class", "机型"],
+  ["font_packs/platform-core", "核心字体"], ["media_topology", "媒体设备"],
+  ["voices", "语音"], ["audio", "音频"], ["battery", "电池"], ["theme", "主题"],
+  ["locale.timezone", "时区"], ["locale.application", "语言"],
+];
+
 function FingerprintSettings({
   engine,
   chromiumRuntime,
@@ -1043,6 +1053,30 @@ function FingerprintSettings({
   };
   const storedMemoryMissing = !!hardwareOptions && memoryGb !== undefined && memoryGb !== "" && !memoryChoices.includes(Number(memoryGb));
   const storedGpuMissing = !!hardwareOptions && !!storedGpu && !gpuChoices.some((gpu) => `${gpu.anchor}\n${gpu.vendor}\n${gpu.renderer}` === storedGpu);
+  const [preview, setPreview] = useState<NanfuFingerprintPreview | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewErr, setPreviewErr] = useState("");
+  const previewRows = preview ? FP_PREVIEW_LABELS.flatMap(([key, label]) => {
+    const surface = preview.surfaces.find((entry) => entry.surface === key);
+    return surface ? [{ label, value: surface.value, layer: surface.layer }] : [];
+  }) : [];
+  const runPreview = async () => {
+    setPreviewBusy(true);
+    setPreviewErr("");
+    try {
+      const result = await fetchNanfuFingerprintPreview({
+        seed: seed ?? "", platformOs, screen, locale: locale ?? "", timezone: timezone ?? "",
+        cores: cores ?? "", memoryGb: memoryGb ?? "", gpuAnchor: gpuAnchor ?? "",
+        gpuVendor: gpuVendor ?? "", gpuRenderer: gpuRenderer ?? "",
+      });
+      setPreview(result.preview);
+    } catch (error) {
+      setPreview(null);
+      setPreviewErr(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
   return (
     <details className="fingerprint-settings" open={initiallyOpen || undefined}>
       <summary>
@@ -1144,6 +1178,25 @@ function FingerprintSettings({
           {["字体", "Canvas", "WebGL 图像", "ClientRects", "WebGL 元数据", "AudioContext", "媒体设备", "Speech Voices", "端口扫描保护", "SSL 指纹", "插件指纹"].map((label) => (
             <span className="fp-chip" key={label}>{label}</span>
           ))}
+        </div>}
+        {engine === "chromium" && <div className="fp-preview">
+          <div className="fp-preview-head">
+            <button type="button" className="btn ghost" disabled={previewBusy} onClick={() => void runPreview()}>
+              {previewBusy ? "正在读取内核组合…" : "预览内核实际指纹"}
+            </button>
+            <span className="fp-note">直接读取内核 --fingerprint-explain，不是 UI 估算</span>
+          </div>
+          {previewErr && <p className="fp-note" style={{ color: "var(--danger)" }}>{previewErr}</p>}
+          {previewRows.length > 0 && <div className="fp-preview-grid">
+            {previewRows.map((row) => <div className="fp-preview-row" key={row.label}>
+              <span className="fp-preview-key">{row.label}</span>
+              <span className="fp-preview-val">{row.value}{row.layer === "host-inherited" ? "（跟随本机）" : ""}</span>
+            </div>)}
+          </div>}
+          {preview && preview.limitations.length > 0 && <details className="fp-limits">
+            <summary>内核声明的限制（{preview.limitations.length}）</summary>
+            <ul>{preview.limitations.map((line, index) => <li key={index}>{line}</li>)}</ul>
+          </details>}
         </div>}
         {onSeedChange && (
           <label className="fld">
