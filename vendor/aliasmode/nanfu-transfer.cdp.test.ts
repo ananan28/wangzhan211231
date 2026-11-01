@@ -328,6 +328,10 @@ test.skipIf(!enabled)("staff account forms validate and remain usable in real Ch
           </head><body><div id="root"></div><script type="module" src="/${basename(script!.path)}"></script></body></html>`,
           { headers: { "content-type": "text/html; charset=utf-8" } });
         if (path === "/favicon.ico") return new Response(null, { status: 204 });
+        // The staff dialog loads local window counts and lists on mount; answer
+        // them so the fixture does not emit 404 console errors.
+        if (path === "/ui/api/nanfu/local-window-counts") return Response.json({ ok: true, counts: {} });
+        if (path === "/ui/api/nanfu/local-windows") return Response.json({ ok: true, windows: [] });
         const asset = assets.get(path);
         return asset ? new Response(asset) : new Response("Not found", { status: 404 });
       },
