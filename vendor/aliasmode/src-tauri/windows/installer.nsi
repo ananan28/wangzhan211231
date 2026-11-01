@@ -433,7 +433,11 @@ FunctionEnd
 Var DeleteAppDataCheckbox
 Var DeleteAppDataCheckboxState
 !define /ifndef WS_EX_LAYOUTRTL         0x00400000
-!define MUI_PAGE_CUSTOMFUNCTION_SHOW un.ConfirmShow
+; Nanfu: the template's uninstall page offered "delete app data", which wipes
+; the local window database. A reinstall must never destroy windows, so the
+; checkbox is not created; $DeleteAppDataCheckboxState stays 0 and the deletion
+; block below never runs.
+; !define MUI_PAGE_CUSTOMFUNCTION_SHOW un.ConfirmShow
 Function un.ConfirmShow ; Add add a `Delete app data` check box
   ; $1 inner dialog HWND
   ; $2 window DPI
@@ -463,7 +467,7 @@ Function un.ConfirmShow ; Add add a `Delete app data` check box
   SendMessage $HWNDPARENT ${WM_GETFONT} 0 0 $1
   SendMessage $DeleteAppDataCheckbox ${WM_SETFONT} $1 1
 FunctionEnd
-!define MUI_PAGE_CUSTOMFUNCTION_LEAVE un.ConfirmLeave
+; !define MUI_PAGE_CUSTOMFUNCTION_LEAVE un.ConfirmLeave
 Function un.ConfirmLeave
   SendMessage $DeleteAppDataCheckbox ${BM_GETCHECK} 0 0 $DeleteAppDataCheckboxState
 FunctionEnd
