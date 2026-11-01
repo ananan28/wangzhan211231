@@ -244,7 +244,11 @@ export async function prepareMacosBundle(
   if (!app) throw new Error(`the Chromium kernel archive does not contain Chromium.app: ${archive}`);
   const sourceExecutable = join(app, MACOS_CHROMIUM_EXECUTABLE);
   if (statSync(sourceExecutable, { throwIfNoEntry: false })?.isFile() !== true) {
-    throw new Error(`the Chromium kernel archive has no ${MACOS_CHROMIUM_EXECUTABLE}: ${archive}`);
+    // Diagnose the real bundle layout instead of only saying the expected path is absent.
+    const listing = (() => {
+      try { return readdirSync(join(app, "Contents/MacOS")).join(", "); } catch { return "<no Contents/MacOS>"; }
+    })();
+    throw new Error(`the Chromium kernel archive has no ${MACOS_CHROMIUM_EXECUTABLE}: ${archive} (app=${app}; Contents/MacOS has: ${listing})`);
   }
 
   // One kernel is staged per bundle. Refuse a kernel built for a different processor instead of

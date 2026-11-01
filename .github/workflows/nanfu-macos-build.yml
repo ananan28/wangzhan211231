@@ -75,6 +75,10 @@ jobs:
           echo "NANFU_CHROMIUM_ARCHIVE=$archive" >> "$GITHUB_ENV"
           echo "NANFU_CHROMIUM_SHA256=$sha" >> "$GITHUB_ENV"
           echo "Chromium kernel: $archive ($sha)"
+          echo "Kernel archive top-level entries:"
+          unzip -Z1 "$archive" | head -30
+          echo "Kernel archive app executables:"
+          unzip -Z1 "$archive" | grep -E 'Chromium\.app/Contents/MacOS/' | head -10 || true
       - name: Prepare the bundle (kernel, sidecar, Playwright runtime)
         run: bun scripts/prepare-macos-bundle.ts
       - name: Build the app and the disk image
