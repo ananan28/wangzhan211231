@@ -612,6 +612,28 @@ export class ProfileStore {
     })();
   }
 
+  /**
+   * Accept a transfer on the machine that already holds the sender's window:
+   * change its owner (a MOVE) instead of importing a second copy, so it leaves
+   * the sender's workspace with its data and login state intact.
+   */
+  completeNanfuTransferMove(
+    userId: string, transferId: string, profileId: string, bundle: string | null, resultJson: string,
+  ): void {
+    this.transaction(() => {
+      const receipt = this.getNanfuTransferReceipt(userId, transferId);
+      if (!receipt || receipt.resultJson) throw new Error("转移接收状态已变更，请重试");
+      const row = this.db.query<{ owner_user_id: string }, [string]>(
+        `SELECT owner_user_id FROM profiles WHERE id = ?`,
+      ).get(profileId);
+      if (!row) throw new Error("目标环境已不存在，请刷新后重试");
+      this.reassignOwner(profileId, userId);
+      if (bundle !== null) this.saveSessionBundle(profileId, bundle);
+      this.db.query(`UPDATE nanfu_transfer_receipts SET sealed_payload = '', result_json = ?
+        WHERE user_id = ? AND transfer_id = ?`).run(resultJson, userId, transferId);
+    })();
+  }
+
   getSessionBundle(id: string): string | null {
     return this.db.query<{ session_json: string }, [string, string]>(
       `SELECT session_json FROM profiles WHERE id = ? AND owner_user_id = ?`,

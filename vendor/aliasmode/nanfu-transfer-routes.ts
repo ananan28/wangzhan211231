@@ -615,6 +615,32 @@ export async function handleNanfuTransferRequest(
       if (incoming) context.store.stageNanfuTransfer(userId, id, sealed, JSON.stringify(incoming.row));
       const accepted = await client.acceptCloudTransfer(id, signal);
       assertAccount();
+      // 同一台机器上发送方的窗口还在本机：直接把归属改给接收方（真正的“转移”），
+      // 不再复制一份，否则发送方和接收方会各留一个。
+      const environmentId = payload.package.environment.id;
+      const localOwner = context.store.listProfileOwners().find((row) => row.id === environmentId)?.owner;
+      if (localOwner && localOwner !== userId) {
+        const transfer = payload.transfer;
+        const bundle = transfer.session.cookies.length || transfer.session.origins.length || transfer.session.tabs.length
+          ? sessionBundleOf(transfer.session) : null;
+        const result = {
+          ok: true,
+          profileId: environmentId,
+          name: payload.package.environment.name,
+          renamed: false,
+          environmentName: payload.package.environment.name,
+          environmentId,
+          hasLoginState: hasLoginState(payload),
+          cookies: transfer.session.cookies.length,
+          origins: transfer.session.origins.length,
+          extensions: payload.package.extensionArchives.length,
+          senderEmail: accepted.senderEmail,
+          moved: true,
+        };
+        assertAccount();
+        context.store.completeNanfuTransferMove(userId, id, environmentId, bundle, JSON.stringify(result));
+        return reply(result);
+      }
       const plan = importPlan(context.store, payload.package);
       const { extensionIds, installed } = await installArchives(context.store, paths, payload.package.extensionArchives);
       const transfer = payload.transfer;
