@@ -66,10 +66,14 @@ import {
 import { decodePortableProfile } from "./portable-profile.ts";
 import { isSafeProfileId, PROFILE_ID_ERROR } from "./profile-id.ts";
 import { normalizeProxySpec, proxyHostPort, proxyLegacyString, type ProxyInput } from "./proxy.ts";
-import { convertMobilePersonaToDesktop, editedProfileHardware, isMobileUserAgent } from "./fingerprint.ts";
+import {
+  convertMobilePersonaToDesktop, editedProfileHardware, isMobileUserAgent,
+  memoryOptionsGb, normalizeGpuIdentity, normalizeMemoryGb,
+} from "./fingerprint.ts";
 import { setFirefoxScreen, syncFirefoxTimezone } from "./firefox-config.ts";
 import { addBrowserCookie } from "./session.ts";
 import { join, resolve, dirname } from "node:path";
+import { availableParallelism } from "node:os";
 import { readdirSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { validAgentAuthorization } from "./agent-control.ts";
 import { ScriptError, prefetchPythonFor, type ScriptLibrary, type ScriptSupervisor } from "./scripts.ts";
@@ -583,6 +587,7 @@ function profileEditView(p: Profile) {
     ...(p.proxyError ? { proxyError: p.proxyError } : {}),
     username: p.username, password: p.password,
     email: p.email ?? "", emailPassword: p.emailPassword ?? "", twofa: p.twofa,
+    doNotTrack: p.doNotTrack === true,
     resolution: `${p.screenWidth}*${p.screenHeight}`,
     extensions: p.extensions ?? [],
     tags: (p.tags ?? []).join(", "),
@@ -592,6 +597,9 @@ function profileEditView(p: Profile) {
     ...(p.timezoneManual ? { timezoneManual: true } : {}),
     locale: p.locale ?? "",
     cores: p.hardware ? String(p.hardware.cores) : "",
+    memoryGb: p.memoryGb ?? 0,
+    gpuVendor: p.gpuVendor ?? "",
+    gpuRenderer: p.gpuRenderer ?? "",
     fingerprintSeed: String(p.fingerprintSeed),
     cookieCount: p.cookies.length, seeded: p.seeded,
     mobilePersona: !!conversion,
@@ -630,6 +638,25 @@ function applyEdits(p: Profile, set: Record<string, unknown>): boolean {
   if ("email" in set) p.email = String(set.email ?? "");
   if ("emailPassword" in set) p.emailPassword = String(set.emailPassword ?? "");
   if ("twofa" in set) p.twofa = String(set.twofa ?? "");
+  if ("doNotTrack" in set) p.doNotTrack = set.doNotTrack === true || set.doNotTrack === "true";
+  if ("memoryGb" in set) {
+    const memoryGb = normalizeMemoryGb(set.memoryGb);
+    if (memoryGb) p.memoryGb = memoryGb;
+    else delete p.memoryGb;
+  }
+  if ("gpuVendor" in set || "gpuRenderer" in set) {
+    const gpu = normalizeGpuIdentity(
+      "gpuVendor" in set ? set.gpuVendor : p.gpuVendor,
+      "gpuRenderer" in set ? set.gpuRenderer : p.gpuRenderer,
+    );
+    if (gpu.gpuVendor) {
+      p.gpuVendor = gpu.gpuVendor;
+      p.gpuRenderer = gpu.gpuRenderer;
+    } else {
+      delete p.gpuVendor;
+      delete p.gpuRenderer;
+    }
+  }
   if ("resolution" in set) {
     const r = parseStrictResolution(set.resolution);
     if (profileEngine(p) === "firefox" && (p.screenWidth !== r.width || p.screenHeight !== r.height)) {
@@ -761,6 +788,15 @@ export async function handleUiRequest(
   options: UiRuntimeOptions = {},
 ): Promise<Response | null> {
   const { pathname } = new URL(req.url);
+  // A blank loopback page for the fingerprint probe. about:blank is an opaque
+  // origin, where navigator.deviceMemory does not exist; loopback is a secure
+  // context, so the probe can read every hardware value a real site sees.
+  if (pathname === "/ui/fingerprint-probe.html") {
+    return new Response(
+      '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>指纹探针</title></head><body></body></html>',
+      { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
+    );
+  }
   if (!pathname.startsWith("/ui/api/")) return null;
 
   // Local profiles never reach the nanfu_environments trigger that enforces
@@ -813,6 +849,7 @@ export async function handleUiRequest(
       getProfile: id => store.getProfile(id),
       getLaunch: id => store.getLaunch(id),
       active: id => launcher.active(id),
+      probeUrl: `${new URL(req.url).origin}/ui/fingerprint-probe.html`,
     });
     return noStoreJson(outcome.body, outcome.status);
   }
@@ -1313,6 +1350,19 @@ export async function handleUiRequest(
         if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
         if (!store) return noStoreJson({ ok: false, error: "窗口库未就绪" }, 503);
         return noStoreJson({ ok: true, counts: store.localWindowCounts() });
+      }
+      // 每窗口硬件指纹的可选项：CPU 上限、可诚实声明的内存档位、本机内核
+      // 实际能服务的 GPU 厂商/型号。GPU 清单来自内核自己的能力探测，不能
+      // 凭空编，否则内核会拒绝启动该窗口。
+      if (req.method === "GET" && action === "hardware-options") {
+        if (!account.state().authenticated) return noStoreJson({ ok: false, error: "请先登录南孚账号" }, 401);
+        const gpus = await launcher.servableGpus().catch(() => []);
+        return noStoreJson({
+          ok: true,
+          coresMax: availableParallelism(),
+          memoryGb: memoryOptionsGb(),
+          gpus,
+        });
       }
       // 分配／回收：同一台机器直接改本机窗口的归属，窗口数据不搬家。
       if (req.method === "POST" && action === "reassign-window") {
@@ -2192,6 +2242,10 @@ export async function handleUiRequest(
           }, (id) => !!store.getProfile(id) || store.isTrashed(id));
           profile.extensions = [...(source.extensions ?? [])];
           profile.tags = [...(source.tags ?? [])];
+          profile.doNotTrack = source.doNotTrack;
+          profile.memoryGb = source.memoryGb;
+          profile.gpuVendor = source.gpuVendor;
+          profile.gpuRenderer = source.gpuRenderer;
           profile.cookies = structuredClone(source.cookies);
           profile.proxyError = source.proxyError;
           profile.timezone = source.timezone;

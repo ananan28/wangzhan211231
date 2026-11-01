@@ -100,6 +100,11 @@ export interface FingerprintDeclaration {
   timezone: string | null;
   locale: string | null;
   cores: number | null;
+  /** Optional so older fixtures and pre-hardware profiles stay valid. */
+  memoryGb?: number | null;
+  gpuVendor?: string | null;
+  gpuRenderer?: string | null;
+  doNotTrack?: boolean | null;
   screenWidth: number | null;
   screenHeight: number | null;
   ua: string | null;
@@ -132,10 +137,18 @@ export interface ProbeDocument {
     user_agent?: string;
     platform?: string;
     hardware_concurrency?: number | null;
+    device_memory?: number | null;
+    do_not_track?: string | null;
     language?: string;
     languages?: string[];
     time?: { intl_timezone?: string | null };
     screen_geometry?: { width?: number; height?: number };
+    webgl?: {
+      vendor?: string | null;
+      unmasked_vendor?: string | null;
+      renderer?: string | null;
+      unmasked_renderer?: string | null;
+    };
   };
   hashes?: { stable_fnv64?: string };
   notes?: string[];
@@ -143,7 +156,7 @@ export interface ProbeDocument {
 
 /** 档案声明只取耐久字段：平台、时区、语言、核心数、屏幕、UA。 */
 export function declarationFromProfile(
-  profile: Pick<Profile, "platformOs" | "ua" | "timezone" | "locale" | "hardware" | "screenWidth" | "screenHeight">,
+  profile: Pick<Profile, "platformOs" | "ua" | "timezone" | "locale" | "hardware" | "screenWidth" | "screenHeight" | "memoryGb" | "gpuVendor" | "gpuRenderer" | "doNotTrack">,
 ): FingerprintDeclaration {
   const platform = ((profile.platformOs || platformFromUA(profile.ua) || "") as string).trim().toLowerCase();
   return {
@@ -151,6 +164,10 @@ export function declarationFromProfile(
     timezone: (profile.timezone || "").trim() || null,
     locale: (profile.locale || "").trim() || null,
     cores: typeof profile.hardware?.cores === "number" ? profile.hardware.cores : null,
+    memoryGb: typeof profile.memoryGb === "number" ? profile.memoryGb : null,
+    gpuVendor: (profile.gpuVendor ?? "").trim() || null,
+    gpuRenderer: (profile.gpuRenderer ?? "").trim() || null,
+    doNotTrack: typeof profile.doNotTrack === "boolean" ? profile.doNotTrack : null,
     screenWidth: Number.isFinite(profile.screenWidth) ? profile.screenWidth : null,
     screenHeight: Number.isFinite(profile.screenHeight) ? profile.screenHeight : null,
     ua: (profile.ua || "").trim() || null,
@@ -267,6 +284,57 @@ export function compareFingerprint(
     "页面没有返回屏幕几何。",
   );
 
+  const declaredMemory = declaration.memoryGb ?? null;
+  const observedMemory = typeof signals.device_memory === "number" ? signals.device_memory : null;
+  const memoryItem = item(
+    "hardware.memory",
+    "内存",
+    declaredMemory === null ? null : `${declaredMemory} GB`,
+    observedMemory === null ? null : `${observedMemory} GB`,
+    declaredMemory !== null && observedMemory !== null && declaredMemory === observedMemory,
+    "档案未声明内存，无法比对（由种子生成）。",
+    "页面没有返回 navigator.deviceMemory。",
+  );
+
+  const declaredGpuVendor = declaration.gpuVendor ?? null;
+  const observedGpuVendor = (signals.webgl?.unmasked_vendor ?? signals.webgl?.vendor ?? "").trim() || null;
+  const gpuVendorItem = item(
+    "hardware.gpuVendor",
+    "显卡厂商",
+    declaredGpuVendor,
+    observedGpuVendor,
+    !!declaredGpuVendor && !!observedGpuVendor && declaredGpuVendor === observedGpuVendor,
+    "档案未指定显卡，无法比对（由种子生成）。",
+    "页面没有返回 WebGL 厂商。",
+  );
+  const declaredGpuRenderer = declaration.gpuRenderer ?? null;
+  const observedGpuRenderer = (signals.webgl?.unmasked_renderer ?? signals.webgl?.renderer ?? "").trim() || null;
+  const gpuRendererItem = item(
+    "hardware.gpuRenderer",
+    "显卡型号",
+    declaredGpuRenderer,
+    observedGpuRenderer,
+    !!declaredGpuRenderer && !!observedGpuRenderer && declaredGpuRenderer === observedGpuRenderer,
+    "档案未指定显卡，无法比对（由种子生成）。",
+    "页面没有返回 WebGL 型号。",
+  );
+
+  const dntSupported = Object.prototype.hasOwnProperty.call(signals, "do_not_track");
+  const declaredDnt = declaration.doNotTrack ?? null;
+  const dntDeclared = declaredDnt === null ? null : declaredDnt ? "开启" : "关闭";
+  const rawDnt = signals.do_not_track;
+  const dntObserved = !dntSupported ? null : rawDnt === "1" ? "开启" : "关闭";
+  const declaredDntOn = declaredDnt === true;
+  const dntItem = item(
+    "dnt",
+    "勿追踪（DNT）",
+    dntDeclared,
+    dntObserved,
+    dntDeclared !== null && dntObserved !== null && (dntObserved === "开启") === declaredDntOn,
+    "档案未声明勿追踪，无法比对。",
+    "页面没有返回 navigator.doNotTrack。",
+  );
+
   const declaredUa = declaration.ua;
   const observedUa = (signals.user_agent ?? "").trim() || null;
   const uaItem = item(
@@ -279,7 +347,13 @@ export function compareFingerprint(
     "页面没有返回 navigator.userAgent。",
   );
 
-  const all = [platformItem, timezoneItem, localeItem, coresItem, screenItem, uaItem];
+  const all = [
+    platformItem, timezoneItem, localeItem, coresItem, screenItem, uaItem,
+    ...(declaredMemory !== null ? [memoryItem] : []),
+    ...(declaredGpuVendor ? [gpuVendorItem] : []),
+    ...(declaredGpuRenderer ? [gpuRendererItem] : []),
+    ...(declaredDnt !== null ? [dntItem] : []),
+  ];
   // UA 由内核按种子与内核版本重新生成，版本变化不是指纹漂移；提示但不算不一致。
   const uaMismatchOnlyVersion = uaItem.state === "mismatch"
     && uaItem.declared.replace(/Chrome\/[\d.]+/, "Chrome/x") === uaItem.observed.replace(/Chrome\/[\d.]+/, "Chrome/x");
@@ -380,6 +454,8 @@ class CdpClient {
 export interface ProbeRunOptions {
   timeoutMs?: number;
   source?: string;
+  /** A loopback page. about:blank is an opaque origin where navigator.deviceMemory is absent. */
+  probeUrl?: string;
 }
 
 /**
@@ -392,12 +468,24 @@ export async function runProbeOverCdp(wsUrl: string, options: ProbeRunOptions = 
   const client = await CdpClient.connect(wsUrl, 5_000);
   let targetId: string | null = null;
   try {
-    const created = await client.send("Target.createTarget", { url: "about:blank" });
+    const created = await client.send("Target.createTarget", { url: options.probeUrl ?? "about:blank" });
     targetId = typeof created.targetId === "string" ? created.targetId : null;
     if (!targetId) throw new Error("无法在环境中新建标签页");
     const attached = await client.send("Target.attachToTarget", { targetId, flatten: true });
     const sessionId = typeof attached.sessionId === "string" ? attached.sessionId : "";
     if (!sessionId) throw new Error("无法附加到环境标签页");
+    // A loopback page is a secure context, so navigator.deviceMemory exists;
+    // wait for its document before injecting the probe.
+    if (options.probeUrl) {
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const ready = await client.send("Runtime.evaluate", {
+          expression: "document.readyState", returnByValue: true,
+        }, sessionId, 2_000).catch(() => null);
+        if (ready?.result?.value === "complete") break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
     const expression = `(async () => {\n${source}\nreturn await runProbe();\n})()`;
     const evaluated = await client.send("Runtime.evaluate", {
       expression,
@@ -433,13 +521,15 @@ export interface SelfCheckLaunch {
 }
 
 export interface FingerprintSelfCheckDeps {
-  getProfile(profileId: string): Pick<Profile, "id" | "engine" | "platformOs" | "ua" | "timezone" | "locale" | "hardware" | "screenWidth" | "screenHeight"> | null;
+  getProfile(profileId: string): Pick<Profile, "id" | "engine" | "platformOs" | "ua" | "timezone" | "locale" | "hardware" | "screenWidth" | "screenHeight" | "memoryGb" | "gpuVendor" | "gpuRenderer" | "doNotTrack"> | null;
   getLaunch(profileId: string): SelfCheckLaunch | null;
   active(profileId: string): Promise<boolean>;
   /** 与 launcher 相同的方式在调试端口上读 /json/version。 */
   endpoint?: (debugPort: number) => Promise<string | null>;
   runProbe?: (wsUrl: string) => Promise<ProbeDocument>;
   source?: string;
+  /** Loopback page URL (secure context) used instead of about:blank. */
+  probeUrl?: string;
 }
 
 export interface FingerprintSelfCheckOutcome {
@@ -491,7 +581,7 @@ export async function fingerprintSelfCheck(
   }
   let doc: ProbeDocument;
   try {
-    doc = await (deps.runProbe ?? ((url: string) => runProbeOverCdp(url, { source })))(wsUrl);
+    doc = await (deps.runProbe ?? ((url: string) => runProbeOverCdp(url, { source, probeUrl: deps.probeUrl })))(wsUrl);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { status: 502, body: { ok: false, error: `在环境浏览器中采集失败：${message}` } };

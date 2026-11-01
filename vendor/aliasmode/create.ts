@@ -13,7 +13,7 @@
 import type { Profile, ProfileEngine, ProxySpec } from "./types.ts";
 import { completeProfileFingerprint, createFirefoxProfileConfig, normalizeChromiumRuntime, syncFirefoxTimezone } from "./firefox-config.ts";
 import { chromiumDeviceScale, defaultChromiumRuntime, hostDisplayScale, hostDisplaySize } from "./aliasmode-chromium.ts";
-import { deterministicSeed, editedProfileHardware, generateProfileHardware, hostPlatformOs } from "./fingerprint.ts";
+import { deterministicSeed, editedProfileHardware, generateProfileHardware, hostPlatformOs, normalizeGpuIdentity, normalizeMemoryGb } from "./fingerprint.ts";
 import { normalizeProxySpec } from "./proxy.ts";
 import { parseStrictCores, parseStrictCustomNo, parseStrictResolution, parseStrictSeed, parseStrictTimezone, parsePlatformOs } from "./parse.ts";
 import { normalizeProfileLocale } from "./profile-locale.ts";
@@ -46,6 +46,13 @@ export interface NewProfileInput {
   timezone?: string;
   /** Processor count the environment reports. Empty/omitted → derived from the seed. */
   cores?: string;
+  /** RAM in GB (2/4/8/16/32). Empty/omitted → derived from the seed. */
+  memoryGb?: number | string;
+  /** Exact WebGL unmasked vendor/renderer pair. Empty/omitted → derived from the seed. */
+  gpuVendor?: string;
+  gpuRenderer?: string;
+  /** Send the Do Not Track signal. Omitted/false keeps Chromium's native default. */
+  doNotTrack?: boolean | string;
   /** Fixed fingerprint seed. Empty/omitted → derived from the new profile id. */
   seed?: string;
   /** Operator-chosen serial shown in the roster and the browser window title. */
@@ -140,6 +147,9 @@ export function buildNewProfile(input: NewProfileInput, exists: (id: string) => 
   const firefoxTimezone = firefox?.config.timezone;
   const locale = normalizeProfileLocale(input.locale) ?? Intl.DateTimeFormat().resolvedOptions().locale;
   const timezone = input.timezone ? parseStrictTimezone(input.timezone) : undefined;
+  const memoryGb = normalizeMemoryGb(input.memoryGb);
+  const gpu = normalizeGpuIdentity(input.gpuVendor, input.gpuRenderer);
+  const doNotTrack = input.doNotTrack === true || input.doNotTrack === "true" || input.doNotTrack === "1";
 
   const profile = completeProfileFingerprint({
     id,
@@ -168,6 +178,9 @@ export function buildNewProfile(input: NewProfileInput, exists: (id: string) => 
     timezone: timezone ?? (typeof firefoxTimezone === "string" ? firefoxTimezone : Intl.DateTimeFormat().resolvedOptions().timeZone),
     screenWidth: typeof firefoxScreenWidth === "number" ? firefoxScreenWidth : selected.width,
     screenHeight: typeof firefoxScreenHeight === "number" ? firefoxScreenHeight : selected.height,
+    ...(memoryGb ? { memoryGb } : {}),
+    ...(gpu.gpuVendor ? gpu : {}),
+    ...(doNotTrack ? { doNotTrack: true } : {}),
     fingerprintSeed: seed,
     cookies: [],
     seeded: false,

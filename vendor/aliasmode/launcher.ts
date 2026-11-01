@@ -43,6 +43,7 @@ import {
   FINGERPRINT_EXTENSION, FINGERPRINT_EXTENSION_REVISION, fingerprintExtensionDir, writeFingerprintExtension,
 } from "./fingerprint-extension.ts";
 import { allocatePort } from "./ports.ts";
+import { probeServableGpus, type ServableGpu } from "./nanfu-gpu-catalogue.ts";
 import {
   DEFAULT_WINDOW_HEIGHT_SCALE, DEFAULT_WINDOW_WIDTH_SCALE, deriveFingerprintFlags, isMobileUserAgent, launchWindowSize,
   platformFromUA, proxyServerFlag,
@@ -841,6 +842,7 @@ export class Launcher {
   private expectedFirefoxBinarySha256: string;
   private chromiumRuntimeRoot: string;
   private ensureAliasmodeChromiumFn: (root: string) => Promise<string>;
+  private gpuCatalogue?: Promise<ServableGpu[]>;
   private ensureDownloadedCloakBrowserFn: (root: string) => Promise<string>;
   /** Runtimes whose background download started in this run. */
   private runtimePrefetches = new Set<string>();
@@ -1309,6 +1311,38 @@ export class Launcher {
     const ip = exit?.ip;
     this.log(ip ? `${profile.id}: proxy exit IP found for WebRTC` : `${profile.id}: proxy exit IP not found; WebRTC keeps no public address`);
     return ip;
+  }
+
+  /**
+   * The GPU identities this computer's kernel can serve. Probed once per
+   * session from the kernel's own rejection message; an empty list means the
+   * kernel gave no menu, in which case windows keep the seed-composed GPU.
+   */
+  async servableGpus(): Promise<ServableGpu[]> {
+    this.gpuCatalogue ??= (async () => {
+      const executable = await this.ensureAliasmodeChromiumFn(this.chromiumRuntimeRoot);
+      return probeServableGpus(executable);
+    })().catch(() => []);
+    return this.gpuCatalogue;
+  }
+
+  /**
+   * Drop a stored GPU identity this host cannot serve. The kernel rejects an
+   * identity outside its anchor's capability cluster and refuses to start, so a
+   * profile moved between computers must fall back to its seed's GPU rather than
+   * become unlaunchable.
+   */
+  private async withServableGpu(profile: Profile): Promise<Profile> {
+    if (!profile.gpuVendor || !profile.gpuRenderer) return profile;
+    if (profile.chromiumRuntime !== "aliasmode") {
+      return { ...profile, gpuVendor: undefined, gpuRenderer: undefined };
+    }
+    const gpus = await this.servableGpus();
+    if (gpus.some((gpu) => gpu.vendor === profile.gpuVendor && gpu.renderer === profile.gpuRenderer)) {
+      return profile;
+    }
+    this.log(`${profile.id}: stored GPU identity is not servable on this computer; using the seed's GPU`);
+    return { ...profile, gpuVendor: undefined, gpuRenderer: undefined };
   }
 
   /**
@@ -1992,6 +2026,9 @@ export class Launcher {
     const restoreLastSession = nativeSessionAvailable;
 
     if (profile.proxy) await this.persistWebRtcPolicyPreference(profileId);
+    // Write the DNT pref both ways: turning it off in the app must clear a
+    // signal an earlier launch left in Preferences.
+    if (profile.engine !== "firefox") await this.persistDoNotTrackPreference(profileId, profile.doNotTrack === true);
 
     const port = allocatePort({
       ...this.portRange,
@@ -2046,7 +2083,7 @@ export class Launcher {
         }
       }
       const args = this.buildArgs(
-        profile, port, userDataDir, chromeArgs, relayPort, headless, restoreLastSession, webRtcIp, opts.keepAliveWithoutWindows,
+        await this.withServableGpu(profile), port, userDataDir, chromeArgs, relayPort, headless, restoreLastSession, webRtcIp, opts.keepAliveWithoutWindows,
       );
       this.log(`launching ${profileId} on port ${port} (seed ${profile.fingerprintSeed})`);
       launchStartedAt = Date.now();
@@ -4170,6 +4207,32 @@ export class Launcher {
       await writeFileAtomic(file, JSON.stringify(prefs));
     } catch (error) {
       throw new Error(`cannot persist WebRTC policy for ${profileId}: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  /**
+   * Persist the per-window Do Not Track signal in Chromium's profile prefs.
+   * Chromium 155 no longer recognizes an --enable-do-not-track switch, so the
+   * pref (`enable_do_not_track`) is the mechanism that drives both the DNT
+   * request header and navigator.doNotTrack. Best effort: a locked or corrupt
+   * Preferences file must never block a launch.
+   */
+  private async persistDoNotTrackPreference(profileId: string, enabled: boolean): Promise<void> {
+    const base = this.containedUserDataDir(profileId, "persistDoNotTrackPreference");
+    if (!base) return;
+    const dir = join(base, "Default");
+    const file = join(dir, "Preferences");
+    try {
+      mkdirSync(dir, { recursive: true });
+      let prefs: any = {};
+      if (existsSync(file)) {
+        prefs = JSON.parse(readFileSync(file, "utf8"));
+      }
+      if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) return;
+      prefs.enable_do_not_track = enabled;
+      await writeFileAtomic(file, JSON.stringify(prefs));
+    } catch {
+      /* best-effort: Chromium keeps its previous/default signal */
     }
   }
 

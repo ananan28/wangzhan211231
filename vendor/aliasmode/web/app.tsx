@@ -118,7 +118,9 @@ import {
   isNanfuSignInRequired,
   fetchNanfuState,
   nanfuAuthAction,
+  fetchNanfuHardwareOptions,
   type NanfuAccountState,
+  type NanfuHardwareOptions,
 } from "./api.ts";
 import { NanfuAccountPage } from "./nanfu-account.tsx";
 import { NanfuGate } from "./nanfu-gate.tsx";
@@ -1000,6 +1002,15 @@ function FingerprintSettings({
   onLocaleChange?: (value: string) => void;
   cores?: string;
   onCoresChange?: (value: string) => void;
+  memoryGb?: string;
+  onMemoryGbChange?: (value: string) => void;
+  gpuVendor?: string;
+  gpuRenderer?: string;
+  onGpuChange?: (vendor: string, renderer: string) => void;
+  hardwareOptions?: NanfuHardwareOptions | null;
+  doNotTrack?: string;
+  onDoNotTrackChange?: (value: string) => void;
+  initiallyOpen?: boolean;
   seed?: string;
   onSeedChange?: (value: string) => void;
   disabled?: boolean;
@@ -1007,8 +1018,13 @@ function FingerprintSettings({
   hardware?: { gpu?: string; cores?: number };
 }) {
   const { t } = useTranslation();
+  const storedGpu = gpuVendor && gpuRenderer ? `${gpuVendor}\n${gpuRenderer}` : "";
+  const memoryChoices = hardwareOptions?.memoryGb ?? [];
+  const gpuChoices = hardwareOptions?.gpus ?? [];
+  const storedMemoryMissing = !!hardwareOptions && memoryGb !== undefined && memoryGb !== "" && !memoryChoices.includes(Number(memoryGb));
+  const storedGpuMissing = !!hardwareOptions && !!storedGpu && !gpuChoices.some((gpu) => `${gpu.vendor}\n${gpu.renderer}` === storedGpu);
   return (
-    <details className="fingerprint-settings">
+    <details className="fingerprint-settings" open={initiallyOpen || undefined}>
       <summary>
         <span>{t("Fingerprint settings")}</span>
         <span className="automatic-badge">{onTimezoneChange ? t("Advanced") : t("Automatic")}</span>
@@ -1019,8 +1035,11 @@ function FingerprintSettings({
           <input value={browserLabel(engine, chromiumRuntime, ownChromium)} readOnly tabIndex={-1} className="ro" />
         </label>
         <label className="fld">
-          <span>Screen</span>
-          <input value={screen} disabled={disabled} placeholder={t("Automatic · e.g. 1920x1080")} onChange={(event) => onScreenChange(event.target.value)} />
+          <span>屏幕分辨率</span>
+          <input value={screen} list="nanfu-screen-presets" disabled={disabled} placeholder={t("Automatic · e.g. 1920x1080")} onChange={(event) => onScreenChange(event.target.value)} />
+          <datalist id="nanfu-screen-presets">
+            {["1366x768", "1440x900", "1536x864", "1600x900", "1920x1080", "2560x1440", "3840x2160"].map((value) => <option key={value} value={value} />)}
+          </datalist>
         </label>
         <label className="fld">
           <span>{t("Operating system")}</span>
@@ -1051,8 +1070,55 @@ function FingerprintSettings({
           <label className="fld">
             <span>{t("CPU")}</span>
             <input value={cores ?? ""} disabled={disabled} inputMode="numeric" placeholder={hardware?.cores ? t("Automatic · {n} cores", { n: hardware.cores }) : t("Automatic · e.g. 8")} onChange={(event) => onCoresChange(event.target.value)} />
+            <small className="fp-note">最多 {hardwareOptions?.coresMax ?? "本机"} 核；超过本机核数的值会自动按本机上限生效。</small>
           </label>
         )}
+        {onMemoryGbChange && engine === "chromium" && (
+          <label className="fld">
+            <span>内存</span>
+            <select value={memoryGb ?? ""} disabled={disabled} onChange={(event) => onMemoryGbChange(event.target.value)}>
+              <option value="">自动（按指纹种子）</option>
+              {memoryChoices.map((gb) => <option key={gb} value={String(gb)}>{gb} GB</option>)}
+              {storedMemoryMissing && <option value={memoryGb}>{memoryGb} GB（本机不支持，将自动降低）</option>}
+            </select>
+          </label>
+        )}
+        {onGpuChange && engine === "chromium" && (
+          <label className="fld">
+            <span>显卡</span>
+            <select
+              value={storedGpu}
+              disabled={disabled}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (!value) { onGpuChange("", ""); return; }
+                const separator = value.indexOf("\n");
+                onGpuChange(value.slice(0, separator), value.slice(separator + 1));
+              }}
+            >
+              <option value="">自动（按指纹种子）</option>
+              {gpuChoices.map((gpu) => (
+                <option key={`${gpu.vendor}\n${gpu.renderer}`} value={`${gpu.vendor}\n${gpu.renderer}`}>{gpu.label}</option>
+              ))}
+              {storedGpuMissing && <option value={storedGpu}>已存显卡（本机不可用，将自动回退）</option>}
+            </select>
+          </label>
+        )}
+        {onDoNotTrackChange && engine === "chromium" && (
+          <label className="fld fp-check">
+            <span>勿追踪（DNT）</span>
+            <span className="fp-checkline">
+              <input type="checkbox" checked={doNotTrack === "1"} disabled={disabled} onChange={(event) => onDoNotTrackChange(event.target.checked ? "1" : "")} />
+              向网站发送 DNT: 1
+            </span>
+          </label>
+        )}
+        {engine === "chromium" && <div className="fp-auto">
+          <span className="fp-auto-title">内核自动保护</span>
+          {["字体", "Canvas", "WebGL 图像", "ClientRects", "WebGL 元数据", "AudioContext", "媒体设备", "Speech Voices", "端口扫描保护", "SSL 指纹", "插件指纹"].map((label) => (
+            <span className="fp-chip" key={label}>{label}</span>
+          ))}
+        </div>}
         {onSeedChange && (
           <label className="fld">
             <span>{t("Fingerprint seed")}</span>
@@ -1060,7 +1126,9 @@ function FingerprintSettings({
           </label>
         )}
         {AUTOMATIC_FINGERPRINT_FIELDS.filter(([label]) => !(
-          (label === "Timezone" && onTimezoneChange) || (label === "Language" && onLocaleChange) || (label === "CPU" && onCoresChange) || (label === "Fingerprint seed" && onSeedChange)
+          (label === "Timezone" && onTimezoneChange) || (label === "Language" && onLocaleChange) ||
+          (label === "CPU" && onCoresChange) || (label === "RAM" && onMemoryGbChange) ||
+          (label === "GPU" && onGpuChange) || (label === "Fingerprint seed" && onSeedChange)
         )).map(([label, value]) => {
           // A stored value is the same on every computer that opens the profile.
           const stored = label === "GPU" ? hardware?.gpu : label === "CPU" && hardware?.cores ? `${hardware.cores} cores` : undefined;
@@ -1072,6 +1140,7 @@ function FingerprintSettings({
           );
         })}
         <div className="hint">{t("We recommend keeping every setting automatic. Custom values can make the browser look inconsistent, easier to detect, and can trigger account checks.")}</div>
+        {onGpuChange && <div className="hint">显卡列表只包含本机内核实际能服务的型号；换到别的电脑后不可用的型号会按指纹种子自动回退。内存和 CPU 的声明不会超过本机真实硬件。</div>}
         <div className="hint">{disabled
           ? t("Close the browser before changing fingerprint settings.")
           : onTimezoneChange
@@ -1293,7 +1362,7 @@ async function storeDesktopCloudCredentials(
 
 const BLANK_FORM = {
   name: "", engine: "chromium" as "chromium" | "firefox", chromiumRuntime: "" as "" | "aliasmode", group: "", platform: "", proxyType: "http", host: "", port: "", user: "", pass: "",
-  screen: "", platformOs: "", locale: "", timezone: "", cores: "", seed: "", customNo: "", username: "", password: "", email: "", emailPassword: "", twofa: "",
+  screen: "", platformOs: "", locale: "", timezone: "", cores: "", memoryGb: "", gpuVendor: "", gpuRenderer: "", doNotTrack: "", seed: "", customNo: "", username: "", password: "", email: "", emailPassword: "", twofa: "",
 };
 
 const BLANK_COOKIE_FORM = { name: "", value: "", domain: "", path: "/" };
@@ -1506,6 +1575,7 @@ function App() {
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
   const [createCount, setCreateCount] = useState("1");
+  const [createHardwareOptions, setCreateHardwareOptions] = useState<NanfuHardwareOptions | null>(null);
   const [favoriteSites, setFavoriteSites] = useState<FavoriteSite[]>(() => loadFavoriteSites());
   const [favoriteDraft, setFavoriteDraft] = useState<{ name: string; url: string } | null>(null);
   const [favoriteErr, setFavoriteErr] = useState<string | null>(null);
@@ -1538,6 +1608,7 @@ function App() {
   const [editEngine, setEditEngine] = useState<"chromium" | "firefox">("chromium");
   const [editChromiumRuntime, setEditChromiumRuntime] = useState("");
   const [editHardware, setEditHardware] = useState<{ gpu?: string; cores?: number } | undefined>();
+  const [editHardwareOptions, setEditHardwareOptions] = useState<NanfuHardwareOptions | null>(null);
   const [timezoneBusy, setTimezoneBusy] = useState(false);
   const editFetchId = useRef<string | null>(null);
   const [editMobile, setEditMobile] = useState<NonNullable<EditProfile["desktopConversion"]> | null>(null);
@@ -3005,6 +3076,8 @@ function App() {
     setCreateErr(null);
     // A first profile needs no proxy, so the section starts closed until profiles use one.
     setCreateProxyOpen(profiles.some((profile) => !!profile.proxy));
+    setCreateHardwareOptions(null);
+    void fetchNanfuHardwareOptions().then(setCreateHardwareOptions).catch(() => undefined);
     setShowCreate(true);
   };
   const closeCreate = () => {
@@ -3064,6 +3137,29 @@ function App() {
       }
     }
   };
+  /** 一键随机：只改可随机且互相不冲突的项；时区/语言仍跟随代理与本机。 */
+  const randomizeCreateFingerprint = () => {
+    const options = createHardwareOptions;
+    const screens = ["1366x768", "1440x900", "1536x864", "1600x900", "1920x1080", "2560x1440"];
+    const coreChoices = [4, 6, 8, 12, 16].filter((n) => !options || n <= options.coresMax);
+    const memoryChoices = options?.memoryGb?.length ? options.memoryGb : [2, 4, 8, 16];
+    const pick = <T,>(values: readonly T[]): T | undefined => values.length ? values[Math.floor(Math.random() * values.length)] : undefined;
+    const seed = String(100000000 + (crypto.getRandomValues(new Uint32Array(1))[0]! % 900000000));
+    const screen = pick(screens);
+    const cores = pick(coreChoices);
+    const memory = pick(memoryChoices);
+    const gpu = pick(options?.gpus ?? []);
+    setForm((current) => ({
+      ...current,
+      ...(screen ? { screen } : {}),
+      ...(cores ? { cores: String(cores) } : {}),
+      ...(memory ? { memoryGb: String(memory) } : {}),
+      gpuVendor: gpu?.vendor ?? "",
+      gpuRenderer: gpu?.renderer ?? "",
+      doNotTrack: Math.random() < 0.5 ? "1" : "",
+      seed,
+    }));
+  };
   const submitCreate = async () => {
     const count = Number(createCount);
     if (!Number.isInteger(count) || count < 1 || count > MAX_BATCH_CREATE) {
@@ -3095,6 +3191,11 @@ function App() {
           ...(form.locale ? { locale: form.locale } : {}),
           ...(form.timezone ? { timezone: form.timezone } : {}),
           ...(form.cores ? { cores: form.cores } : {}),
+          // A batch shares one form, so explicit RAM/GPU would give every new
+          // window the same hardware. Leave them to each seed instead.
+          ...(count === 1 && form.memoryGb ? { memoryGb: form.memoryGb } : {}),
+          ...(count === 1 && form.gpuVendor && form.gpuRenderer ? { gpuVendor: form.gpuVendor, gpuRenderer: form.gpuRenderer } : {}),
+          ...(form.doNotTrack === "1" ? { doNotTrack: true } : {}),
           // A fixed seed on a batch would give every profile the same identity; it is single-profile only.
           ...(count === 1 && form.seed ? { seed: form.seed } : {}),
           ...(isCloudMode ? {} : { customNo: form.customNo }),
@@ -3152,6 +3253,7 @@ function App() {
     setEditEngine("chromium");
     setEditChromiumRuntime("");
     setEditHardware(undefined);
+    setEditHardwareOptions(null);
     setTimezoneBusy(false);
     setEditErr(null);
     setEditLoading(true);
@@ -3165,22 +3267,31 @@ function App() {
           proxyError: p.proxyError ?? "",
           username: p.username, password: p.password,
           email: p.email, emailPassword: p.emailPassword, twofa: p.twofa,
+          doNotTrack: p.doNotTrack ? "1" : "",
           resolution: p.resolution, tags: p.tags,
           customNo: p.customNo ?? "",
           platformOs: p.platformOs ?? "",
           timezone: p.timezone,
           locale: p.locale ?? "",
           cores: p.cores ?? "",
+          memoryGb: p.memoryGb ? String(p.memoryGb) : "",
+          gpuVendor: p.gpuVendor ?? "",
+          gpuRenderer: p.gpuRenderer ?? "",
           fingerprintSeed: p.fingerprintSeed ?? "",
         });
         setEditInitialProxy({ proxy: p.proxy, proxyType: p.proxyType || "http" });
         setEditInitialFingerprint({
           resolution: p.resolution, platformOs: p.platformOs ?? "", timezone: p.timezone ?? "",
           locale: p.locale ?? "", cores: p.cores ?? "", fingerprintSeed: p.fingerprintSeed ?? "",
+          memoryGb: p.memoryGb ? String(p.memoryGb) : "",
+          gpuVendor: p.gpuVendor ?? "", gpuRenderer: p.gpuRenderer ?? "",
         });
         setEditEngine(p.engine === "firefox" ? "firefox" : "chromium");
         setEditChromiumRuntime(p.chromiumRuntime ?? "");
         setEditHardware(p.hardware);
+        void fetchNanfuHardwareOptions().then((options) => {
+          if (editFetchId.current === id) setEditHardwareOptions(options);
+        }).catch(() => undefined);
         setEditExts(p.extensions ?? []);
         setEditInitialExts(p.extensions ?? []);
         setEditMobile(p.desktopConversion ?? null);
@@ -3276,6 +3387,10 @@ function App() {
         proxy: editForm.proxy ?? "", proxyType: editForm.proxyType ?? "http",
         username: editForm.username ?? "", password: editForm.password ?? "",
         email: editForm.email ?? "", emailPassword: editForm.emailPassword ?? "", twofa: editForm.twofa ?? "",
+        doNotTrack: editForm.doNotTrack === "1",
+        memoryGb: editForm.memoryGb ? Number(editForm.memoryGb) : 0,
+        gpuVendor: editForm.gpuVendor ?? "",
+        gpuRenderer: editForm.gpuRenderer ?? "",
         tags: editForm.tags ?? "", ...fingerprintEdits,
         ...(!isCloudMode ? { customNo: editForm.customNo ?? "" } : {}),
         ...(!sameExtensionSelection(editExts, editInitialExts) && editEngine === "chromium" ? { extensions: editExts } : {}),
@@ -5468,10 +5583,17 @@ function App() {
                 timezone={form.timezone} onTimezoneChange={(value) => setF("timezone", value)}
                 locale={form.locale} onLocaleChange={(value) => setF("locale", value)}
                 cores={form.cores} onCoresChange={(value) => setF("cores", value)}
+                memoryGb={form.memoryGb} onMemoryGbChange={(value) => setF("memoryGb", value)}
+                gpuVendor={form.gpuVendor} gpuRenderer={form.gpuRenderer}
+                onGpuChange={(vendor, renderer) => setForm((current) => ({ ...current, gpuVendor: vendor, gpuRenderer: renderer }))}
+                hardwareOptions={createHardwareOptions}
+                doNotTrack={form.doNotTrack} onDoNotTrackChange={(value) => setF("doNotTrack", value)}
+                initiallyOpen
                 seed={form.seed} onSeedChange={(value) => setF("seed", value)}
               />
             </div>
             <div className="modal-foot">
+              <button className="btn ghost" type="button" style={{ marginRight: "auto" }} disabled={creating} onClick={randomizeCreateFingerprint}>一键随机生成指纹配置</button>
               <button className="btn ghost" disabled={creating} onClick={closeCreate}>{t("Cancel")}</button>
               <button className="btn primary" disabled={creating} onClick={submitCreate}>{creating ? t("Creating…") : t("Create profile")}</button>
             </div>
@@ -5634,6 +5756,11 @@ function App() {
                     timezone={editForm.timezone ?? ""} onTimezoneChange={(value) => setEF("timezone", value)}
                     locale={editForm.locale ?? ""} onLocaleChange={(value) => setEF("locale", value)}
                     cores={editForm.cores ?? ""} onCoresChange={(value) => setEF("cores", value)}
+                    memoryGb={editForm.memoryGb ?? ""} onMemoryGbChange={(value) => setEF("memoryGb", value)}
+                    gpuVendor={editForm.gpuVendor ?? ""} gpuRenderer={editForm.gpuRenderer ?? ""}
+                    onGpuChange={(vendor, renderer) => setEditForm((form) => ({ ...form, gpuVendor: vendor, gpuRenderer: renderer }))}
+                    hardwareOptions={editHardwareOptions}
+                    doNotTrack={editForm.doNotTrack ?? ""} onDoNotTrackChange={(value) => setEF("doNotTrack", value)}
                     seed={editForm.fingerprintSeed ?? ""} onSeedChange={(value) => setEF("fingerprintSeed", value)}
                     disabled={editRunning || editLive || editSaving || timezoneBusy}
                     onUndo={() => setEditForm((form) => ({ ...form, ...editInitialFingerprint }))}

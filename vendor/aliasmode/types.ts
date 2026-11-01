@@ -83,6 +83,20 @@ export interface Profile {
   /** Stored hardware of a CloakBrowser profile. Profiles made before it existed have none and keep the engine default. */
   hardware?: ProfileHardware;
   /**
+   * Claimed system RAM in whole GB (2/4/8/16/32); Chromium 155 only. Absent
+   * lets the kernel draw a value from the fingerprint seed. The kernel clamps
+   * the claim to this computer's physical RAM.
+   */
+  memoryGb?: number;
+  /**
+   * Exact WebGL unmasked vendor/renderer pair for this window (Chromium 155
+   * only). Absent lets the kernel compose one from the seed. The pair must be
+   * one the kernel reports servable on this computer; otherwise the launcher
+   * falls back to the seed's identity.
+   */
+  gpuVendor?: string;
+  gpuRenderer?: string;
+  /**
    * Firefox's complete Camoufox identity. It is generated once on creation and
    * must accompany every Firefox profile; Chromium profiles must not carry it.
    */
@@ -104,6 +118,11 @@ export interface Profile {
   emailPassword?: string;
   /** 2FA seed (AdsPower "fakey"); empty when none. */
   twofa: string;
+  /**
+   * Send the Do Not Track signal (DNT: 1, navigator.doNotTrack === "1").
+   * Absent/false keeps Chromium's native default (no DNT). Chromium only.
+   */
+  doNotTrack?: boolean;
   proxy: ProxySpec | null;
   /**
    * A legacy persisted proxy that failed current validation. Quarantined

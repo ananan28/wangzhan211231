@@ -87,9 +87,14 @@ function profileFromEnvironment(environment: NanfuEnvironmentConfig): Profile {
     locale: environment.locale,
     screenWidth: environment.screen.width,
     screenHeight: environment.screen.height,
+    ...(environment.doNotTrack ? { doNotTrack: true } : {}),
     fingerprintSeed: environment.fingerprint.seed,
     ...(environment.fingerprint.platformOs ? { platformOs: environment.fingerprint.platformOs } : {}),
     ...(environment.fingerprint.hardwareCores ? { hardware: { cores: environment.fingerprint.hardwareCores } } : {}),
+    ...(environment.memoryGb ? { memoryGb: environment.memoryGb } : {}),
+    ...(environment.gpuVendor && environment.gpuRenderer
+      ? { gpuVendor: environment.gpuVendor, gpuRenderer: environment.gpuRenderer }
+      : {}),
     cookies: [],
     seeded: false,
   };

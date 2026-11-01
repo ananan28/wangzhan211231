@@ -46,6 +46,13 @@ export interface NanfuEnvironmentConfig {
   locale: string;
   screen: { width: number; height: number };
   fingerprint: { seed: number; platformOs?: string; hardwareCores?: number };
+  /** Claimed RAM in whole GB; absent lets the kernel draw one from the seed. */
+  memoryGb?: number;
+  /** Exact WebGL unmasked vendor/renderer; absent lets the kernel draw them. */
+  gpuVendor?: string;
+  gpuRenderer?: string;
+  /** Per-window Do Not Track signal; absent/false is Chromium's native default. */
+  doNotTrack?: boolean;
   tags: string[];
   /** Extension names for reference on another device; archives are never synced. */
   extensions: string[];
@@ -81,11 +88,16 @@ export function exportNanfuEnvironment(
     timezone: profile.timezone,
     locale: profile.locale ?? "",
     screen: { width: profile.screenWidth, height: profile.screenHeight },
+    ...(profile.doNotTrack ? { doNotTrack: true } : {}),
     fingerprint: {
       seed,
       ...(profile.platformOs ? { platformOs: profile.platformOs } : {}),
       ...(profile.hardware ? { hardwareCores: profile.hardware.cores } : {}),
     },
+    ...(profile.memoryGb ? { memoryGb: profile.memoryGb } : {}),
+    ...(profile.gpuVendor && profile.gpuRenderer
+      ? { gpuVendor: profile.gpuVendor, gpuRenderer: profile.gpuRenderer }
+      : {}),
     tags: [...(profile.tags ?? [])],
     extensions: [...names].sort(),
     proxy: profile.proxy

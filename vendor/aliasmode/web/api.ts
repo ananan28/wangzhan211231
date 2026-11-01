@@ -181,6 +181,16 @@ export function fetchNanfuLocalWindowCounts(signal?: AbortSignal): Promise<{ cou
   return nanfuJson("local-window-counts", { signal });
 }
 
+/** 每窗口硬件指纹的可选项；GPU 清单来自本机内核实际能服务的型号。 */
+export interface NanfuHardwareOptions {
+  coresMax: number;
+  memoryGb: number[];
+  gpus: Array<{ vendor: string; renderer: string; label: string }>;
+}
+export function fetchNanfuHardwareOptions(signal?: AbortSignal): Promise<NanfuHardwareOptions> {
+  return nanfuJson("hardware-options", { signal });
+}
+
 /** 分配／回收：同一台机器直接改本机窗口归属，窗口数据不搬家。 */
 export function reassignNanfuWindow(profileId: string, toUserId: string, signal?: AbortSignal): Promise<{ ok: true }> {
   return nanfuJson("reassign-window", {
@@ -1151,6 +1161,13 @@ export interface NewProfileInput {
   email?: string;
   emailPassword?: string;
   twofa?: string;
+  /** RAM in GB (2/4/8/16/32); omitted lets the kernel draw from the seed. */
+  memoryGb?: number | string;
+  /** Exact WebGL unmasked vendor/renderer pair; omitted lets the kernel draw them. */
+  gpuVendor?: string;
+  gpuRenderer?: string;
+  /** Send the Do Not Track signal when true. */
+  doNotTrack?: boolean;
 }
 
 export async function createProfile(input: NewProfileInput): Promise<any> {
@@ -1187,6 +1204,13 @@ export interface EditProfile {
   email: string;
   emailPassword: string;
   twofa: string;
+  /** Per-window Do Not Track signal; false keeps Chromium's default. */
+  doNotTrack?: boolean;
+  /** Claimed RAM in whole GB; 0/absent lets the kernel draw from the seed. */
+  memoryGb?: number;
+  /** Exact WebGL unmasked vendor/renderer pair; empty lets the kernel draw from the seed. */
+  gpuVendor?: string;
+  gpuRenderer?: string;
   /** "1920*1080". */
   resolution: string;
   /** Fingerprint OS: "windows" | "macos" | "linux", or "" for automatic. */

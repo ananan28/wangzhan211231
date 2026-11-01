@@ -1469,6 +1469,11 @@ td.col-tags .chip + .chip { margin-left: 4px; }
 }
 .fingerprint-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 14px 13px; border-top: 1px solid var(--line); }
 .fingerprint-grid .hint { grid-column: 1 / -1; }
+.fp-checkline { display: flex; align-items: center; gap: 8px; min-height: 34px; font-size: 12.5px; color: var(--ink); }
+.fp-note { color: var(--muted); font-size: 11px; line-height: 1.3; }
+.fp-auto { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 2px; }
+.fp-auto-title { font-size: 11px; color: var(--muted); margin-right: 2px; }
+.fp-chip { font-size: 10.5px; color: var(--muted); background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 2px 8px; }
 .proxy-settings { display: flex; flex-direction: column; gap: 14px; padding: 14px 13px; border-top: 1px solid var(--line); }
 
 /* Segmented control: a small either/or choice that shows its options at rest,

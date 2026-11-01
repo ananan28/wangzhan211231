@@ -13,7 +13,7 @@
  *   --fingerprint-screen-width=N / --fingerprint-screen-height=N
  */
 
-import { availableParallelism } from "node:os";
+import { availableParallelism, totalmem } from "node:os";
 import type { Profile, ProfileEngine, ProfileHardware } from "./types.ts";
 import { proxyUrl } from "./proxy.ts";
 
@@ -61,6 +61,45 @@ export function normalizeProfileHardware(value: unknown): ProfileHardware | unde
 export function editedProfileHardware(profile: Profile, cores: number | undefined): ProfileHardware | undefined {
   if (cores !== undefined) return { cores };
   return (profile.engine ?? "chromium") === "chromium" && !profile.chromiumRuntime ? generateProfileHardware(profile.fingerprintSeed) : undefined;
+}
+
+/** The RAM sizes a page can report through navigator.deviceMemory. */
+export const MEMORY_GB_VALUES = [2, 4, 8, 16, 32] as const;
+
+/** GB values this computer can honestly claim: a claim above physical RAM is falsifiable. */
+export function memoryOptionsGb(hostBytes = totalmem()): number[] {
+  return MEMORY_GB_VALUES.filter((gb) => gb * 1024 ** 3 <= hostBytes);
+}
+
+/** Validate a stored RAM claim; 0/blank clears it so the kernel draws from the seed. */
+export function normalizeMemoryGb(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "" || value === 0) return undefined;
+  const gb = typeof value === "string" ? Number(value) : value;
+  if (typeof gb !== "number" || !Number.isInteger(gb) || !(MEMORY_GB_VALUES as readonly number[]).includes(gb)) {
+    throw new Error("unsupported profile memory size");
+  }
+  return gb;
+}
+
+export interface GpuIdentity {
+  gpuVendor?: string;
+  gpuRenderer?: string;
+}
+
+/**
+ * Validate a stored GPU pair. Both halves are required together: the kernel
+ * matches the pair against the host's servable identities, and half an identity
+ * is not one. 0/blank on both clears it so the kernel draws from the seed.
+ */
+export function normalizeGpuIdentity(vendor: unknown, renderer: unknown): GpuIdentity {
+  const v = typeof vendor === "string" ? vendor.trim() : "";
+  const r = typeof renderer === "string" ? renderer.trim() : "";
+  if (!v && !r) return {};
+  if (!v || !r) throw new Error("GPU vendor and renderer must be set together");
+  if (v.length > 256 || r.length > 512 || /[\u0000-\u001f\u007f]/.test(v + r)) {
+    throw new Error("unsupported GPU identity");
+  }
+  return { gpuVendor: v, gpuRenderer: r };
 }
 
 /** Default launch window as fractions of the profile's screen: a tall two-thirds-width window. */
@@ -238,6 +277,21 @@ export function deriveFingerprintFlags(profile: Profile, hostCores = availablePa
   if (profile.hardware) {
     const cores = profile.chromiumRuntime ? Math.min(profile.hardware.cores, hostCores) : profile.hardware.cores;
     flags.push(`--fingerprint-hardware-concurrency=${cores}`);
+  }
+  // Per-window RAM, in whole GB (the switch's unit; its rejection text says
+  // "bytes", but it validates a 1..4096 GB value). The kernel clamps the claim
+  // to physical RAM, so pass the largest value this computer can actually back.
+  if (profile.chromiumRuntime && profile.memoryGb) {
+    const max = memoryOptionsGb().at(-1);
+    const claimed = max ? Math.min(profile.memoryGb, max) : undefined;
+    if (claimed) flags.push(`--fingerprint-device-memory=${claimed}`);
+  }
+  // Per-window GPU identity. The launcher only passes a pair the kernel
+  // reported servable on this host; the kernel rejects anything outside the
+  // anchor's capability cluster, which would stop the launch.
+  if (profile.chromiumRuntime && profile.gpuVendor && profile.gpuRenderer) {
+    flags.push(`--fingerprint-gpu-vendor=${profile.gpuVendor}`);
+    flags.push(`--fingerprint-gpu-renderer=${profile.gpuRenderer}`);
   }
   // Without this flag every Chromium 155 profile on one computer draws the same canvas
   // and WebGL image, so a site can link them. The noise comes from the profile seed,

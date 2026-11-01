@@ -21,7 +21,7 @@ import type {
   ProxySpec,
 } from "./types.ts";
 import { completeProfileFingerprint, normalizeChromiumRuntime, normalizeProfileEngine } from "./firefox-config.ts";
-import { normalizeProfileHardware } from "./fingerprint.ts";
+import { normalizeGpuIdentity, normalizeMemoryGb, normalizeProfileHardware } from "./fingerprint.ts";
 import { normalizeProxySpec } from "./proxy.ts";
 import { assertSafeProfileId } from "./profile-id.ts";
 import { assertValidProfile } from "./profile-validation.ts";
@@ -52,6 +52,10 @@ export class ProfileStore {
         email TEXT NOT NULL DEFAULT '',
         email_password TEXT NOT NULL DEFAULT '',
         twofa TEXT NOT NULL DEFAULT '',
+        do_not_track INTEGER NOT NULL DEFAULT 0,
+        memory_gb INTEGER NOT NULL DEFAULT 0,
+        gpu_vendor TEXT NOT NULL DEFAULT '',
+        gpu_renderer TEXT NOT NULL DEFAULT '',
         proxy_json TEXT,
         ua TEXT NOT NULL DEFAULT '',
         timezone TEXT NOT NULL DEFAULT '',
@@ -235,6 +239,25 @@ export class ProfileStore {
       this.db.exec(`ALTER TABLE profiles ADD COLUMN custom_no TEXT NOT NULL DEFAULT ''`);
     } catch {
       /* column already exists */
+    }
+    // Per-window Do Not Track signal. Off is Chromium's native default.
+    try {
+      this.db.exec(`ALTER TABLE profiles ADD COLUMN do_not_track INTEGER NOT NULL DEFAULT 0`);
+    } catch {
+      /* column already exists */
+    }
+    // Per-window hardware claims: RAM and an exact GPU identity. Absent values
+    // let the Chromium 155 kernel draw them from the fingerprint seed.
+    for (const col of [
+      "memory_gb INTEGER NOT NULL DEFAULT 0",
+      "gpu_vendor TEXT NOT NULL DEFAULT ''",
+      "gpu_renderer TEXT NOT NULL DEFAULT ''",
+    ]) {
+      try {
+        this.db.exec(`ALTER TABLE profiles ADD COLUMN ${col}`);
+      } catch {
+        /* column already exists */
+      }
     }
     // Migrations for the full-fidelity identity export. platform_os makes the
     // desktop platform an explicit stored value instead of one inferred from
@@ -450,21 +473,24 @@ export class ProfileStore {
     }
     const hardware = normalizeProfileHardware(p.hardware);
     const hardwareJson = hardware ? JSON.stringify(hardware) : "";
+    const memoryGb = normalizeMemoryGb(p.memoryGb);
+    const gpu = normalizeGpuIdentity(p.gpuVendor, p.gpuRenderer);
     const seeded = existing ? existing.seeded : p.seeded ? 1 : 0;
     this.db
       .query(
         `INSERT INTO profiles
-           (id, engine, chromium_runtime, hardware_json, firefox_config_json, acc_id, name, "group", platform, username, password, email, email_password, twofa, proxy_json, proxy_error, extensions_json, tags_json, custom_no, ua, timezone, timezone_manual, locale,
+           (id, engine, chromium_runtime, hardware_json, firefox_config_json, acc_id, name, "group", platform, username, password, email, email_password, twofa, do_not_track, memory_gb, gpu_vendor, gpu_renderer, proxy_json, proxy_error, extensions_json, tags_json, custom_no, ua, timezone, timezone_manual, locale,
             screen_width, screen_height, fingerprint_seed, platform_os, fp_observed_json, fp_expected_json, fp_verdict_json, cookies_json, seeded, created_at, owner_user_id)
          -- fp_verdict_json is literal '': a verdict is a COMPUTED fact, written
          -- only by saveObservedFingerprint from a real measurement. If a caller
          -- could supply one, an import could hand itself a "verified" badge and
          -- the badge would mean nothing.
-         VALUES ($id,$engine,$chromiumRuntime,$hardware,$firefox,$acc,$name,$group,$platform,$user,$pass,$email,$emailPass,$twofa,$proxy,$proxyError,$ext,$tags,$customNo,$ua,$tz,$tzManual,$locale,$w,$h,$seed,$platformOs,$fpObserved,$fpExpected,'',$cookies,$seeded,$created,$owner)
+         VALUES ($id,$engine,$chromiumRuntime,$hardware,$firefox,$acc,$name,$group,$platform,$user,$pass,$email,$emailPass,$twofa,$dnt,$memoryGb,$gpuVendor,$gpuRenderer,$proxy,$proxyError,$ext,$tags,$customNo,$ua,$tz,$tzManual,$locale,$w,$h,$seed,$platformOs,$fpObserved,$fpExpected,'',$cookies,$seeded,$created,$owner)
          ON CONFLICT(id) DO UPDATE SET
            engine=$engine, firefox_config_json=$firefox, hardware_json=$hardware, timezone_manual=$tzManual,
            acc_id=$acc, name=$name, "group"=$group, platform=$platform, username=$user, password=$pass,
-           email=$email, email_password=$emailPass, twofa=$twofa,
+           email=$email, email_password=$emailPass, twofa=$twofa, do_not_track=$dnt,
+           memory_gb=$memoryGb, gpu_vendor=$gpuVendor, gpu_renderer=$gpuRenderer,
            -- An unrelated edit to a quarantined profile must preserve the raw
            -- legacy proxy for operator recovery. A valid replacement or an
            -- explicit clear removes the quarantine and writes the new value.
@@ -518,6 +544,10 @@ export class ProfileStore {
         $email: p.email ?? "",
         $emailPass: p.emailPassword ?? "",
         $twofa: p.twofa,
+        $dnt: p.doNotTrack ? 1 : 0,
+        $memoryGb: memoryGb ?? 0,
+        $gpuVendor: gpu.gpuVendor ?? "",
+        $gpuRenderer: gpu.gpuRenderer ?? "",
         $proxy: proxy ? JSON.stringify(proxy) : null,
         $proxyError: proxyError || null,
         $ext: JSON.stringify(p.extensions ?? []),
@@ -1217,6 +1247,10 @@ function rowToProfile(row: any): Profile {
     email: row.email ?? "",
     emailPassword: row.email_password ?? "",
     twofa: row.twofa ?? "",
+    ...(row.do_not_track ? { doNotTrack: true } : {}),
+    ...(row.memory_gb ? { memoryGb: row.memory_gb } : {}),
+    ...(row.gpu_vendor ? { gpuVendor: row.gpu_vendor } : {}),
+    ...(row.gpu_renderer ? { gpuRenderer: row.gpu_renderer } : {}),
     proxy: stored.proxy,
     ...(stored.error ? { proxyError: stored.error } : {}),
     extensions: safeParse<string[]>(row.extensions_json, []),
