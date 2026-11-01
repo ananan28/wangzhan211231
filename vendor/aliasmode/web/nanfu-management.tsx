@@ -121,7 +121,7 @@ function AddAccountDialog({ overview, owner, admin, currentUserId, busy, onMutat
   const scoped = !admin;
   // 服务端只保存 owner/admin/member 三种身份：这里的“经理”是不挂上级的普通
   // 成员，“成员”则是挂在某位经理名下的子账号（沿用原来的 kind 取值）。
-  const [kind, setKind] = useState<"member" | "sub" | "admin">("sub");
+  const [kind, setKind] = useState<"member" | "admin">("member");
   const [inputError, setInputError] = useState("");
   const [saving, setSaving] = useState(false);
   const usernameRef = useRef<HTMLInputElement>(null);
@@ -152,7 +152,7 @@ function AddAccountDialog({ overview, owner, admin, currentUserId, busy, onMutat
         password,
         identity: kind === "admin" ? "admin" : "member",
         quota: Math.min(100, Math.max(0, Math.trunc(Number(text(data, "quota") || "0")) || 0)),
-        managerUserId: kind === "sub" ? parent || undefined : undefined,
+        managerUserId: kind === "admin" ? undefined : parent || undefined,
         roleId: text(data, "roleId") || undefined,
         groupIds: data.getAll("groupIds").map(String).filter(Boolean),
         name: text(data, "name") || undefined,
@@ -171,7 +171,7 @@ function AddAccountDialog({ overview, owner, admin, currentUserId, busy, onMutat
     onClose={onClose}
     footer={<>
       <button className="btn" type="button" disabled={busy || saving} onClick={onClose}>取消</button>
-      <button className="btn primary" type="submit" form="nanfu-add-account-form" disabled={busy || saving || (kind === "sub" && !parent)}>确定</button>
+      <button className="btn primary" type="submit" form="nanfu-add-account-form" disabled={busy || saving}>确定</button>
     </>}
   >
     <form id="nanfu-add-account-form" className="nanfu-dialog-form" aria-label="添加账号" onSubmit={event => void submit(event)}>
@@ -203,15 +203,14 @@ function AddAccountDialog({ overview, owner, admin, currentUserId, busy, onMutat
         <legend>身份</legend>
         <div className="nanfu-permissions">
           {owner && <label className="nanfu-check"><input type="radio" name="identity" value="admin" checked={kind === "admin"} onChange={() => setKind("admin")} disabled={busy || saving} />管理员</label>}
-          {!scoped && <label className="nanfu-check"><input type="radio" name="identity" value="member" checked={kind === "member"} onChange={() => setKind("member")} disabled={busy || saving} />经理</label>}
-          <label className="nanfu-check"><input type="radio" name="identity" value="sub" checked={kind === "sub"} onChange={() => setKind("sub")} disabled={busy || saving} />成员</label>
+          <label className="nanfu-check"><input type="radio" name="identity" value="member" checked={kind === "member"} onChange={() => setKind("member")} disabled={busy || saving} />成员</label>
         </div>
-        <p className="nanfu-hint" style={{ margin: "6px 0 0" }}>成员不具有管理权限，仅可以管理名下窗口数据。</p>
+        <p className="nanfu-hint" style={{ margin: "6px 0 0" }}>成员不具有管理权限，仅可以管理名下窗口数据；指定上级后成为对方名下的子账号。</p>
       </fieldset>
 
-      <label className="fld"><span>经理</span>
-        <select name="managerUserId" value={kind === "sub" ? parent : ""} onChange={event => setParent(event.target.value)} required={kind === "sub"} disabled={busy || saving || scoped || kind !== "sub"}>
-          <option value="">{kind === "sub" ? "请选择经理" : "选择成员身份后可指定经理"}</option>
+      <label className="fld"><span>上级经理（可选）</span>
+        <select name="managerUserId" value={parent} onChange={event => setParent(event.target.value)} disabled={busy || saving || scoped || kind === "admin"}>
+          <option value="">不指定（独立成员）</option>
           {parents.map(member => <option key={member.userId} value={member.userId}>
             {memberLabel(member)} · {nanfuIdentityName(member.identity)}{member.userId === currentUserId ? "（我）" : ""}
           </option>)}
