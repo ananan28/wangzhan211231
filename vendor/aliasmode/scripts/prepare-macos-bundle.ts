@@ -20,6 +20,8 @@ import { compileSidecar, stageAgentRuntime } from "./prepare-windows-bundle.ts";
 
 /** The executable inside Chromium.app; the same relative path the sidecar's macOS pin uses. */
 export const MACOS_CHROMIUM_EXECUTABLE = "Chromium.app/Contents/MacOS/Chromium";
+/** The executable relative to the Chromium.app bundle itself (findChromiumApp returns the .app). */
+export const MACOS_APP_EXECUTABLE = "Contents/MacOS/Chromium";
 /** The resource subdirectory Tauri maps src-tauri/resources/chromium/ to. */
 export const MACOS_CHROMIUM_RESOURCE = "chromium";
 
@@ -242,13 +244,13 @@ export async function prepareMacosBundle(
   await run(["ditto", "-x", "-k", archive, extracted]);
   const app = findChromiumApp(extracted);
   if (!app) throw new Error(`the Chromium kernel archive does not contain Chromium.app: ${archive}`);
-  const sourceExecutable = join(app, MACOS_CHROMIUM_EXECUTABLE);
+  const sourceExecutable = join(app, MACOS_APP_EXECUTABLE);
   if (statSync(sourceExecutable, { throwIfNoEntry: false })?.isFile() !== true) {
     // Diagnose the real bundle layout instead of only saying the expected path is absent.
     const listing = (() => {
       try { return readdirSync(join(app, "Contents/MacOS")).join(", "); } catch { return "<no Contents/MacOS>"; }
     })();
-    throw new Error(`the Chromium kernel archive has no ${MACOS_CHROMIUM_EXECUTABLE}: ${archive} (app=${app}; Contents/MacOS has: ${listing})`);
+    throw new Error(`the Chromium kernel archive has no ${MACOS_APP_EXECUTABLE}: ${archive} (app=${app}; Contents/MacOS has: ${listing})`);
   }
 
   // One kernel is staged per bundle. Refuse a kernel built for a different processor instead of
