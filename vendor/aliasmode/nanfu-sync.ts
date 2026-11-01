@@ -71,7 +71,9 @@ export function exportNanfuEnvironment(
   return {
     schema: NANFU_SYNC_SCHEMA,
     id: profile.id,
-    name: profile.name,
+    // A window may have been created or imported without a display name; the
+    // package validator (and the cloud) still need a non-empty label.
+    name: profile.name.trim() || profile.id,
     group: profile.group,
     engine: profile.engine === "firefox" ? "firefox" : "chromium",
     platform: profile.platform ?? "",
