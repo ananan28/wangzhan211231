@@ -213,7 +213,8 @@ jobs:
           # then prove the compiler actually runs.
           echo "Installing the Metal toolchain component (idempotent)"
           xcodebuild -downloadComponent MetalToolchain || true
-          if ! metal --version; then
+          # `metal` is not on PATH; xcrun resolves it from the active toolchain.
+          if ! xcrun metal --version; then
             echo "Metal toolchain is unavailable; ANGLE's Metal shaders cannot build" >&2
             exit 1
           fi
