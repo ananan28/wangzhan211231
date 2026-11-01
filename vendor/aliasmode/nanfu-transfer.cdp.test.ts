@@ -297,7 +297,7 @@ test.skipIf(!enabled)("staff account forms validate and remain usable in real Ch
         roles: [], groups: [], grants: [], invites: [],
       };
       window.__nanfuMutations = [];
-      const onMutate = async (action, input) => { window.__nanfuMutations.push({ action, input }); };
+      const onMutate = async (action, input) => { window.__nanfuMutations.push({ action, input }); return { ok: true }; };
       const root = createRoot(document.getElementById("root"));
       window.__renderNanfu = (busy = false) => root.render(
         <section className="workspace nanfu-staff-page"><div className="settingspage">
@@ -347,35 +347,69 @@ test.skipIf(!enabled)("staff account forms validate and remain usable in real Ch
     page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(origin);
+    // Adding an account is a centered dialog opened from the page header now.
+    const openAdd = () => page.locator(".nanfu-head-actions").getByRole("button", { name: "添加账号", exact: true }).click();
+    await openAdd();
     const add = page.getByRole("form", { name: "添加账号", exact: true });
     await add.waitFor({ state: "visible" });
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     const mutations = () => page.evaluate(() => (window as any).__nanfuMutations);
+    const confirmAdd = page.locator(".nanfu-dialog .modal-foot").getByRole("button", { name: "确定", exact: true });
     const created = [{ action: "create-account", input: {
       email: "测试员工", password: "Fixture123", identity: "member", quota: 0,
       managerUserId: undefined, roleId: undefined, groupIds: [], name: undefined,
     } }];
-    await add.locator('[name="email"]').fill("测试员工");
-    await add.locator('[name="password"]').fill("Fixture123");
-    await add.getByRole("button", { name: "添加账号", exact: true }).click();
-    await page.waitForFunction(() => (window as any).__nanfuMutations.length === 1);
-    expect(await mutations()).toEqual(created);
 
+    // Invalid input is rejected in place and never reaches the mutation channel.
     for (const [name, password, message] of [
       ["测试员工", "abcdef", "必须包含英文字母和数字"],
       ["张 三", "Fixture123", "不能包含空白"],
     ] as const) {
       await add.locator('[name="email"]').fill(name);
       await add.locator('[name="password"]').fill(password);
-      await add.getByRole("button", { name: "添加账号", exact: true }).click();
+      await confirmAdd.click();
       await page.waitForFunction(message => document.querySelector('form[aria-label="添加账号"] [role="alert"]')?.textContent?.includes(message), message);
       expect(await add.getByRole("alert").isVisible()).toBe(true);
-      expect(await mutations()).toEqual(created);
+      expect(await mutations()).toEqual([]);
     }
 
-    const reset = page.getByRole("form", { name: "重置密码 合成员工", exact: true, includeHidden: true });
-    const actions = page.locator("details.nanfu-row-actions").filter({ has: reset });
-    await actions.locator(":scope > summary").click();
+    // A valid submission creates the account and closes the dialog.
+    await add.locator('[name="email"]').fill("测试员工");
+    await add.locator('[name="password"]').fill("Fixture123");
+    await confirmAdd.click();
+    await page.waitForFunction(() => (window as any).__nanfuMutations.length === 1);
+    expect(await mutations()).toEqual(created);
+    await add.waitFor({ state: "detached" });
+
+    // The dialog and the page stay inside both viewports, with no horizontal overflow.
+    for (const width of [1440, 800]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await openAdd();
+      const dialog = page.locator(".nanfu-dialog");
+      await dialog.waitFor({ state: "visible" });
+      const boxes = await dialog.locator("input:visible, select:visible, button:visible").evaluateAll(nodes => nodes.map((node, index) => {
+        const { left, right, top, bottom, width: w, height: h } = node.getBoundingClientRect();
+        return { field: node.getAttribute("name") || `${node.tagName}-${index}`, left, right, top, bottom, width: w, height: h };
+      }));
+      for (const box of boxes) {
+        expect(box.width).toBeGreaterThan(0);
+        expect(box.height).toBeGreaterThan(0);
+        expect(box.left).toBeGreaterThanOrEqual(0);
+        expect(box.right).toBeLessThanOrEqual(width);
+      }
+      const overflowing = await page.evaluate(() => ["html", "body", "#root", ".nanfu-staff-page", ".settingspage"].filter(selector => {
+        const node = document.querySelector(selector)!;
+        return node.scrollWidth > node.clientWidth + 1;
+      }));
+      expect(overflowing).toEqual([]);
+      await page.locator(".modal-backdrop").click({ position: { x: 4, y: 4 } });
+      await dialog.waitFor({ state: "detached" });
+    }
+
+    // Per-account settings live in their own dialog, opened from the row button.
+    await page.getByRole("button", { name: "设置", exact: true }).first().click();
+    const reset = page.getByRole("form", { name: "重置密码 合成员工", exact: true });
+    await reset.waitFor({ state: "visible" });
     await reset.locator('[name="password"]').fill("abcdef");
     await reset.getByRole("button", { name: "重置密码", exact: true }).click();
     await page.waitForFunction(() => document.querySelector('form[aria-label="重置密码 合成员工"] [role="alert"]')?.textContent?.includes("必须包含英文字母和数字"));
@@ -388,41 +422,11 @@ test.skipIf(!enabled)("staff account forms validate and remain usable in real Ch
     expect(await mutations()).toEqual(completed);
     expect(await reset.locator('[name="password"]').inputValue()).toBe("");
 
-    for (const width of [1440, 800]) {
-      await page.setViewportSize({ width, height: 1000 });
-      await add.scrollIntoViewIfNeeded();
-      const boxes = await add.locator('input:visible, select:visible, button[type="submit"]:visible').evaluateAll(nodes => nodes.map((node, index) => {
-        const { left, right, top, bottom, width, height } = node.getBoundingClientRect();
-        return { field: node.getAttribute("name") || `${node.tagName}-${index}`, left, right, top, bottom, width, height };
-      }));
-      expect(boxes.length).toBe(7);
-      for (const box of boxes) {
-        expect(box.width).toBeGreaterThan(0);
-        expect(box.height).toBeGreaterThan(0);
-        expect(box.left).toBeGreaterThanOrEqual(0);
-        expect(box.right).toBeLessThanOrEqual(width);
-      }
-      const overlaps = boxes.flatMap((box, index) => boxes.slice(index + 1)
-        .filter(other => Math.min(box.right, other.right) > Math.max(box.left, other.left)
-          && Math.min(box.bottom, other.bottom) > Math.max(box.top, other.top))
-        .map(other => `${width}: ${box.field} / ${other.field}`));
-      expect(overlaps).toEqual([]);
-      // Check the page containers, not tables: their own horizontal scrolling is intentional.
-      const overflowing = await page.evaluate(() => ["html", "body", "#root", ".nanfu-staff-page", ".settingspage"].filter(selector => {
-        const node = document.querySelector(selector)!;
-        return node.scrollWidth > node.clientWidth + 1;
-      }));
-      expect(overflowing).toEqual([]);
-    }
-
-    await add.locator('[name="email"]').fill("测试员工");
-    await add.locator('[name="password"]').fill("Fixture123");
+    // The busy guard disables the open dialog's submit and ignores a stray submit.
     await page.evaluate(() => (window as any).__renderNanfu(true));
-    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('form[aria-label="添加账号"] button[type="submit"]')?.disabled);
-    expect(await add.getByRole("button", { name: "添加账号", exact: true }).isDisabled()).toBe(true);
+    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('form[aria-label="重置密码 合成员工"] button[type="submit"]')?.disabled);
     expect(await reset.getByRole("button", { name: "重置密码", exact: true }).isDisabled()).toBe(true);
-    // Also exercise the busy guard if a submission arrives without clicking the disabled button.
-    await add.evaluate(form => (form as HTMLFormElement).requestSubmit());
+    await reset.evaluate(form => (form as HTMLFormElement).requestSubmit());
     expect(await mutations()).toEqual(completed);
     expect(externalRequests).toEqual([]);
     expect(errors).toEqual([]);

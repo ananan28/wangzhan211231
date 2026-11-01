@@ -262,7 +262,7 @@ function MemberSettingsDialog({ member, overview, owner, currentUserId, busy, on
 
     <section className="nanfu-dialog-section">
       <h4>身份与角色</h4>
-      <form className="nanfu-dialog-form" onSubmit={event => {
+      <form className="nanfu-dialog-form" aria-label={`设置 ${memberLabel(member)}`} onSubmit={event => {
         const data = dataOf(event);
         void run("set-member", {
           userId: member.userId,
@@ -304,7 +304,7 @@ function MemberSettingsDialog({ member, overview, owner, currentUserId, busy, on
 
     <section className="nanfu-dialog-section">
       <h4>授权分组</h4>
-      <form className="nanfu-dialog-form" onSubmit={event => {
+      <form className="nanfu-dialog-form" aria-label={`授权分组 ${memberLabel(member)}`} onSubmit={event => {
         const data = dataOf(event);
         void run("set-groups", { userId: member.userId, groupIds: data.getAll("groupIds").map(String).filter(Boolean) });
       }}>
@@ -315,7 +315,7 @@ function MemberSettingsDialog({ member, overview, owner, currentUserId, busy, on
 
     <section className="nanfu-dialog-section">
       <h4>重置登录密码</h4>
-      <form className="nanfu-dialog-form" onSubmit={event => {
+      <form className="nanfu-dialog-form" aria-label={`重置密码 ${memberLabel(member)}`} onSubmit={event => {
         const data = dataOf(event);
         const password = String(data.get("password") ?? "");
         const problem = passwordProblem(password);
@@ -332,7 +332,7 @@ function MemberSettingsDialog({ member, overview, owner, currentUserId, busy, on
 
     <section className="nanfu-dialog-section">
       <h4>窗口配额</h4>
-      <form className="nanfu-dialog-form" onSubmit={event => {
+      <form className="nanfu-dialog-form" aria-label={`配额 ${memberLabel(member)}`} onSubmit={event => {
         const data = dataOf(event);
         void run("set-quota", { userId: member.userId, quota: Number(text(data, "quota")) });
       }}>
@@ -422,7 +422,7 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
         <h3>员工管理</h3>
         <div className="nanfu-head-actions">
           {onRefresh && <button type="button" className="btn" disabled={busy} onClick={onRefresh}>刷新成员</button>}
-          <button type="button" className="btn primary" onClick={() => setAdding(true)}>添加账号</button>
+          <button type="button" className="btn primary" onClick={() => { setSettingsFor(null); setAdding(true); }}>添加账号</button>
         </div>
       </header>
       <div className="card-body">
@@ -435,7 +435,7 @@ export function NanfuManagement({ organization, overview, currentUserId, busy, o
         {!sorted.length ? <p>还没有成员。</p> : <div className="nanfu-table-wrap"><table className="nanfu-table nanfu-roster">
           <thead><tr><th>账号</th><th>角色</th><th>授权分组</th><th>窗口</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>{sorted.map(member => <MemberRow key={member.userId} member={member} overview={overview}
-            currentUserId={currentUserId} onSettings={() => setSettingsFor(member.userId)} />)}</tbody>
+            currentUserId={currentUserId} onSettings={() => { setAdding(false); setSettingsFor(member.userId); }} />)}</tbody>
         </table></div>}
       </div>
     </section>
