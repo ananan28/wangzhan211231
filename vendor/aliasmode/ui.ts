@@ -1111,7 +1111,7 @@ export async function handleUiRequest(
           if (state.authenticated) {
             await scopeStoreToAccount();
             publishTransferKey();
-          } else {
+          } else if (store) {
             store.setOwner("");
           }
           return noStoreJson({ ok: true, state, persistent, selfJoin });
