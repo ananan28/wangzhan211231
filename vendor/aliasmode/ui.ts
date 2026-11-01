@@ -20,7 +20,7 @@ import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from
 import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import { loadNanfuService, type NanfuRuntime } from "./nanfu-service.ts";
-import { createNanfuAccountCipher, nanfuDeviceId, pushNanfuWindow, syncNanfuAccountWindows } from "./nanfu-account-sync.ts";
+import { createNanfuAccountCipher, nanfuDeviceId, pullNanfuSessions, pushNanfuSession, pushNanfuWindow, syncNanfuAccountWindows } from "./nanfu-account-sync.ts";
 import { NANFU_LOGIN_SUFFIX, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuLoginName, isValidNanfuPassword, nanfuPasswordProblem, normalizeNanfuLogin, type NanfuSession } from "./nanfu-account.ts";
 import { NanfuSyncError, isNanfuUuid } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
@@ -736,6 +736,17 @@ function installNanfuSyncHook(runtime: NanfuRuntime, store: ProfileStore | null)
       userId: sync.userId, deviceId: sync.deviceId, profile,
     }).catch(() => undefined);
   };
+  // 关窗时抓到的登录态也照同样方式上云：同一账号换机后用密码解出来，窗口直接是登录状态。
+  const previousSession = store.onSessionSaved;
+  store.onSessionSaved = (profileId, bundle) => {
+    previousSession?.(profileId, bundle);
+    const sync = runtime.sync;
+    if (!sync) return;
+    void pushNanfuSession({
+      client: runtime.client, cipher: sync.cipher, userId: sync.userId,
+      profileId, profileName: store.getProfile(profileId)?.name, bundle,
+    }).catch(() => undefined);
+  };
 }
 
 /**
@@ -1164,6 +1175,8 @@ export async function handleUiRequest(
             await syncNanfuAccountWindows({
               store, client, cipher, userId: state.userId, deviceId, remoteOwners,
             });
+            // 换机后把云端保存的登录态装回本机窗口（只补本机没有的，不覆盖更新的本机快照）。
+            await pullNanfuSessions({ store, client, cipher, userId: state.userId }).catch(() => 0);
             installNanfuSyncHook(nanfu, store);
           } catch {
             // 云端同步是增强能力，不能阻断登录。

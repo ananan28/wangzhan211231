@@ -180,6 +180,73 @@ export async function syncNanfuAccountWindows(options: NanfuSyncOptions): Promis
   return summary;
 }
 
+/**
+ * Login-state (cookies, localStorage, IndexedDB) auto-sync.
+ *
+ * The bundle captured on window close is encrypted with the same
+ * password-derived key as the configuration, so signing in with the same
+ * account password on another machine restores the logins. It lives in the
+ * account's personal cloud slot and is tagged with a reserved device id, which
+ * keeps it out of the explicit transfer package list.
+ */
+export const NANFU_SESSION_SYNC_DEVICE = "auto-sync";
+export const NANFU_SESSION_FORMAT = "nanfu-session-sync";
+
+/** One window always maps to the same slot, so re-uploads replace it. */
+function sessionPackageId(environmentId: string): string {
+  const bytes = createHash("sha256").update(`nanfu-session:${environmentId}`).digest().subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+export async function pushNanfuSession(options: {
+  client: NanfuSyncClient;
+  cipher: NanfuCipher;
+  userId: string;
+  profileId: string;
+  profileName?: string;
+  bundle: string;
+}): Promise<void> {
+  await options.client.upsertCloudPackage({
+    id: sessionPackageId(options.profileId),
+    userId: options.userId,
+    environmentId: options.profileId,
+    environmentName: options.profileName ?? options.profileId,
+    deviceId: NANFU_SESSION_SYNC_DEVICE,
+    payload: options.cipher.encrypt({ format: NANFU_SESSION_FORMAT, bundle: options.bundle }),
+    sizeBytes: options.bundle.length,
+  });
+}
+
+export async function pullNanfuSessions(options: {
+  store: ProfileStore;
+  client: NanfuSyncClient;
+  cipher: NanfuCipher;
+  userId: string;
+}): Promise<number> {
+  const { store, client, cipher, userId } = options;
+  let restored = 0;
+  const rows = await client.cloudPackages(userId);
+  for (const row of rows) {
+    if (row.deviceId !== NANFU_SESSION_SYNC_DEVICE) continue;
+    if (!store.getProfile(row.environmentId)) continue;
+    // A local capture is newer than whatever the cloud holds for this machine.
+    if (store.getSessionBundle(row.environmentId)) continue;
+    try {
+      const { payload } = await client.cloudPackage(row.id, userId);
+      const value = cipher.decrypt<{ format?: string; bundle?: string }>(payload);
+      if (value?.format !== NANFU_SESSION_FORMAT || typeof value.bundle !== "string" || !value.bundle) continue;
+      store.armSessionRestore(row.environmentId, value.bundle);
+      restored += 1;
+    } catch {
+      // Skip a slot this key cannot open; the other windows still restore.
+    }
+  }
+  return restored;
+}
+
 /** Push one window after an edit, so the cloud copy follows local changes. */
 export async function pushNanfuWindow(options: {
   store: ProfileStore;

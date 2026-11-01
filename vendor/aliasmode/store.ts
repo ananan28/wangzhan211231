@@ -30,6 +30,8 @@ export class ProfileStore {
   private db: Database;
   /** Called after each profile save, so the app can start the downloads that profile needs. */
   onProfileSaved?: (profile: Profile) => void;
+  /** Called after a captured login session is persisted, so it can be mirrored to the cloud. */
+  onSessionSaved?: (profileId: string, bundle: string) => void;
 
   constructor(path = "profiles.sqlite") {
     this.db = new Database(path, { create: true });
@@ -620,10 +622,16 @@ export class ProfileStore {
   /** Capturing live state must never arm an import restore. */
   saveSessionBundle(id: string, bundle: string): void {
     this.db.query(`UPDATE profiles SET session_json = ? WHERE id = ? AND owner_user_id = ?`).run(bundle, id, this.ownerUserId);
+    this.onSessionSaved?.(id, bundle);
   }
 
   markSessionRestored(id: string, bundle: string): void {
     this.db.query(`UPDATE profiles SET session_restore_pending = 0 WHERE id = ? AND session_json = ? AND owner_user_id = ?`).run(id, bundle, this.ownerUserId);
+  }
+
+  /** Restore a cloud login session: keep the bundle and arm it for the next launch. */
+  armSessionRestore(id: string, bundle: string): void {
+    this.db.query(`UPDATE profiles SET session_json = ?, session_restore_pending = 1 WHERE id = ? AND owner_user_id = ?`).run(bundle, id, this.ownerUserId);
   }
 
   getProfile(id: string): Profile | null {

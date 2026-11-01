@@ -35,6 +35,7 @@ import {
   type NanfuSyncClient,
   type NanfuVisibleEnvironment,
 } from "./nanfu-sync.ts";
+import { NANFU_SESSION_SYNC_DEVICE } from "./nanfu-account-sync.ts";
 import {
   NanfuEnvPackageError,
   collectNanfuEnvFiles,
@@ -519,7 +520,8 @@ export async function handleNanfuTransferRequest(
         cloud: {
           deviceId,
           deviceKeyPublished,
-          packages: cloudPackages ?? [],
+          // 自动同步的登录态槽位不算"转移包"，不在转移列表里露面。
+          packages: (cloudPackages ?? []).filter((row) => row.deviceId !== NANFU_SESSION_SYNC_DEVICE),
           ...(cloudPackages ? {} : { error: "同一账号的云端列表暂时读取失败，请刷新重试。" }),
         },
       });
