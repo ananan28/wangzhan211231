@@ -20,6 +20,7 @@ import { appendFingerprintAudit, fingerprintAuditEntry, fingerprintValues } from
 import type { TranslationService } from "./translation.ts";
 import type { CloudAuthRuntime } from "./cloud-auth.ts";
 import { loadNanfuService, type NanfuRuntime } from "./nanfu-service.ts";
+import { createNanfuAccountCipher, nanfuDeviceId, pushNanfuWindow, syncNanfuAccountWindows } from "./nanfu-account-sync.ts";
 import { NANFU_LOGIN_SUFFIX, NanfuAccountChangedError, NanfuAuthError, NanfuEmailUnverifiedError, isValidNanfuEmail, isValidNanfuLoginName, isValidNanfuPassword, nanfuPasswordProblem, normalizeNanfuLogin, type NanfuSession } from "./nanfu-account.ts";
 import { NanfuSyncError, isNanfuUuid } from "./nanfu-sync.ts";
 import { NANFU_ORGANIZATION_ACTIONS, NanfuInputError, NanfuPolicyError, mutateNanfuOrganization, nanfuOrganizationError, type NanfuOrganizationAction } from "./nanfu-organization.ts";
@@ -718,6 +719,26 @@ export interface UiRuntimeOptions {
 }
 
 /**
+ * Mirror every saved window into the signed-in account's cloud slot. Installed
+ * once per process; it reads the runtime's current cipher, so signing out
+ * (which clears it) makes later saves local-only until the next sign-in.
+ */
+function installNanfuSyncHook(runtime: NanfuRuntime, store: ProfileStore | null): void {
+  if (!store || runtime.syncHookInstalled) return;
+  runtime.syncHookInstalled = true;
+  const previous = store.onProfileSaved;
+  store.onProfileSaved = (profile) => {
+    previous?.(profile);
+    const sync = runtime.sync;
+    if (!sync) return;
+    void pushNanfuWindow({
+      store, client: runtime.client, cipher: sync.cipher,
+      userId: sync.userId, deviceId: sync.deviceId, profile,
+    }).catch(() => undefined);
+  };
+}
+
+/**
  * Handle a `/ui/api/*` request. Returns null for any other path so the caller
  * can fall through to the AdsPower API handler.
  */
@@ -1080,6 +1101,7 @@ export async function handleUiRequest(
         client.cancelVisibleRequests();
         if (action === "signout") {
           await account.signOut();
+          nanfu.sync = undefined;
           if (store) store.setOwner("");
           return noStoreJson({ ok: true, state: account.state(), persistent });
         }
@@ -1123,6 +1145,32 @@ export async function handleUiRequest(
         const state = await account.signIn(login, body.password);
         // 会话一建立就切换窗口归属：登录后的第一个窗口列表就是这个账号自己的。
         await scopeStoreToAccount();
+        // 云端为主：登录后把本账号的云端窗口拉到本机，并把本机的新窗口上传。
+        // 管理员/所有者还能看到组织内全部环境，据此把被转走的窗口在本机也移到
+        // 接收方名下（转移即归属）。同步失败不影响登录，本机缓存照常可用。
+        if (store && options.paths && state.userId) {
+          try {
+            const cipher = createNanfuAccountCipher(body.password, state.userId);
+            const deviceId = nanfuDeviceId(options.paths.root);
+            nanfu.sync = { cipher, userId: state.userId, deviceId };
+            let remoteOwners: Map<string, string> | undefined;
+            try {
+              const organization = await client.orgMe();
+              if (organization && (organization.identity === "owner" || organization.identity === "admin")) {
+                const visible = await client.visibleEnvironments(organization.orgId);
+                remoteOwners = new Map(visible.map((environment) => [environment.id, environment.ownerUserId]));
+              }
+            } catch {
+              // 组织视图不可用时仍做基本的拉取/上传。
+            }
+            await syncNanfuAccountWindows({
+              store, client, cipher, userId: state.userId, deviceId, remoteOwners,
+            });
+            installNanfuSyncHook(nanfu, store);
+          } catch {
+            // 云端同步是增强能力，不能阻断登录。
+          }
+        }
         // An invite code taken at sign-in is redeemed instead of claiming the
         // default seat, otherwise the invitation could never be used again.
         const invite = typeof body.invite === "string" ? body.invite.trim() : "";

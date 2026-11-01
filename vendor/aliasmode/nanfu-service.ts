@@ -14,11 +14,19 @@ import { dirname } from "node:path";
 import { normalizeSecureServiceUrl } from "./app-config.ts";
 import { NanfuAccountRuntime, NanfuAuthClient, type NanfuCredentialStore, type NanfuFetch } from "./nanfu-account.ts";
 import { NanfuSyncClient } from "./nanfu-sync.ts";
+import type { NanfuCipher } from "./nanfu-crypto.ts";
 
 export interface NanfuRuntime {
   account: NanfuAccountRuntime;
   client: NanfuSyncClient;
   persistent: boolean;
+  /**
+   * Password-derived cloud cipher plus this install's id. Present only after a
+   * password sign-in in this process: without the password nothing can decrypt
+   * the account's cloud windows, which is the point of the derivation.
+   */
+  sync?: { cipher: NanfuCipher; userId: string; deviceId: string };
+  syncHookInstalled?: boolean;
 }
 
 export function createNanfuRuntime(options: NanfuServiceLoadOptions & {

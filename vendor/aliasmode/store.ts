@@ -309,6 +309,32 @@ export class ProfileStore {
     })();
   }
 
+  /** Every local window's owner, across accounts — used to follow transfers. */
+  listProfileOwners(): Array<{ id: string; owner: string }> {
+    return this.db
+      .query<{ id: string; owner: string }, []>(
+        `SELECT id, owner_user_id AS owner FROM profiles WHERE trashed_at = 0`,
+      )
+      .all();
+  }
+
+  /**
+   * Move one window to another account on this machine. The transfer itself is
+   * a cloud ownership change; this keeps the local cache in step, so the window
+   * leaves the sender's workspace instead of lingering there.
+   */
+  reassignOwner(profileId: string, ownerUserId: string): boolean {
+    const owner = ownerUserId.trim();
+    if (!owner) return false;
+    return this.transaction(() => {
+      const changed = this.db
+        .query(`UPDATE profiles SET owner_user_id = ? WHERE id = ? AND owner_user_id <> ?`)
+        .run(owner, profileId, owner).changes;
+      this.db.query(`UPDATE launches SET owner_user_id = ? WHERE profile_id = ?`).run(owner, profileId);
+      return Number(changed) > 0;
+    })();
+  }
+
   private completeClosedFingerprints(profileId?: string): void {
     this.transaction(() => {
       const rows = this.db.query<any, [string | null, string]>(
