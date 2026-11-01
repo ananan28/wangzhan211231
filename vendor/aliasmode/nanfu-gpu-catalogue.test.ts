@@ -11,9 +11,13 @@ test("内核服务清单：解析厂商/型号并去掉 ANGLE 样板", () => {
     "  Google Inc. (NVIDIA) / ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0 ps_5_0, D3D11)",
     "Pass --fingerprint-anchor to choose a different cluster.",
   ].join("\n");
-  const gpus = parseServableGpus(output);
+  const gpus = parseServableGpus(output, {
+    id: "windows-d3d11-nvidia-0947761dfbe9", platform: "windows", vendorLabel: "NVIDIA",
+  });
   expect(gpus.map((gpu) => gpu.label)).toEqual(["NVIDIA GeForce RTX 4060", "NVIDIA GeForce RTX 4070"]);
   expect(gpus[0]!.vendor).toBe("Google Inc. (NVIDIA)");
+  expect(gpus[0]!.anchor).toBe("windows-d3d11-nvidia-0947761dfbe9");
+  expect(gpus[0]!.platform).toBe("windows");
   expect(gpuLabel("ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)")).toBe("ANGLE Metal Renderer: Apple M4");
   expect(parseServableGpus("no menu here")).toEqual([]);
 });

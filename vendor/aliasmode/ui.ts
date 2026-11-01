@@ -600,6 +600,7 @@ function profileEditView(p: Profile) {
     memoryGb: p.memoryGb ?? 0,
     gpuVendor: p.gpuVendor ?? "",
     gpuRenderer: p.gpuRenderer ?? "",
+    gpuAnchor: p.gpuAnchor ?? "",
     fingerprintSeed: String(p.fingerprintSeed),
     cookieCount: p.cookies.length, seeded: p.seeded,
     mobilePersona: !!conversion,
@@ -644,17 +645,20 @@ function applyEdits(p: Profile, set: Record<string, unknown>): boolean {
     if (memoryGb) p.memoryGb = memoryGb;
     else delete p.memoryGb;
   }
-  if ("gpuVendor" in set || "gpuRenderer" in set) {
+  if ("gpuVendor" in set || "gpuRenderer" in set || "gpuAnchor" in set) {
     const gpu = normalizeGpuIdentity(
       "gpuVendor" in set ? set.gpuVendor : p.gpuVendor,
       "gpuRenderer" in set ? set.gpuRenderer : p.gpuRenderer,
+      "gpuAnchor" in set ? set.gpuAnchor : p.gpuAnchor,
     );
     if (gpu.gpuVendor) {
       p.gpuVendor = gpu.gpuVendor;
       p.gpuRenderer = gpu.gpuRenderer;
+      p.gpuAnchor = gpu.gpuAnchor;
     } else {
       delete p.gpuVendor;
       delete p.gpuRenderer;
+      delete p.gpuAnchor;
     }
   }
   if ("resolution" in set) {
@@ -2246,6 +2250,7 @@ export async function handleUiRequest(
           profile.memoryGb = source.memoryGb;
           profile.gpuVendor = source.gpuVendor;
           profile.gpuRenderer = source.gpuRenderer;
+          profile.gpuAnchor = source.gpuAnchor;
           profile.cookies = structuredClone(source.cookies);
           profile.proxyError = source.proxyError;
           profile.timezone = source.timezone;

@@ -92,8 +92,8 @@ function profileFromEnvironment(environment: NanfuEnvironmentConfig): Profile {
     ...(environment.fingerprint.platformOs ? { platformOs: environment.fingerprint.platformOs } : {}),
     ...(environment.fingerprint.hardwareCores ? { hardware: { cores: environment.fingerprint.hardwareCores } } : {}),
     ...(environment.memoryGb ? { memoryGb: environment.memoryGb } : {}),
-    ...(environment.gpuVendor && environment.gpuRenderer
-      ? { gpuVendor: environment.gpuVendor, gpuRenderer: environment.gpuRenderer }
+    ...(environment.gpuVendor && environment.gpuRenderer && environment.gpuAnchor
+      ? { gpuVendor: environment.gpuVendor, gpuRenderer: environment.gpuRenderer, gpuAnchor: environment.gpuAnchor }
       : {}),
     cookies: [],
     seeded: false,

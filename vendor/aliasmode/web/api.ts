@@ -185,7 +185,7 @@ export function fetchNanfuLocalWindowCounts(signal?: AbortSignal): Promise<{ cou
 export interface NanfuHardwareOptions {
   coresMax: number;
   memoryGb: number[];
-  gpus: Array<{ vendor: string; renderer: string; label: string }>;
+  gpus: Array<{ anchor: string; platform: "windows" | "macos"; vendor: string; renderer: string; label: string }>;
 }
 export function fetchNanfuHardwareOptions(signal?: AbortSignal): Promise<NanfuHardwareOptions> {
   return nanfuJson("hardware-options", { signal });
@@ -1166,6 +1166,7 @@ export interface NewProfileInput {
   /** Exact WebGL unmasked vendor/renderer pair; omitted lets the kernel draw them. */
   gpuVendor?: string;
   gpuRenderer?: string;
+  gpuAnchor?: string;
   /** Send the Do Not Track signal when true. */
   doNotTrack?: boolean;
 }
@@ -1211,6 +1212,8 @@ export interface EditProfile {
   /** Exact WebGL unmasked vendor/renderer pair; empty lets the kernel draw from the seed. */
   gpuVendor?: string;
   gpuRenderer?: string;
+  /** Kernel GPU capability cluster id for the pair. */
+  gpuAnchor?: string;
   /** "1920*1080". */
   resolution: string;
   /** Fingerprint OS: "windows" | "macos" | "linux", or "" for automatic. */

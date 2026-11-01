@@ -987,6 +987,7 @@ function FingerprintSettings({
   onMemoryGbChange,
   gpuVendor,
   gpuRenderer,
+  gpuAnchor,
   onGpuChange,
   hardwareOptions,
   doNotTrack,
@@ -1015,7 +1016,8 @@ function FingerprintSettings({
   onMemoryGbChange?: (value: string) => void;
   gpuVendor?: string;
   gpuRenderer?: string;
-  onGpuChange?: (vendor: string, renderer: string) => void;
+  gpuAnchor?: string;
+  onGpuChange?: (anchor: string, vendor: string, renderer: string) => void;
   hardwareOptions?: NanfuHardwareOptions | null;
   doNotTrack?: string;
   onDoNotTrackChange?: (value: string) => void;
@@ -1027,11 +1029,20 @@ function FingerprintSettings({
   hardware?: { gpu?: string; cores?: number };
 }) {
   const { t } = useTranslation();
-  const storedGpu = gpuVendor && gpuRenderer ? `${gpuVendor}\n${gpuRenderer}` : "";
+  const storedGpu = gpuAnchor && gpuVendor && gpuRenderer ? `${gpuAnchor}\n${gpuVendor}\n${gpuRenderer}` : "";
   const memoryChoices = hardwareOptions?.memoryGb ?? [];
-  const gpuChoices = hardwareOptions?.gpus ?? [];
+  const hostPersona = /Mac/i.test(navigator.userAgent) ? "macos" : /Win/i.test(navigator.userAgent) ? "windows" : "linux";
+  const persona = platformOs || hostPersona;
+  const gpuChoices = (hardwareOptions?.gpus ?? []).filter((gpu) => gpu.platform === persona);
+  const gpuGroup = (anchor: string) => {
+    if (anchor.includes("nvidia")) return "NVIDIA";
+    if (anchor.includes("intel")) return "Intel";
+    if (anchor.includes("qualcomm")) return "Qualcomm";
+    if (anchor.includes("apple")) return "Apple";
+    return "其他";
+  };
   const storedMemoryMissing = !!hardwareOptions && memoryGb !== undefined && memoryGb !== "" && !memoryChoices.includes(Number(memoryGb));
-  const storedGpuMissing = !!hardwareOptions && !!storedGpu && !gpuChoices.some((gpu) => `${gpu.vendor}\n${gpu.renderer}` === storedGpu);
+  const storedGpuMissing = !!hardwareOptions && !!storedGpu && !gpuChoices.some((gpu) => `${gpu.anchor}\n${gpu.vendor}\n${gpu.renderer}` === storedGpu);
   return (
     <details className="fingerprint-settings" open={initiallyOpen || undefined}>
       <summary>
@@ -1100,16 +1111,22 @@ function FingerprintSettings({
               disabled={disabled}
               onChange={(event) => {
                 const value = event.target.value;
-                if (!value) { onGpuChange("", ""); return; }
-                const separator = value.indexOf("\n");
-                onGpuChange(value.slice(0, separator), value.slice(separator + 1));
+                if (!value) { onGpuChange("", "", ""); return; }
+                const [anchor = "", vendor = "", ...rendererParts] = value.split("\n");
+                onGpuChange(anchor, vendor, rendererParts.join("\n"));
               }}
             >
               <option value="">自动（按指纹种子）</option>
-              {gpuChoices.map((gpu) => (
-                <option key={`${gpu.vendor}\n${gpu.renderer}`} value={`${gpu.vendor}\n${gpu.renderer}`}>{gpu.label}</option>
-              ))}
-              {storedGpuMissing && <option value={storedGpu}>已存显卡（本机不可用，将自动回退）</option>}
+              {["NVIDIA", "Intel", "Qualcomm", "Apple", "其他"].map((group) => {
+                const items = gpuChoices.filter((gpu) => gpuGroup(gpu.anchor) === group);
+                if (!items.length) return null;
+                return <optgroup key={group} label={group}>
+                  {items.map((gpu) => (
+                    <option key={`${gpu.anchor}\n${gpu.vendor}\n${gpu.renderer}`} value={`${gpu.anchor}\n${gpu.vendor}\n${gpu.renderer}`}>{gpu.label}</option>
+                  ))}
+                </optgroup>;
+              })}
+              {storedGpuMissing && <option value={storedGpu}>已存显卡（当前平台不可用，将自动回退）</option>}
             </select>
           </label>
         )}
@@ -1149,7 +1166,7 @@ function FingerprintSettings({
           );
         })}
         <div className="hint">{t("We recommend keeping every setting automatic. Custom values can make the browser look inconsistent, easier to detect, and can trigger account checks.")}</div>
-        {onGpuChange && <div className="hint">显卡列表只包含本机内核实际能服务的型号；换到别的电脑后不可用的型号会按指纹种子自动回退。内存和 CPU 的声明不会超过本机真实硬件。</div>}
+        {onGpuChange && <div className="hint">Windows 平台可选 NVIDIA / Intel / Qualcomm 的真实能力表，macOS 可选 Apple；换平台会自动清空显卡，避免跨系统能力表不一致。内存和 CPU 的声明不会超过本机真实硬件。</div>}
         <div className="hint">{disabled
           ? t("Close the browser before changing fingerprint settings.")
           : onTimezoneChange
@@ -1371,7 +1388,7 @@ async function storeDesktopCloudCredentials(
 
 const BLANK_FORM = {
   name: "", engine: "chromium" as "chromium" | "firefox", chromiumRuntime: "" as "" | "aliasmode", group: "", platform: "", proxyType: "http", host: "", port: "", user: "", pass: "",
-  screen: "", platformOs: "", locale: "", timezone: "", cores: "", memoryGb: "", gpuVendor: "", gpuRenderer: "", doNotTrack: "", seed: "", customNo: "", username: "", password: "", email: "", emailPassword: "", twofa: "",
+  screen: "", platformOs: "", locale: "", timezone: "", cores: "", memoryGb: "", gpuVendor: "", gpuRenderer: "", gpuAnchor: "", doNotTrack: "", seed: "", customNo: "", username: "", password: "", email: "", emailPassword: "", twofa: "",
 };
 
 const BLANK_COOKIE_FORM = { name: "", value: "", domain: "", path: "/" };
@@ -3165,6 +3182,7 @@ function App() {
       ...(memory ? { memoryGb: String(memory) } : {}),
       gpuVendor: gpu?.vendor ?? "",
       gpuRenderer: gpu?.renderer ?? "",
+      gpuAnchor: gpu?.anchor ?? "",
       doNotTrack: Math.random() < 0.5 ? "1" : "",
       seed,
     }));
@@ -3203,7 +3221,7 @@ function App() {
           // A batch shares one form, so explicit RAM/GPU would give every new
           // window the same hardware. Leave them to each seed instead.
           ...(count === 1 && form.memoryGb ? { memoryGb: form.memoryGb } : {}),
-          ...(count === 1 && form.gpuVendor && form.gpuRenderer ? { gpuVendor: form.gpuVendor, gpuRenderer: form.gpuRenderer } : {}),
+          ...(count === 1 && form.gpuVendor && form.gpuRenderer ? { gpuVendor: form.gpuVendor, gpuRenderer: form.gpuRenderer, gpuAnchor: form.gpuAnchor } : {}),
           ...(form.doNotTrack === "1" ? { doNotTrack: true } : {}),
           // A fixed seed on a batch would give every profile the same identity; it is single-profile only.
           ...(count === 1 && form.seed ? { seed: form.seed } : {}),
@@ -3286,6 +3304,7 @@ function App() {
           memoryGb: p.memoryGb ? String(p.memoryGb) : "",
           gpuVendor: p.gpuVendor ?? "",
           gpuRenderer: p.gpuRenderer ?? "",
+          gpuAnchor: p.gpuAnchor ?? "",
           fingerprintSeed: p.fingerprintSeed ?? "",
         });
         setEditInitialProxy({ proxy: p.proxy, proxyType: p.proxyType || "http" });
@@ -3293,7 +3312,7 @@ function App() {
           resolution: p.resolution, platformOs: p.platformOs ?? "", timezone: p.timezone ?? "",
           locale: p.locale ?? "", cores: p.cores ?? "", fingerprintSeed: p.fingerprintSeed ?? "",
           memoryGb: p.memoryGb ? String(p.memoryGb) : "",
-          gpuVendor: p.gpuVendor ?? "", gpuRenderer: p.gpuRenderer ?? "",
+          gpuVendor: p.gpuVendor ?? "", gpuRenderer: p.gpuRenderer ?? "", gpuAnchor: p.gpuAnchor ?? "",
         });
         setEditEngine(p.engine === "firefox" ? "firefox" : "chromium");
         setEditChromiumRuntime(p.chromiumRuntime ?? "");
@@ -3400,6 +3419,7 @@ function App() {
         memoryGb: editForm.memoryGb ? Number(editForm.memoryGb) : 0,
         gpuVendor: editForm.gpuVendor ?? "",
         gpuRenderer: editForm.gpuRenderer ?? "",
+        gpuAnchor: editForm.gpuAnchor ?? "",
         tags: editForm.tags ?? "", ...fingerprintEdits,
         ...(!isCloudMode ? { customNo: editForm.customNo ?? "" } : {}),
         ...(!sameExtensionSelection(editExts, editInitialExts) && editEngine === "chromium" ? { extensions: editExts } : {}),
@@ -5588,13 +5608,13 @@ function App() {
               <FingerprintSettings
                 engine={form.engine} chromiumRuntime={appMode?.legacyRemote ? "" : appMode?.chromiumRuntime ?? form.chromiumRuntime} ownChromium={ownChromium}
                 screen={form.screen} onScreenChange={(value) => setF("screen", value)}
-                platformOs={form.platformOs} onPlatformOsChange={(value) => setF("platformOs", value)}
+                platformOs={form.platformOs} onPlatformOsChange={(value) => setForm((current) => ({ ...current, platformOs: value, gpuVendor: "", gpuRenderer: "", gpuAnchor: "" }))}
                 timezone={form.timezone} onTimezoneChange={(value) => setF("timezone", value)}
                 locale={form.locale} onLocaleChange={(value) => setF("locale", value)}
                 cores={form.cores} onCoresChange={(value) => setF("cores", value)}
                 memoryGb={form.memoryGb} onMemoryGbChange={(value) => setF("memoryGb", value)}
-                gpuVendor={form.gpuVendor} gpuRenderer={form.gpuRenderer}
-                onGpuChange={(vendor, renderer) => setForm((current) => ({ ...current, gpuVendor: vendor, gpuRenderer: renderer }))}
+                gpuVendor={form.gpuVendor} gpuRenderer={form.gpuRenderer} gpuAnchor={form.gpuAnchor}
+                onGpuChange={(anchor, vendor, renderer) => setForm((current) => ({ ...current, gpuVendor: vendor, gpuRenderer: renderer, gpuAnchor: anchor }))}
                 hardwareOptions={createHardwareOptions}
                 doNotTrack={form.doNotTrack} onDoNotTrackChange={(value) => setF("doNotTrack", value)}
                 initiallyOpen
@@ -5761,13 +5781,13 @@ function App() {
                   )}
                   <FingerprintSettings
                     engine={editEngine} chromiumRuntime={editChromiumRuntime} ownChromium={ownChromium} screen={editForm.resolution ?? ""} onScreenChange={(value) => setEF("resolution", value)}
-                    platformOs={editForm.platformOs ?? ""} onPlatformOsChange={editEngine === "chromium" ? (value) => setEF("platformOs", value) : undefined}
+                    platformOs={editForm.platformOs ?? ""} onPlatformOsChange={editEngine === "chromium" ? (value) => setEditForm((form) => ({ ...form, platformOs: value, gpuVendor: "", gpuRenderer: "", gpuAnchor: "" })) : undefined}
                     timezone={editForm.timezone ?? ""} onTimezoneChange={(value) => setEF("timezone", value)}
                     locale={editForm.locale ?? ""} onLocaleChange={(value) => setEF("locale", value)}
                     cores={editForm.cores ?? ""} onCoresChange={(value) => setEF("cores", value)}
                     memoryGb={editForm.memoryGb ?? ""} onMemoryGbChange={(value) => setEF("memoryGb", value)}
-                    gpuVendor={editForm.gpuVendor ?? ""} gpuRenderer={editForm.gpuRenderer ?? ""}
-                    onGpuChange={(vendor, renderer) => setEditForm((form) => ({ ...form, gpuVendor: vendor, gpuRenderer: renderer }))}
+                    gpuVendor={editForm.gpuVendor ?? ""} gpuRenderer={editForm.gpuRenderer ?? ""} gpuAnchor={editForm.gpuAnchor ?? ""}
+                    onGpuChange={(anchor, vendor, renderer) => setEditForm((form) => ({ ...form, gpuVendor: vendor, gpuRenderer: renderer, gpuAnchor: anchor }))}
                     hardwareOptions={editHardwareOptions}
                     doNotTrack={editForm.doNotTrack ?? ""} onDoNotTrackChange={(value) => setEF("doNotTrack", value)}
                     seed={editForm.fingerprintSeed ?? ""} onSeedChange={(value) => setEF("fingerprintSeed", value)}

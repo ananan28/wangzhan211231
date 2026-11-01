@@ -51,6 +51,8 @@ export interface NanfuEnvironmentConfig {
   /** Exact WebGL unmasked vendor/renderer; absent lets the kernel draw them. */
   gpuVendor?: string;
   gpuRenderer?: string;
+  /** Kernel GPU capability cluster id for the pair. */
+  gpuAnchor?: string;
   /** Per-window Do Not Track signal; absent/false is Chromium's native default. */
   doNotTrack?: boolean;
   tags: string[];
@@ -95,8 +97,8 @@ export function exportNanfuEnvironment(
       ...(profile.hardware ? { hardwareCores: profile.hardware.cores } : {}),
     },
     ...(profile.memoryGb ? { memoryGb: profile.memoryGb } : {}),
-    ...(profile.gpuVendor && profile.gpuRenderer
-      ? { gpuVendor: profile.gpuVendor, gpuRenderer: profile.gpuRenderer }
+    ...(profile.gpuVendor && profile.gpuRenderer && profile.gpuAnchor
+      ? { gpuVendor: profile.gpuVendor, gpuRenderer: profile.gpuRenderer, gpuAnchor: profile.gpuAnchor }
       : {}),
     tags: [...(profile.tags ?? [])],
     extensions: [...names].sort(),

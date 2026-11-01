@@ -84,14 +84,24 @@ export function normalizeMemoryGb(value: unknown): number | undefined {
 export interface GpuIdentity {
   gpuVendor?: string;
   gpuRenderer?: string;
+  gpuAnchor?: string;
+}
+
+/** A cluster id is a kernel catalogue key, never free text. */
+export function normalizeGpuAnchor(value: unknown): string {
+  const anchor = typeof value === "string" ? value.trim() : "";
+  if (!anchor) return "";
+  if (!/^[a-z0-9][a-z0-9-]{0,127}$/.test(anchor)) throw new Error("unsupported GPU capability cluster");
+  return anchor;
 }
 
 /**
- * Validate a stored GPU pair. Both halves are required together: the kernel
- * matches the pair against the host's servable identities, and half an identity
- * is not one. 0/blank on both clears it so the kernel draws from the seed.
+ * Validate a stored GPU pair. Both halves plus the capability cluster are
+ * required together: the kernel matches the pair against that cluster's table,
+ * and half an identity is not one. 0/blank on all clears it so the kernel
+ * draws from the seed.
  */
-export function normalizeGpuIdentity(vendor: unknown, renderer: unknown): GpuIdentity {
+export function normalizeGpuIdentity(vendor: unknown, renderer: unknown, anchor?: unknown): GpuIdentity {
   const v = typeof vendor === "string" ? vendor.trim() : "";
   const r = typeof renderer === "string" ? renderer.trim() : "";
   if (!v && !r) return {};
@@ -99,7 +109,9 @@ export function normalizeGpuIdentity(vendor: unknown, renderer: unknown): GpuIde
   if (v.length > 256 || r.length > 512 || /[\u0000-\u001f\u007f]/.test(v + r)) {
     throw new Error("unsupported GPU identity");
   }
-  return { gpuVendor: v, gpuRenderer: r };
+  const a = normalizeGpuAnchor(anchor);
+  if (!a) throw new Error("GPU capability cluster is required with a GPU identity");
+  return { gpuVendor: v, gpuRenderer: r, gpuAnchor: a };
 }
 
 /** Default launch window as fractions of the profile's screen: a tall two-thirds-width window. */
@@ -287,9 +299,10 @@ export function deriveFingerprintFlags(profile: Profile, hostCores = availablePa
     if (claimed) flags.push(`--fingerprint-device-memory=${claimed}`);
   }
   // Per-window GPU identity. The launcher only passes a pair the kernel
-  // reported servable on this host; the kernel rejects anything outside the
-  // anchor's capability cluster, which would stop the launch.
-  if (profile.chromiumRuntime && profile.gpuVendor && profile.gpuRenderer) {
+  // reported servable in the named cluster; the kernel rejects anything
+  // outside that cluster's capability table, which would stop the launch.
+  if (profile.chromiumRuntime && profile.gpuAnchor && profile.gpuVendor && profile.gpuRenderer) {
+    flags.push(`--fingerprint-anchor=${profile.gpuAnchor}`);
     flags.push(`--fingerprint-gpu-vendor=${profile.gpuVendor}`);
     flags.push(`--fingerprint-gpu-renderer=${profile.gpuRenderer}`);
   }

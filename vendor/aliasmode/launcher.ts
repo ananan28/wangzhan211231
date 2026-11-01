@@ -1334,15 +1334,20 @@ export class Launcher {
    */
   private async withServableGpu(profile: Profile): Promise<Profile> {
     if (!profile.gpuVendor || !profile.gpuRenderer) return profile;
-    if (profile.chromiumRuntime !== "aliasmode") {
-      return { ...profile, gpuVendor: undefined, gpuRenderer: undefined };
+    if (profile.chromiumRuntime !== "aliasmode" || !profile.gpuAnchor) {
+      return { ...profile, gpuVendor: undefined, gpuRenderer: undefined, gpuAnchor: undefined };
     }
     const gpus = await this.servableGpus();
-    if (gpus.some((gpu) => gpu.vendor === profile.gpuVendor && gpu.renderer === profile.gpuRenderer)) {
-      return profile;
-    }
-    this.log(`${profile.id}: stored GPU identity is not servable on this computer; using the seed's GPU`);
-    return { ...profile, gpuVendor: undefined, gpuRenderer: undefined };
+    const match = gpus.find((gpu) =>
+      gpu.anchor === profile.gpuAnchor && gpu.vendor === profile.gpuVendor && gpu.renderer === profile.gpuRenderer
+    );
+    // A cluster from the other OS crashes this host's GPU process even though
+    // the catalogue lists it, so the persona and the cluster must agree.
+    const persona = (profile.platformOs || platformFromUA(profile.ua)
+      || (this.hostPlatform === "darwin" ? "macos" : this.hostPlatform === "win32" ? "windows" : "linux")).toLowerCase();
+    if (match && match.platform === persona) return profile;
+    this.log(`${profile.id}: stored GPU identity is not servable for this persona on this computer; using the seed's GPU`);
+    return { ...profile, gpuVendor: undefined, gpuRenderer: undefined, gpuAnchor: undefined };
   }
 
   /**

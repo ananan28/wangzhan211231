@@ -51,6 +51,8 @@ export interface NewProfileInput {
   /** Exact WebGL unmasked vendor/renderer pair. Empty/omitted → derived from the seed. */
   gpuVendor?: string;
   gpuRenderer?: string;
+  /** Kernel GPU capability cluster id for the pair, e.g. "windows-d3d11-intel-...". */
+  gpuAnchor?: string;
   /** Send the Do Not Track signal. Omitted/false keeps Chromium's native default. */
   doNotTrack?: boolean | string;
   /** Fixed fingerprint seed. Empty/omitted → derived from the new profile id. */
@@ -148,7 +150,7 @@ export function buildNewProfile(input: NewProfileInput, exists: (id: string) => 
   const locale = normalizeProfileLocale(input.locale) ?? Intl.DateTimeFormat().resolvedOptions().locale;
   const timezone = input.timezone ? parseStrictTimezone(input.timezone) : undefined;
   const memoryGb = normalizeMemoryGb(input.memoryGb);
-  const gpu = normalizeGpuIdentity(input.gpuVendor, input.gpuRenderer);
+  const gpu = normalizeGpuIdentity(input.gpuVendor, input.gpuRenderer, input.gpuAnchor);
   const doNotTrack = input.doNotTrack === true || input.doNotTrack === "true" || input.doNotTrack === "1";
 
   const profile = completeProfileFingerprint({

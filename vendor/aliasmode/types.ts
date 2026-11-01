@@ -97,6 +97,12 @@ export interface Profile {
   gpuVendor?: string;
   gpuRenderer?: string;
   /**
+   * Kernel GPU capability cluster this identity belongs to (e.g.
+   * "windows-d3d11-intel-..."). Required with the vendor/renderer pair:
+   * the cluster supplies the GL/WebGPU capability table the page can measure.
+   */
+  gpuAnchor?: string;
+  /**
    * Firefox's complete Camoufox identity. It is generated once on creation and
    * must accompany every Firefox profile; Chromium profiles must not carry it.
    */
