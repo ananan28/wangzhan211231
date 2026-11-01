@@ -110,7 +110,14 @@ jobs:
           mkdir -p "$bundle/dmg"
           dmg="$bundle/dmg/Nanfu-macos-${{ inputs.arch }}.dmg"
           rm -f "$dmg"
-          hdiutil create -volname "南孚浏览器" -srcfolder "$app" -ov -format UDZO "$dmg"
+          # 标准拖拽安装窗口：应用 + “应用程序”快捷方式，双击 dmg 后直接拖进去即可。
+          stage="$RUNNER_TEMP/nanfu-dmg-stage"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          ditto "$app" "$stage/$(basename "$app")"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname "南孚浏览器" -srcfolder "$stage" -ov -format UDZO "$dmg"
+          rm -rf "$stage"
           ls -lh "$dmg"
           du -sh "$app" "$dmg"
       - name: Verify the bundle carries the kernel archive and the runtimes
