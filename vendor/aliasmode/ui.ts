@@ -834,6 +834,23 @@ export async function handleUiRequest(
       if (!paths || !userId) return;
       void client.publishTransferKey(userId, loadOrCreateTransferIdentity(paths.root).publicKey).catch(() => {});
     };
+    // 账号隔离：本机窗口库只暴露当前登录账号名下的窗口。旧版本导入的窗口没有
+    // 归属（owner_user_id = ''），由组织所有者首次登录时一次性认领；其他账号
+    // 从头就是空工作区，绝不会看到别人的窗口。
+    const scopeStoreToAccount = async (): Promise<void> => {
+      const userId = account.state().userId;
+      store.setOwner(userId);
+      if (!userId) return;
+      try {
+        const organization = await client.orgMe();
+        if (organization?.identity === "owner") store.claimUnowned(userId);
+      } catch {
+        // 服务不可达时保留未归属行（对所有账号都不可见），绝不猜测归属。
+      }
+      // 启动时还不知道账号，runs 表可能留着这个账号上次的启动记录；切到账号后
+      // 再对一次账，死进程会被清掉，活着的会被重新接管。
+      await launcher.reconcileOrphans().catch(() => undefined);
+    };
     try {
       // 第一步：生成带 PKCE 的 Google 授权地址。verifier 只留在本进程内，
       // 浏览器拿到的只有 code_challenge 和一次性的 state。
@@ -982,6 +999,7 @@ export async function handleUiRequest(
           await host.accept(session, revision);
           account.assertCurrent(revision);
           const selfJoin = await joinOrganization();
+          await scopeStoreToAccount();
           // 会话已经生效，转移密钥发布失败只影响后续转移，不能把登录判成失败。
           try {
             publishTransferKey();
@@ -1002,6 +1020,8 @@ export async function handleUiRequest(
       }
 
       if (action === "state" && req.method === "GET") {
+        // 每次读取都对齐一次归属：进程重启后第一次请求就把窗口范围切成当前账号。
+        store.setOwner(account.state().userId);
         return noStoreJson({ ok: true, state: account.state(), persistent });
       }
       // Accounts an administrator created sign in with <name>@nanfu.local and
@@ -1059,12 +1079,18 @@ export async function handleUiRequest(
         client.cancelVisibleRequests();
         if (action === "signout") {
           await account.signOut();
+          store.setOwner("");
           return noStoreJson({ ok: true, state: account.state(), persistent });
         }
         if (action === "restore") {
           const state = await account.restore();
           const selfJoin = state.authenticated ? await joinOrganization() : { ok: true };
-          if (state.authenticated) publishTransferKey();
+          if (state.authenticated) {
+            await scopeStoreToAccount();
+            publishTransferKey();
+          } else {
+            store.setOwner("");
+          }
           return noStoreJson({ ok: true, state, persistent, selfJoin });
         }
         const body = await req.json().catch(() => null) as { email?: unknown; password?: unknown; invite?: unknown } | null;
@@ -1094,6 +1120,8 @@ export async function handleUiRequest(
         }
         if (!isValidNanfuEmail(login)) return noStoreJson({ ok: false, error: "请输入有效的邮箱或登录名" }, 400);
         const state = await account.signIn(login, body.password);
+        // 会话一建立就切换窗口归属：登录后的第一个窗口列表就是这个账号自己的。
+        await scopeStoreToAccount();
         // An invite code taken at sign-in is redeemed instead of claiming the
         // default seat, otherwise the invitation could never be used again.
         const invite = typeof body.invite === "string" ? body.invite.trim() : "";

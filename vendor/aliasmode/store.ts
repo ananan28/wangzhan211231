@@ -265,16 +265,58 @@ export class ProfileStore {
         /* column already exists */
       }
     }
+    // Nanfu account isolation. One machine store serves every signed-in
+    // account, so each window and its running state carry an owner. Reads are
+    // filtered by the current owner, so two accounts on the same computer never
+    // see each other's windows. Legacy rows stay unowned ('') until the
+    // organization owner signs in and claims them.
+    for (const table of ["profiles", "launches"]) {
+      try {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT ''`);
+      } catch {
+        /* column already exists */
+      }
+    }
+    this.db.exec(`CREATE INDEX IF NOT EXISTS profiles_owner ON profiles (owner_user_id, trashed_at)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS launches_owner ON launches (owner_user_id)`);
     this.completeClosedFingerprints();
+  }
+
+  private ownerUserId = "";
+
+  /** The signed-in Nanfu account whose windows this store exposes. */
+  setOwner(userId: string | null | undefined): void {
+    this.ownerUserId = (userId ?? "").trim();
+  }
+
+  owner(): string {
+    return this.ownerUserId;
+  }
+
+  /**
+   * One-time migration: windows imported before account isolation belong to
+   * the organization owner. Returns how many profiles were claimed.
+   */
+  claimUnowned(userId: string): number {
+    const owner = userId.trim();
+    if (!owner) return 0;
+    return this.transaction(() => {
+      const changed = this.db
+        .query(`UPDATE profiles SET owner_user_id = ? WHERE owner_user_id = ''`)
+        .run(owner).changes;
+      this.db.query(`UPDATE launches SET owner_user_id = ? WHERE owner_user_id = ''`).run(owner);
+      return Number(changed);
+    })();
   }
 
   private completeClosedFingerprints(profileId?: string): void {
     this.transaction(() => {
-      const rows = this.db.query<any, [string | null]>(
+      const rows = this.db.query<any, [string | null, string]>(
         `SELECT * FROM profiles WHERE (?1 IS NULL OR id = ?1)
+         AND owner_user_id = ?2
          AND id NOT IN (SELECT profile_id FROM launches)
          AND (locale = '' OR engine = 'firefox')`,
-      ).all(profileId ?? null);
+      ).all(profileId ?? null, this.ownerUserId);
       const update = this.db.query("UPDATE profiles SET locale = ?, firefox_config_json = ?, ua = ? WHERE id = ?");
       for (const row of rows) {
         // Corrupt identities must still fail when read, not prevent the whole store from opening.
@@ -321,8 +363,18 @@ export class ProfileStore {
     // parser. Invalid full-profile JSON must never reach persistent identity.
     assertValidProfile(p);
     const existing = this.db
-      .query<{ seeded: number; trashed_at: number; engine: unknown; chromium_runtime: unknown; hardware_json: string; locale: string }, [string]>("SELECT seeded, trashed_at, engine, chromium_runtime, hardware_json, locale FROM profiles WHERE id = ?")
-      .get(p.id);
+      .query<{ seeded: number; trashed_at: number; engine: unknown; chromium_runtime: unknown; hardware_json: string; locale: string }, [string, string]>("SELECT seeded, trashed_at, engine, chromium_runtime, hardware_json, locale FROM profiles WHERE id = ? AND owner_user_id = ?")
+      .get(p.id, this.ownerUserId);
+    // Ids are globally unique in this store, so a window id owned by another
+    // account must never be overwritten by an import under this one.
+    if (!existing) {
+      const otherOwner = this.db
+        .query<{ owner_user_id: string }, [string]>("SELECT owner_user_id FROM profiles WHERE id = ?")
+        .get(p.id);
+      if (otherOwner && otherOwner.owner_user_id !== this.ownerUserId) {
+        throw new Error("该窗口编号已被其他账号使用，请换一个编号后重试");
+      }
+    }
     if (!p.locale && existing?.locale) p = { ...p, locale: existing.locale };
     // The runtime is fixed at creation. An edit or re-import that omits it keeps it.
     const storedRuntime = existing ? normalizeChromiumRuntime(existing.chromium_runtime, storedProfileEngine(existing.engine)) : undefined;
@@ -350,12 +402,12 @@ export class ProfileStore {
       .query(
         `INSERT INTO profiles
            (id, engine, chromium_runtime, hardware_json, firefox_config_json, acc_id, name, "group", platform, username, password, email, email_password, twofa, proxy_json, proxy_error, extensions_json, tags_json, custom_no, ua, timezone, timezone_manual, locale,
-            screen_width, screen_height, fingerprint_seed, platform_os, fp_observed_json, fp_expected_json, fp_verdict_json, cookies_json, seeded, created_at)
+            screen_width, screen_height, fingerprint_seed, platform_os, fp_observed_json, fp_expected_json, fp_verdict_json, cookies_json, seeded, created_at, owner_user_id)
          -- fp_verdict_json is literal '': a verdict is a COMPUTED fact, written
          -- only by saveObservedFingerprint from a real measurement. If a caller
          -- could supply one, an import could hand itself a "verified" badge and
          -- the badge would mean nothing.
-         VALUES ($id,$engine,$chromiumRuntime,$hardware,$firefox,$acc,$name,$group,$platform,$user,$pass,$email,$emailPass,$twofa,$proxy,$proxyError,$ext,$tags,$customNo,$ua,$tz,$tzManual,$locale,$w,$h,$seed,$platformOs,$fpObserved,$fpExpected,'',$cookies,$seeded,$created)
+         VALUES ($id,$engine,$chromiumRuntime,$hardware,$firefox,$acc,$name,$group,$platform,$user,$pass,$email,$emailPass,$twofa,$proxy,$proxyError,$ext,$tags,$customNo,$ua,$tz,$tzManual,$locale,$w,$h,$seed,$platformOs,$fpObserved,$fpExpected,'',$cookies,$seeded,$created,$owner)
          ON CONFLICT(id) DO UPDATE SET
            engine=$engine, firefox_config_json=$firefox, hardware_json=$hardware, timezone_manual=$tzManual,
            acc_id=$acc, name=$name, "group"=$group, platform=$platform, username=$user, password=$pass,
@@ -396,7 +448,7 @@ export class ProfileStore {
              WHEN $fpExpected <> '' AND $fpExpected IS NOT fp_expected_json THEN ''
              ELSE fp_verdict_json
            END,
-           cookies_json=$cookies`,
+           cookies_json=$cookies, owner_user_id=$owner`,
       )
       .run({
         $id: p.id,
@@ -434,6 +486,7 @@ export class ProfileStore {
         // updates created_at). New profiles get a real timestamp; rows imported
         // before this column stay 0 (creation time was never recorded then).
         $created: Date.now(),
+        $owner: this.ownerUserId,
       });
     if (p.group) this.registerGroup(p.group);
     this.onProfileSaved?.(p);
@@ -441,12 +494,12 @@ export class ProfileStore {
 
   /** Explicit edits and authoritative restores may clear stored hardware; the engine then chooses. */
   setHardware(id: string, hardware: Profile["hardware"]): void {
-    this.db.query("UPDATE profiles SET hardware_json = ? WHERE id = ?").run(hardware ? JSON.stringify(hardware) : "", id);
+    this.db.query("UPDATE profiles SET hardware_json = ? WHERE id = ? AND owner_user_id = ?").run(hardware ? JSON.stringify(hardware) : "", id, this.ownerUserId);
   }
 
   /** Explicit edits and authoritative restores may clear a saved timezone. */
   setTimezone(id: string, timezone: string): void {
-    this.db.query("UPDATE profiles SET timezone = ? WHERE id = ?").run(timezone, id);
+    this.db.query("UPDATE profiles SET timezone = ? WHERE id = ? AND owner_user_id = ?").run(timezone, id, this.ownerUserId);
   }
 
   /** Apply a prevalidated profile batch atomically (all rows or none). */
@@ -507,54 +560,54 @@ export class ProfileStore {
   }
 
   getSessionBundle(id: string): string | null {
-    return this.db.query<{ session_json: string }, [string]>(
-      `SELECT session_json FROM profiles WHERE id = ?`,
-    ).get(id)?.session_json || null;
+    return this.db.query<{ session_json: string }, [string, string]>(
+      `SELECT session_json FROM profiles WHERE id = ? AND owner_user_id = ?`,
+    ).get(id, this.ownerUserId)?.session_json || null;
   }
 
   getPendingSessionBundle(id: string): string | null {
-    return this.db.query<{ session_json: string }, [string]>(
-      `SELECT session_json FROM profiles WHERE id = ? AND session_restore_pending = 1`,
-    ).get(id)?.session_json || null;
+    return this.db.query<{ session_json: string }, [string, string]>(
+      `SELECT session_json FROM profiles WHERE id = ? AND session_restore_pending = 1 AND owner_user_id = ?`,
+    ).get(id, this.ownerUserId)?.session_json || null;
   }
 
   /** Capturing live state must never arm an import restore. */
   saveSessionBundle(id: string, bundle: string): void {
-    this.db.query(`UPDATE profiles SET session_json = ? WHERE id = ?`).run(bundle, id);
+    this.db.query(`UPDATE profiles SET session_json = ? WHERE id = ? AND owner_user_id = ?`).run(bundle, id, this.ownerUserId);
   }
 
   markSessionRestored(id: string, bundle: string): void {
-    this.db.query(`UPDATE profiles SET session_restore_pending = 0 WHERE id = ? AND session_json = ?`).run(id, bundle);
+    this.db.query(`UPDATE profiles SET session_restore_pending = 0 WHERE id = ? AND session_json = ? AND owner_user_id = ?`).run(id, bundle, this.ownerUserId);
   }
 
   getProfile(id: string): Profile | null {
     const row = this.db
-      .query<any, [string]>(`SELECT * FROM profiles WHERE id = ? AND trashed_at = 0`)
-      .get(id);
+      .query<any, [string, string]>(`SELECT * FROM profiles WHERE id = ? AND trashed_at = 0 AND owner_user_id = ?`)
+      .get(id, this.ownerUserId);
     return row ? rowToProfile(row) : null;
   }
 
   listProfiles(): Profile[] {
-    return this.db.query<any, []>(`SELECT * FROM profiles WHERE trashed_at = 0 ORDER BY id`).all().map(rowToProfile);
+    return this.db.query<any, [string]>(`SELECT * FROM profiles WHERE trashed_at = 0 AND owner_user_id = ? ORDER BY id`).all(this.ownerUserId).map(rowToProfile);
   }
 
   count(): number {
-    return this.db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM profiles WHERE trashed_at = 0`).get()!.n;
+    return this.db.query<{ n: number }, [string]>(`SELECT COUNT(*) AS n FROM profiles WHERE trashed_at = 0 AND owner_user_id = ?`).get(this.ownerUserId)!.n;
   }
 
   isTrashed(id: string): boolean {
-    return !!this.db.query(`SELECT 1 FROM profiles WHERE id = ? AND trashed_at > 0`).get(id);
+    return !!this.db.query(`SELECT 1 FROM profiles WHERE id = ? AND trashed_at > 0 AND owner_user_id = ?`).get(id, this.ownerUserId);
   }
 
   listTrashed(): Array<{ id: string; name: string; group: string; trashedAt: number }> {
-    return this.db.query<{ id: string; name: string; group: string; trashedAt: number }, []>(
-      `SELECT id, name, "group", trashed_at AS trashedAt FROM profiles WHERE trashed_at > 0 ORDER BY trashed_at DESC, id`,
-    ).all();
+    return this.db.query<{ id: string; name: string; group: string; trashedAt: number }, [string]>(
+      `SELECT id, name, "group", trashed_at AS trashedAt FROM profiles WHERE trashed_at > 0 AND owner_user_id = ? ORDER BY trashed_at DESC, id`,
+    ).all(this.ownerUserId);
   }
 
   trashProfile(id: string): boolean {
     return this.transaction(() => {
-      const changed = this.db.query(`UPDATE profiles SET trashed_at = ? WHERE id = ? AND trashed_at = 0`).run(Date.now(), id);
+      const changed = this.db.query(`UPDATE profiles SET trashed_at = ? WHERE id = ? AND trashed_at = 0 AND owner_user_id = ?`).run(Date.now(), id, this.ownerUserId);
       if (changed.changes) this.clearAgentTemporary(id);
       return changed.changes > 0;
     })();
@@ -562,18 +615,18 @@ export class ProfileStore {
 
   restoreProfile(id: string): boolean {
     return this.transaction(() => {
-      const row = this.db.query<{ group: string }, [string]>(
-        `SELECT "group" FROM profiles WHERE id = ? AND trashed_at > 0`,
-      ).get(id);
+      const row = this.db.query<{ group: string }, [string, string]>(
+        `SELECT "group" FROM profiles WHERE id = ? AND trashed_at > 0 AND owner_user_id = ?`,
+      ).get(id, this.ownerUserId);
       if (!row) return false;
-      this.db.query(`UPDATE profiles SET trashed_at = 0 WHERE id = ?`).run(id);
+      this.db.query(`UPDATE profiles SET trashed_at = 0 WHERE id = ? AND owner_user_id = ?`).run(id, this.ownerUserId);
       this.registerGroup(row.group);
       return true;
     })();
   }
 
   markSeeded(id: string): void {
-    this.db.query(`UPDATE profiles SET seeded = 1 WHERE id = ?`).run(id);
+    this.db.query(`UPDATE profiles SET seeded = 1 WHERE id = ? AND owner_user_id = ?`).run(id, this.ownerUserId);
   }
 
   /**
@@ -587,15 +640,15 @@ export class ProfileStore {
     verdict: FingerprintVerdict | null,
   ): void {
     this.db
-      .query(`UPDATE profiles SET fp_observed_json = ?, fp_verdict_json = ? WHERE id = ?`)
-      .run(JSON.stringify(observed), verdict ? JSON.stringify(verdict) : "", profileId);
+      .query(`UPDATE profiles SET fp_observed_json = ?, fp_verdict_json = ? WHERE id = ? AND owner_user_id = ?`)
+      .run(JSON.stringify(observed), verdict ? JSON.stringify(verdict) : "", profileId, this.ownerUserId);
   }
 
   /** Delete a profile and its launch row. Returns true if a row was removed. */
   deleteProfile(id: string): boolean {
-    this.db.query(`DELETE FROM launches WHERE profile_id = ?`).run(id);
+    this.db.query(`DELETE FROM launches WHERE profile_id = ? AND owner_user_id = ?`).run(id, this.ownerUserId);
     this.db.query(`DELETE FROM agent_temporary_profiles WHERE profile_id = ?`).run(id);
-    const res = this.db.query(`DELETE FROM profiles WHERE id = ?`).run(id);
+    const res = this.db.query(`DELETE FROM profiles WHERE id = ? AND owner_user_id = ?`).run(id, this.ownerUserId);
     return Number(res.changes) > 0;
   }
 
@@ -693,7 +746,7 @@ export class ProfileStore {
         const temp = temporary.get(folder.name)!;
         this.db.query(`UPDATE groups SET name = ? WHERE name = ?`).run(temp, folder.name);
         this.db.query(`UPDATE groups SET parent_name = ? WHERE parent_name = ?`).run(temp, folder.name);
-        moved += this.db.query(`UPDATE profiles SET "group" = ? WHERE "group" = ?`).run(temp, folder.name).changes;
+        moved += this.db.query(`UPDATE profiles SET "group" = ? WHERE "group" = ? AND owner_user_id = ?`).run(temp, folder.name, this.ownerUserId).changes;
       }
       for (const folder of branch) {
         const name = names.get(folder.name)!;
@@ -701,7 +754,7 @@ export class ProfileStore {
         this.db.query(`UPDATE groups SET name = ?, parent_name = ?, label = ? WHERE name = ?`)
           .run(name, folder === root ? parent : names.get(folder.parentName!)!, folder === root ? label.trim() : folder.label, temp);
         this.db.query(`UPDATE groups SET parent_name = ? WHERE parent_name = ?`).run(name, temp);
-        this.db.query(`UPDATE profiles SET "group" = ? WHERE "group" = ?`).run(name, temp);
+        this.db.query(`UPDATE profiles SET "group" = ? WHERE "group" = ? AND owner_user_id = ?`).run(name, temp, this.ownerUserId);
       }
       return { moved, name: names.get(from)! };
     })();
@@ -789,8 +842,8 @@ export class ProfileStore {
         this.db.query(`INSERT INTO groups (name, extension_defaults_json) VALUES (?, ?)`)
           .run(destination, JSON.stringify(this.getGroupExtensionDefaults(source)));
       }
-      const res = this.db.query(`UPDATE profiles SET "group" = ? WHERE "group" = ? AND trashed_at = 0`)
-        .run(destination, source);
+      const res = this.db.query(`UPDATE profiles SET "group" = ? WHERE "group" = ? AND trashed_at = 0 AND owner_user_id = ?`)
+        .run(destination, source, this.ownerUserId);
       this.db.query(`DELETE FROM groups WHERE name = ?`).run(source);
       return Number(res.changes);
     });
@@ -805,7 +858,7 @@ export class ProfileStore {
     const n = name.trim();
     const remove = this.transaction(() => {
       if (this.db.query(`SELECT 1 FROM groups WHERE parent_name = ?`).get(n)) throw new Error("Move or delete subfolders first.");
-      const res = this.db.query(`UPDATE profiles SET "group" = '' WHERE "group" = ? AND trashed_at = 0`).run(n);
+      const res = this.db.query(`UPDATE profiles SET "group" = '' WHERE "group" = ? AND trashed_at = 0 AND owner_user_id = ?`).run(n, this.ownerUserId);
       this.db.query(`DELETE FROM groups WHERE name = ?`).run(n);
       return Number(res.changes);
     });
@@ -826,7 +879,7 @@ export class ProfileStore {
 
   /** Set a profile's display name (AdsPower user/update). No-op for unknown ids. */
   rename(id: string, name: string): void {
-    this.db.query(`UPDATE profiles SET name = ? WHERE id = ? AND trashed_at = 0`).run(name, id);
+    this.db.query(`UPDATE profiles SET name = ? WHERE id = ? AND trashed_at = 0 AND owner_user_id = ?`).run(name, id, this.ownerUserId);
   }
 
   // --- Extensions ----------------------------------------------------------
@@ -918,12 +971,12 @@ export class ProfileStore {
     fpCapturedAt: string;
   }> {
     return this.db
-      .query<any, []>(
+      .query<any, [string]>(
         `SELECT id, name, "group" AS grp, created_at AS c, last_open_at AS l, rowid AS s,
                 fp_verdict_json AS fpv, fp_observed_json AS fpo
-           FROM profiles WHERE trashed_at = 0 ORDER BY rowid`,
+           FROM profiles WHERE trashed_at = 0 AND owner_user_id = ? ORDER BY rowid`,
       )
-      .all()
+      .all(this.ownerUserId)
       .map((r) => ({
         id: r.id,
         name: r.name ?? "",
@@ -939,8 +992,8 @@ export class ProfileStore {
   /** This profile's serial (SQLite rowid) — AdsPower's serial_number stand-in. Null if unknown. */
   getSerial(profileId: string): number | null {
     const row = this.db
-      .query<{ s: number }, [string]>(`SELECT rowid AS s FROM profiles WHERE id = ?`)
-      .get(profileId);
+      .query<{ s: number }, [string, string]>(`SELECT rowid AS s FROM profiles WHERE id = ? AND owner_user_id = ?`)
+      .get(profileId, this.ownerUserId);
     return row ? row.s : null;
   }
 
@@ -952,10 +1005,10 @@ export class ProfileStore {
   listProfileMeta(): Map<string, { serial: number; createdAt: number; lastOpenAt: number }> {
     return new Map(
       this.db
-        .query<{ id: string; s: number; c: number; l: number }, []>(
-          `SELECT id, rowid AS s, created_at AS c, last_open_at AS l FROM profiles WHERE trashed_at = 0`,
+        .query<{ id: string; s: number; c: number; l: number }, [string]>(
+          `SELECT id, rowid AS s, created_at AS c, last_open_at AS l FROM profiles WHERE trashed_at = 0 AND owner_user_id = ?`,
         )
-        .all()
+        .all(this.ownerUserId)
         .map((row) => [row.id, { serial: row.s, createdAt: row.c ?? 0, lastOpenAt: row.l ?? 0 }] as const),
     );
   }
@@ -972,19 +1025,21 @@ export class ProfileStore {
            (profile_id, pid, debug_port, ws, started_at, relay_port, session_base_version,
             binary_path, user_data_dir, binary_sha256, persona_digest, headless,
             search_bootstrap_revision, process_group_id, root_start_time,
-            engine, firefox_owner_json, owner_binary_path)
+            engine, firefox_owner_json, owner_binary_path, owner_user_id)
          VALUES ($id,$pid,$port,$ws,$at,$relay,$base,$binary,$data,$binary_sha,$persona,$headless,$search_bootstrap,$pgid,$root_start,
-                 $engine,$firefox_owner,$owner_binary)
+                 $engine,$firefox_owner,$owner_binary,$owner)
          ON CONFLICT(profile_id) DO UPDATE SET
            pid=$pid, debug_port=$port, ws=$ws, started_at=$at, relay_port=$relay,
            session_base_version=$base, binary_path=$binary, user_data_dir=$data,
            binary_sha256=$binary_sha, persona_digest=$persona, headless=$headless,
            search_bootstrap_revision=$search_bootstrap,
            process_group_id=$pgid, root_start_time=$root_start,
-           engine=$engine, firefox_owner_json=$firefox_owner, owner_binary_path=$owner_binary`,
+           engine=$engine, firefox_owner_json=$firefox_owner, owner_binary_path=$owner_binary,
+           owner_user_id=$owner`,
       )
       .run({
         $id: info.profileId,
+        $owner: this.ownerUserId,
         $pid: info.pid,
         $port: info.debugPort,
         $ws: info.ws,
@@ -1005,27 +1060,27 @@ export class ProfileStore {
       });
     // Mirror the launch time onto the profile so the AdsPower user/list facade
     // can report last_open_time (the launches row is deleted on stop).
-    this.db.query(`UPDATE profiles SET last_open_at = ? WHERE id = ?`).run(info.startedAt, info.profileId);
+    this.db.query(`UPDATE profiles SET last_open_at = ? WHERE id = ? AND owner_user_id = ?`).run(info.startedAt, info.profileId, this.ownerUserId);
   }
 
   updateLaunchSessionBaseVersion(profileId: string, version: number): void {
-    this.db.query(`UPDATE launches SET session_base_version = ? WHERE profile_id = ?`).run(version, profileId);
+    this.db.query(`UPDATE launches SET session_base_version = ? WHERE profile_id = ? AND owner_user_id = ?`).run(version, profileId, this.ownerUserId);
   }
 
   getLaunch(profileId: string): LaunchInfo | null {
     const row = this.db
-      .query<any, [string]>(`SELECT * FROM launches WHERE profile_id = ?`)
-      .get(profileId);
+      .query<any, [string, string]>(`SELECT * FROM launches WHERE profile_id = ? AND owner_user_id = ?`)
+      .get(profileId, this.ownerUserId);
     return row ? rowToLaunch(row) : null;
   }
 
   listLaunches(): LaunchInfo[] {
-    return this.db.query<any, []>(`SELECT * FROM launches`).all().map(rowToLaunch);
+    return this.db.query<any, [string]>(`SELECT * FROM launches WHERE owner_user_id = ?`).all(this.ownerUserId).map(rowToLaunch);
   }
 
   clearLaunch(profileId: string): void {
     this.transaction(() => {
-      this.db.query(`DELETE FROM launches WHERE profile_id = ?`).run(profileId);
+      this.db.query(`DELETE FROM launches WHERE profile_id = ? AND owner_user_id = ?`).run(profileId, this.ownerUserId);
       this.completeClosedFingerprints(profileId);
     })();
   }
